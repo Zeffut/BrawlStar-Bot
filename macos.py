@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import messagebox
 import threading
 
-debug = True
+debug = False
 window_name = "BlueStacks"
 output_path = "captured_window.png"
 reference_folder = "references"
@@ -49,10 +49,11 @@ def bring_window_to_front(window_name):
 
 def resize_window(window_name, width, height):
     """
-    Redimensionne la fenêtre spécifiée par son nom aux dimensions données.
+    Redimensionne et positionne la fenêtre spécifiée par son nom aux dimensions données.
     """
     script = f'''
     tell application "System Events"
+        set the position of the first window of application process "{window_name}" to {{0, 0}}
         set the size of the first window of application process "{window_name}" to {{ {width}, {height} }}
     end tell
     '''
@@ -241,8 +242,8 @@ def send_telegram_message(message):
     """
     Envoie un message sur Telegram.
     """
-    bot_token = ''
-    chat_id = ''
+    bot_token = '7014301516:AAH1f4W0rwsvsJ9sS71P2BmzYFmOJ2-IRl8'
+    chat_id = '6423758768'
     url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
     data = {'chat_id': chat_id, 'text': message}
     response = requests.post(url, data=data)
@@ -253,12 +254,18 @@ def start_script():
     try:
         objective = int(entry_objective.get())
         if objective > 500:
-            messagebox.showwarning("Attention", "Le script peut ne pas réussir à monter aussi haut en trophée.")
+            messagebox.showwarning("⚠️ Attention", "Le script peut ne pas réussir à monter aussi haut en trophée.")
+        label_objective.pack_forget()
+        entry_objective.pack_forget()
+        start_button.pack_forget()
+        bring_window_to_front(window_name)  # Amener la fenêtre au premier plan
+        update_text("🚀 Démarrage du script...")
         threading.Thread(target=run_script).start()
     except ValueError:
-        messagebox.showerror("Erreur", "Veuillez entrer un chiffre valide pour l'objectif de trophée.")
+        messagebox.showerror("❌ Erreur", "Veuillez entrer un chiffre valide pour l'objectif de trophée.")
 
 def run_script():
+    update_text("🏃‍♂️ Script en cours d'exécution...")
     status = "none"
     message = "none"
     global_trophy = 0
@@ -274,9 +281,9 @@ def run_script():
     ]
     missing_images = check_missing_images(reference_folder, required_images)
     if missing_images:
-        update_text(f"Images manquantes: {', '.join(missing_images)}")
+        update_text(f"❌ Images manquantes: {', '.join(missing_images)}")
     else:
-        update_text("Toutes les images nécessaires sont présentes.")
+        update_text("✅ Toutes les images nécessaires sont présentes.")
     
     target_width = 944.0
     target_height = 545.0
@@ -302,19 +309,14 @@ def run_script():
             global_trophy = crop_global_trophy_zone(output_path)
             brawler_trophy = crop_brawler_trophy_zone(output_path)
             if global_trophy is not None:
-                if brawler_trophy is None:
-                    while True:
-                        brawler_trophy_input = input("Impossible de détecter le nombre de trophées du brawler. Veuillez entrer le nombre de trophées manuellement: ")
-                        if brawler_trophy_input.isdigit():
-                            brawler_trophy = int(brawler_trophy_input)
-                            break
-                        else:
-                            update_text("Veuillez entrer un chiffre valide.")
-                update_text(f"Trophés Global: {global_trophy}")
-                update_text(f"Trophés Brawler: {brawler_trophy}")
+                if brawler_trophy is not None and brawler_trophy >= objective:
+                    update_text("🎉 Objectif déjà atteint au démarrage!")
+                    send_telegram_message(f"[BS Bot] 🎉 Objectif déjà atteint au démarrage! Trophés du brawler: {brawler_trophy}")
+                    root.quit()  # Fermer le script
+                    return  # Arrêter l'exécution du script
                 break
             else:
-                update_text("Impossible d'obtenir les trophées. Veuillez vérifier que le jeu est sur le lobby.")
+                update_text("❌ Impossible d'obtenir les trophées. Veuillez vérifier que le jeu est sur le lobby.")
         
         time.sleep(1)
     
@@ -340,7 +342,7 @@ def run_script():
         if "disconnected.png" in similar_images or "afk.png" in similar_images or "connexion_lost.png" in similar_images:
             if not debug:
                 pyautogui.press('space')
-            status = "disconnected"
+            status = "🔌 disconnected"
         if "play_button.png" in similar_images:
             time.sleep(1)
             new_global_trophy = crop_global_trophy_zone(output_path)
@@ -353,58 +355,59 @@ def run_script():
             new_brawler_trophy = crop_brawler_trophy_zone(output_path)
             if new_brawler_trophy is not None:
                 brawler_trophy = new_brawler_trophy
-            status = "lobby"
+            status = "🏠 lobby"
         if "play_button.png" in similar_images and ("brawball.png" in similar_images or "brawball1.png" in similar_images):
-            status = "lobby"
+            status = "🏠 lobby"
             if not debug:
                 pyautogui.press('f')
         if "play_button.png" in similar_images and not ("brawball.png" in similar_images or "brawball1.png" in similar_images):
-            update_text("LE MODE DE JEU EST INCORRECT !!!")
+            update_text("❌ LE MODE DE JEU EST INCORRECT !!!")
         if "other_device.png" in similar_images:
             time.sleep(60)
             if not debug:
                 pyautogui.press('space')
-            status = "other_device"
+            status = "📱 other_device"
         if "new_brawler.png" in similar_images:
             if not debug:
                 pyautogui.press('n')
                 time.sleep(1)
                 pyautogui.press('space')
-            status = "new_brawler"
+            status = "🆕 new_brawler"
         if "prix_star.png" in similar_images:
             for _ in range(7):
                 if not debug:
                     pyautogui.press('space')
-                status = "star_prize"
+                status = "⭐ star_prize"
                 time.sleep(1)
         elif "in_game.png" in similar_images:
             afk()
-            status = "in_game"
+            status = "🎮 in_game"
         elif "continue_button.png" in similar_images or "leave_button.png" in similar_images:
             if not debug:
                 pyautogui.press('f')
-            status = "match_ended"
+            status = "🏁 match_ended"
         elif "crashed.png" in similar_images:
             if not debug:
                 pyautogui.press('b')
-            status = "crashed"
-        if brawler_trophy >= objective:
-            update_text("Objectif atteint!")
-            send_telegram_message(f"[BrawlStarBot] Objectif atteint! Trophés Brawler: {brawler_trophy}")
-            break
-        if status == "disconnected" or status == "other_device" or status == "crashed":
-            send_telegram_message(f"[BrawlStarBot] Le script est bloqué. Statut: {status}")
+            status = "💥 crashed"
+        if brawler_trophy is not None and brawler_trophy >= objective:
+            update_text("🎉 Objectif atteint!")
+            send_telegram_message(f"[BS Bot] 🎉 Objectif atteint! Trophés du brawler: {brawler_trophy}")
+            root.quit()  # Fermer le script
+            return  # Arrêter l'exécution du script
+        if status == "🔌 disconnected" or status == "📱 other_device" or status == "💥 crashed":
+            send_telegram_message(f"[BS Bot] 🚨 Le script est bloqué. Statut: {status}")
 
         # Afficher les informations uniquement si elles ont changé
         if (status != previous_status or global_trophy != previous_global_trophy or 
             brawler_trophy != previous_brawler_trophy or victory != previous_victory or 
             defeat != previous_defeat):
-            update_text(f"Images similaires: {', '.join(similar_images)}")
-            update_text(f"Statut: {status}")
-            update_text(f"Trophés Global: {global_trophy}")
-            update_text(f"Trophés Brawler: {brawler_trophy}")
-            update_text(f"Victoires: {victory}")
-            update_text(f"Défaites: {defeat}")
+            update_text(f"🖼️ Images similaires: {', '.join(similar_images)}")
+            update_text(f"📊 Statut: {status}")
+            update_text(f"🏆 Trophés Global: {global_trophy}")
+            update_text(f"🏅 Trophés Brawler: {brawler_trophy}")
+            update_text(f"✅ Victoires: {victory}")
+            update_text(f"❌ Défaites: {defeat}")
 
             # Mettre à jour les informations précédentes
             previous_status = status
@@ -416,21 +419,40 @@ def run_script():
         os.remove(output_path)
 
 def update_text(message):
+    root.after(0, _update_text, message)
+
+def _update_text(message):
     text_widget.config(state=tk.NORMAL)
-    text_widget.insert(tk.END, message + "\n")
+    text_widget.insert(tk.END, message + "\n\n")  # Ajouter deux sauts de ligne pour espacer les messages
     text_widget.config(state=tk.DISABLED)
     text_widget.see(tk.END)
+
+def quit_script():
+    root.destroy()
 
 # Interface utilisateur avec tkinter
 root = tk.Tk()
 root.title("BrawlStar Mastery Bot")
 
-tk.Label(root, text="Objectif de Trophée:").pack()
+# Positionner la fenêtre à droite de l'écran
+screen_width = root.winfo_screenwidth()
+screen_height = root.winfo_screenheight()
+window_width = 400
+window_height = 200
+x_position = screen_width - window_width
+y_position = 0
+root.geometry(f"{window_width}x{window_height}+{x_position}+{y_position}")
+
+label_objective = tk.Label(root, text="Objectif de Trophée:")
+label_objective.pack()
 entry_objective = tk.Entry(root)
 entry_objective.pack()
 
 start_button = tk.Button(root, text="Démarrer", command=start_script)
 start_button.pack()
+
+quit_button = tk.Button(root, text="Quitter", command=quit_script)
+quit_button.pack()
 
 text_widget = tk.Text(root, state=tk.DISABLED, width=80, height=20)
 text_widget.pack()

@@ -55,7 +55,6 @@ def select_zone(image_path, zone_name):
     # Recadrer l'image
     cropped_image = image[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
     cv2.imshow("Image recadrée", cropped_image)
-    cv2.waitKey(0)
     cv2.destroyAllWindows()
 
 def crop_image_from_coordinates(image_path, zone_name):
@@ -90,7 +89,6 @@ if __name__ == "__main__":
         cropped_image = crop_image_from_coordinates("captured_window.png", zone_name)
         if cropped_image is not None:
             cv2.imshow("Image recadrée", cropped_image)
-            cv2.waitKey(0)
             cv2.destroyAllWindows()
     else:
         print("Action non valide.")
