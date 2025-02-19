@@ -1,0 +1,22 @@
+{
+    "global_trophy": {
+        "top_left": [
+            391,
+            91
+        ],
+        "bottom_right": [
+            525,
+            146
+        ]
+    },
+    "brawler_trophy": {
+        "top_left": [
+            903,
+            193
+        ],
+        "bottom_right": [
+            976,
+            252
+        ]
+    }
+}
