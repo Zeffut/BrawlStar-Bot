@@ -241,8 +241,8 @@ def send_telegram_message(message):
     """
     Envoie un message sur Telegram.
     """
-    bot_token = '7014301516:AAH1f4W0rwsvsJ9sS71P2BmzYFmOJ2-IRl8'
-    chat_id = '6423758768'
+    bot_token = ''
+    chat_id = ''
     url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
     data = {'chat_id': chat_id, 'text': message}
     response = requests.post(url, data=data)
