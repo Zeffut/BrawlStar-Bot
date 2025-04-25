@@ -11,12 +11,32 @@
     },
     "brawler_trophy": {
         "top_left": [
-            904,
-            204
+            905,
+            201
         ],
         "bottom_right": [
-            970,
-            243
+            981,
+            247
+        ]
+    },
+    "test": {
+        "top_left": [
+            812,
+            159
+        ],
+        "bottom_right": [
+            990,
+            270
+        ]
+    },
+    "brawler_troph": {
+        "top_left": [
+            854,
+            200
+        ],
+        "bottom_right": [
+            927,
+            246
         ]
     }
 }

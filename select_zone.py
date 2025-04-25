@@ -2,6 +2,7 @@ import pyautogui
 import time
 import cv2
 import json
+import numpy as np
 
 def get_zone_coordinates(zone_name):
     """
@@ -37,6 +38,9 @@ def save_zone_coordinates(zone_name, top_left, bottom_right):
 def select_zone(image_path, zone_name):
     """
     Permet à l'utilisateur de sélectionner une zone sur l'image spécifiée et de lui donner un nom.
+    Si la zone sélectionnée est "brawler_trophy", l'image recadrée est traitée : toutes les couleurs sont
+    remplacées par du noir sauf celles dont la différence avec la couleur [145, 143, 146] est inférieure à une tolérance.
+    Sinon, l'image recadrée est simplement affichée.
     """
     image = cv2.imread(image_path)
     if image is None:
@@ -54,7 +58,20 @@ def select_zone(image_path, zone_name):
 
     # Recadrer l'image
     cropped_image = image[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
-    cv2.imshow("Image recadrée", cropped_image)
+    
+    # Si la zone est "brawler_trophy", appliquer le filtre couleur
+    if zone_name == "brawler_trophy":
+        target_color = np.array([145, 143, 146])
+        tolerance = 40  # tolérance pour la différence
+        diff = np.abs(cropped_image.astype(np.int16) - target_color)
+        mask = np.all(diff <= tolerance, axis=-1)
+        processed_image = np.zeros_like(cropped_image)
+        processed_image[mask] = cropped_image[mask]
+        display_image = processed_image
+    else:
+        display_image = cropped_image
+
+    cv2.imshow("Image traitée", display_image)
     cv2.destroyAllWindows()
 
 def crop_image_from_coordinates(image_path, zone_name):

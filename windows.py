@@ -1,8 +1,6 @@
 import cv2
 import numpy as np
-import mss
 import os
-import Quartz
 import pyautogui
 import time
 import random
@@ -16,40 +14,48 @@ import sys
 import threading
 from datetime import datetime
 from colorama import Fore, Style, init
+import pygetwindow as gw
+from pywinauto import Application
 init(autoreset=True)
+
 
 window_name = "BlueStacks"
 output_path = "captured_window.png"
 reference_folder = "references"
 
+# Fonctions spécifiques à Windows
 def get_window_coordinates(window_name):
-    windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
-    for window in windows:
-        if window_name in window.get('kCGWindowName', ''):
-            bounds = window['kCGWindowBounds']
-            left = bounds['X']
-            top = bounds['Y']
-            right = left + bounds['Width']
-            bottom = top + bounds['Height']
+    try:
+        window = gw.getWindowsWithTitle(window_name)[0]
+        if window:
+            left, top, right, bottom = window.left, window.top, window.right, window.bottom
             return left, top, right, bottom
+    except IndexError:
+        print(f"Fenêtre '{window_name}' introuvable.")
     return None
 
 def bring_window_to_front(window_name):
-    script = f'''
-    tell application "System Events"
-        set frontmost of the first process whose name is "{window_name}" to true
-    end tell
-    '''
-    subprocess.run(['osascript', '-e', script])
+    try:
+        window = gw.getWindowsWithTitle(window_name)[0]
+        if window:
+            try:
+                window.activate()
+            except Exception as e:
+                msg = str(e)
+                if "L’opération a réussi" in msg:
+                    pass  # Suppression du message si l'opération a réussi malgré l'exception.
+                else:
+                    print(f"Erreur lors de l'activation de la fenêtre '{window_name}': {msg}")
+    except IndexError:
+        print(f"Fenêtre '{window_name}' introuvable.")
 
 def resize_window(window_name, width, height):
-    script = f'''
-    tell application "System Events"
-        set the position of the first window of application process "{window_name}" to {{0, 0}}
-        set the size of the first window of application process "{window_name}" to {{ {width}, {height} }}
-    end tell
-    '''
-    subprocess.run(['osascript', '-e', script])
+    try:
+        window = gw.getWindowsWithTitle(window_name)[0]
+        if window:
+            window.resizeTo(int(width), int(height))
+    except IndexError:
+        print(f"Fenêtre '{window_name}' introuvable.")
 
 def capture_window_image(window_name):
     coordinates = get_window_coordinates(window_name)
@@ -59,12 +65,12 @@ def capture_window_image(window_name):
     left, top, right, bottom = coordinates
     width = right - left
     height = bottom - top
-    with mss.mss() as sct:
-        screenshot = sct.grab({"top": top, "left": left, "width": width, "height": height})
-        frame = np.array(screenshot)
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2RGB)
-        return frame
+    screenshot = pyautogui.screenshot(region=(left, top, width, height))
+    frame = np.array(screenshot)
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    return frame
 
+# Fonctions communes (copiées de macos.py)
 def resize_image_to_fit(captured_image, reference_image):
     captured_height, captured_width = captured_image.shape[:2]
     reference_height, reference_width = reference_image.shape[:2]
@@ -75,19 +81,33 @@ def resize_image_to_fit(captured_image, reference_image):
     return reference_image
 
 def is_image_present(captured_image_path, reference_image_path, threshold=0.8):
-    if not os.path.exists(captured_image_path):
-        print(f"Le fichier {captured_image_path} est introuvable.")
+    # Chargement des images et conversion en niveaux de gris
+    captured = cv2.imread(captured_image_path)
+    reference = cv2.imread(reference_image_path)
+    if captured is None or reference is None:
+        print(f"Erreur de lecture pour {captured_image_path} ou {reference_image_path}.")
         return False
-    captured_image = cv2.imread(captured_image_path)
-    reference_image = cv2.imread(reference_image_path)
-    if captured_image is None or reference_image is None:
+    cap_gray = cv2.cvtColor(captured, cv2.COLOR_BGR2GRAY)
+    ref_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
+    
+    # Détection et description avec ORB
+    orb = cv2.ORB_create()
+    kp1, des1 = orb.detectAndCompute(cap_gray, None)
+    kp2, des2 = orb.detectAndCompute(ref_gray, None)
+    if des1 is None or des2 is None:
         return False
-    reference_image = resize_image_to_fit(captured_image, reference_image)
-    captured_image_gray = cv2.cvtColor(captured_image, cv2.COLOR_BGR2GRAY)
-    reference_image_gray = cv2.cvtColor(reference_image, cv2.COLOR_BGR2GRAY)
-    result = cv2.matchTemplate(captured_image_gray, reference_image_gray, cv2.TM_CCOEFF_NORMED)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    return max_val >= threshold
+
+    # Matching avec BFMatcher
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(des1, des2)
+    if not matches:
+        return False
+    matches = sorted(matches, key=lambda x: x.distance)
+    
+    # On considère comme "bonnes" les correspondances dont la distance est inférieure à 60 (valeur ajustable)
+    num_good = sum(1 for m in matches if m.distance < 60)
+    score = num_good / len(matches)
+    return score >= threshold
 
 def find_all_similar_images(captured_image_path, reference_folder, threshold=0.8):
     similar_images = []
@@ -164,15 +184,13 @@ def crop_brawler_trophy_zone(captured_image_path):
         mask = np.all(diff <= tolerance, axis=-1)
         filtered_image = np.zeros_like(cropped_image)
         filtered_image[mask] = cropped_image[mask]
-        if filtered_image.size > 0:  # Vérification si l'image n'est pas vide
-            cv2.imwrite("brawler_trophy_processed.png", filtered_image)
-            if filtered_image.shape[0] > 0 and filtered_image.shape[1] > 0:  # Vérification des dimensions de l'image
-                text = pytesseract.image_to_string(filtered_image)
-                try:
-                    number = int(''.join(filter(str.isdigit, text)))
-                    return number
-                except ValueError:
-                    return None
+        cv2.imwrite("brawler_trophy_processed.png", filtered_image)
+        text = pytesseract.image_to_string(filtered_image)
+        try:
+            number = int(''.join(filter(str.isdigit, text)))
+            return number
+        except ValueError:
+            return None
     return None
 
 def send_telegram_message(message):
@@ -198,21 +216,8 @@ def send_telegram_message(message):
         time.sleep(delay)
     return response
 
-def start_script():
-    global objective
-    try:
-        objective = int(input("Entrez votre objectif de trophée: "))
-        if objective > 500:
-            print("⚠️ Attention : Le script peut ne pas réussir à monter aussi haut en trophée.")
-    except ValueError:
-        print("❌ Erreur : Veuillez entrer un chiffre valide pour l'objectif de trophée.")
-        sys.exit(1)
-    bring_window_to_front(window_name)
-    update_text("🚀 Démarrage du script...")
-    run_script()
-
 def run_script():
-    update_text("🏃‍♂️ Script en cours d'exécution...")
+    update_text("Étape 1: Démarrage de run_script")
     status = "none"
     global_trophy = 0
     brawler_trophy = 0
@@ -226,42 +231,44 @@ def run_script():
     ]
     missing_images = check_missing_images(reference_folder, required_images)
     if missing_images:
-        update_text(f"❌ Images manquantes: {', '.join(missing_images)}")
+        update_text(f"Étape 2: Erreur - Images manquantes: {', '.join(missing_images)}")
     else:
-        update_text("✅ Toutes les images nécessaires sont présentes.")
+        update_text("Étape 2: Toutes les images nécessaires sont présentes.")
     target_width = 944.0
     target_height = 545.0
+    
+    update_text("Étape 3: Activation de la fenêtre")
     bring_window_to_front(window_name)
+    update_text("Étape 4: Redimensionnement de la fenêtre")
     resize_window(window_name, target_width, target_height)
     trophy_zone_coordinates = get_zone_coordinates("global_trophy")
+    
+    update_text("Étape 5: Attente de la première capture d'image")
     while True:
-        bring_window_to_front(window_name)
+        update_text("Étape 6: Capture de l'image de la fenêtre")
         captured_image = capture_window_image(window_name)
         if captured_image is None:
+            update_text("Étape 6: Échec de capture, réessai dans 1 seconde")
             time.sleep(1)
             continue
         cv2.imwrite(output_path, captured_image)
+        update_text("Étape 6: Image enregistrée")
         similar_images = find_all_similar_images(output_path, reference_folder)
-        
-        # Ajout du test de déconnexion dans cette boucle
-        if "disconnected.png" in similar_images or "connexion_lost.png" in similar_images or "afk.png" in similar_images:
-            pyautogui.press('space')
-            status = "🔌 disconnected"
-        
+        update_text(f"Images détectées: {', '.join(similar_images) if similar_images else 'aucune'}")
         if "play_button.png" in similar_images:
+            update_text("Étape 7: Bouton play détecté, tentative d'extraction des trophées")
             temp_global = crop_global_trophy_zone(output_path)
             temp_brawler = crop_brawler_trophy_zone(output_path)
             if temp_global is not None and temp_brawler is not None:
                 global_trophy = temp_global
                 brawler_trophy = temp_brawler
                 if brawler_trophy >= objective:
-                    update_text("🎉 Objectif déjà atteint au démarrage!")
+                    update_text("Étape 8: Objectif déjà atteint au démarrage!")
                     send_telegram_message(f"[BS Bot] 🎉 Objectif déjà atteint au démarrage! Trophés du brawler: {brawler_trophy}")
                     sys.exit(0)
                 break
             else:
-                update_text("❌ Trophées brawler non détectés, attente du lobby...")
-                update_text("❌ Veuillez selectioné à jour la zone des trophées du brawler.")
+                update_text("Étape 7: Trophées non détectés, recalibrage de la zone brawler")
                 from select_zone import select_zone
                 select_zone(output_path, "brawler_trophy")
                 trophy_img = crop_image_from_coordinates(output_path, "brawler_trophy")
@@ -272,22 +279,25 @@ def run_script():
                     cv2.waitKey(5000)
                     cv2.destroyWindow("Trophées traités")
         time.sleep(1)
+    
     last_f_press = 0
     previous_status = ""
     previous_global_trophy = 0
     previous_brawler_trophy = 0
     previous_victory = 0
     previous_defeat = 0
-    last_interaction = time.time()  # Début du suivi des interactions
+    update_text("Étape 9: Démarrage de la boucle principale")
     while True:
+        update_text("Étape 10: Capture de la fenêtre dans la boucle principale")
         captured_image = capture_window_image(window_name)
         if captured_image is None:
+            update_text("Étape 10: Échec de capture, réessai dans 1 seconde")
             time.sleep(1)
             continue
         cv2.imwrite(output_path, captured_image)
         similar_images = find_all_similar_images(output_path, reference_folder)
-
-        if "disconnected.png" in similar_images or "connexion_lost.png" in similar_images or "afk.png" in similar_images:
+        update_text(f"Images détectées: {', '.join(similar_images) if similar_images else 'aucune'}")
+        if "disconnected.png" in similar_images or "connexion_lost.png" in similar_images:
             pyautogui.press('space')
             status = "🔌 disconnected"
         if "play_button.png" in similar_images:
@@ -338,9 +348,7 @@ def run_script():
             status = "🎮 in_game"
         elif "continue_button.png" in similar_images or "leave_button.png" in similar_images:
             lobby_detected = False
-            timeout = 30  # temps maximum en secondes
-            start_time = time.time()
-            while not lobby_detected and (time.time() - start_time < timeout):
+            while not lobby_detected:
                 bring_window_to_front(window_name)
                 captured_image = capture_window_image(window_name)
                 if captured_image is None:
@@ -353,21 +361,16 @@ def run_script():
                 else:
                     pyautogui.press('f')
                     time.sleep(5)
-            if not lobby_detected:
-                update_text("⚠️ Timeout de détection du lobby après le continue_button, passage en mode lobby.")
             status = "🏠 lobby"
         elif "crashed.png" in similar_images:
             pyautogui.press('b')
             status = "💥 crashed"
-
         if brawler_trophy is not None and brawler_trophy >= objective:
             update_text("🎉 Objectif atteint!")
             send_telegram_message(f"[BS Bot] 🎉 Objectif atteint! Trophés du brawler: {brawler_trophy}")
             sys.exit(0)
         if status == "🔌 disconnected" or status == "📱 other_device" or status == "💥 crashed":
             send_telegram_message(f"[BS Bot] 🚨 Le script est bloqué. Statut: {status}")
-        
-        # Mise à jour en cas de différence d'état
         if (status != previous_status or global_trophy != previous_global_trophy or 
             brawler_trophy != previous_brawler_trophy or victory != previous_victory or 
             defeat != previous_defeat):
@@ -381,12 +384,6 @@ def run_script():
             previous_brawler_trophy = brawler_trophy
             previous_victory = victory
             previous_defeat = defeat
-        last_interaction = time.time()
-        
-        # Condition de notification d'inactivité (si aucune action pendant 60 secondes)
-        if time.time() - last_interaction >= 60:
-            send_telegram_message("[BS Bot] 🚨 Aucune action détectée pendant 1 minute, script potentiellement bloqué.")
-
         os.remove(output_path)
 
 def update_text(message):
@@ -406,6 +403,19 @@ def update_text(message):
     else:
         color = Fore.WHITE
     print(f"[{timestamp}] {color}{message}{Style.RESET_ALL}")
+
+def start_script():
+    global objective
+    try:
+        objective = int(input("Entrez votre objectif de trophée: "))
+        if objective > 500:
+            print("⚠️ Attention : Le script peut ne pas réussir à monter aussi haut en trophée.")
+    except ValueError:
+        print("❌ Erreur : Veuillez entrer un chiffre valide pour l'objectif de trophée.")
+        sys.exit(1)
+    bring_window_to_front(window_name)
+    update_text("🚀 Démarrage du script...")
+    run_script()
 
 if __name__ == '__main__':
     start_script()
