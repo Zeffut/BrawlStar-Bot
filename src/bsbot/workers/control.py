@@ -17,23 +17,23 @@ logger = logging.getLogger(__name__)
 class ButtonLayout:
     """Pixel coordinates of in-game UI elements, in *device* native resolution.
 
-    Calibrated for Mi 9T Pro (2340×1080 landscape) on 2026-05-25.
-    Values estimated from a Brawl Ball screenshot; fine-tune by running
-    the bot and observing whether movements / shots land correctly.
+    Calibrated for BlueStacks (2560×1440 landscape) on 2026-05-25.
+    Scaled from Mi 9T Pro coords (x*1.094, y*1.333). Fine-tune by
+    observing the live overlay.
     """
 
     # Joystick center (bottom-left of landscape screen), radius in px
-    joystick_center: tuple[int, int] = (370, 870)
-    joystick_radius: int = 160
+    joystick_center: tuple[int, int] = (405, 1160)
+    joystick_radius: int = 215
     # Attack button (bottom-right). For aimed-attack, we drag from this
     # button toward the target.
-    attack_button: tuple[int, int] = (2070, 870)
-    attack_drag_radius: int = 250
+    attack_button: tuple[int, int] = (2265, 1160)
+    attack_drag_radius: int = 335
     # Super button (just left of attack)
-    super_button: tuple[int, int] = (1840, 830)
-    super_drag_radius: int = 250
+    super_button: tuple[int, int] = (2015, 1105)
+    super_drag_radius: int = 335
     # Gadget button (above attack)
-    gadget_button: tuple[int, int] = (2070, 600)
+    gadget_button: tuple[int, int] = (2265, 800)
 
 
 class ControlWorker(threading.Thread):
@@ -52,8 +52,8 @@ class ControlWorker(threading.Thread):
         stop_event: threading.Event,
         layout: ButtonLayout | None = None,
         joystick_tick_ms: int = 80,
-        landscape_w: int = 2340,
-        landscape_h: int = 1080,
+        landscape_w: int = 2560,
+        landscape_h: int = 1440,
         capture_worker=None,
     ):
         super().__init__(name="ControlWorker", daemon=True)

@@ -120,11 +120,21 @@ class VisionWorker(threading.Thread):
 
     def _process_frame(self, frame: np.ndarray) -> GameState:
         h, w = frame.shape[:2]
-        state_match = self.state_finder.detect(frame)
+        # State detection is expensive (~186ms). Cache the last result and
+        # re-run only every Nth frame. State doesn't change faster than
+        # ~1 Hz in practice, so caching for 3 frames is safe.
+        if not hasattr(self, "_state_cache"):
+            self._state_cache = None
+            self._state_cache_frame_id = -1
+        if self._state_cache is None or (self._frame_id - self._state_cache_frame_id) >= 3:
+            self._state_cache = self.state_finder.detect(frame)
+            self._state_cache_frame_id = self._frame_id
+            if self._state_cache and self._frame_id % 30 == 0:
+                logger.info("state_finder: %s via %s (%.3f)",
+                            self._state_cache.state, self._state_cache.template_name,
+                            self._state_cache.score)
+        state_match = self._state_cache
         state_name = state_match.state if state_match else "unknown"
-        if state_match and self._frame_id % 30 == 0:
-            logger.info("state_finder: %s via %s (%.3f)",
-                        state_match.state, state_match.template_name, state_match.score)
 
         if state_name not in self.run_full_detection_on_states:
             # Cheap path: only publish the state, no expensive ONNX.

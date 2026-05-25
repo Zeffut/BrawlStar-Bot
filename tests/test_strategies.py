@@ -91,7 +91,11 @@ def colt_stats() -> BrawlerStats:
 
 @pytest.fixture
 def colt(colt_stats) -> ColtStrategy:
-    return ColtStrategy(colt_stats, tuning=ColtTuning(drift_toward_center=False))
+    return ColtStrategy(
+        colt_stats,
+        tuning=ColtTuning(drift_toward_center=False),
+        min_action_interval_s=0.0,
+    )
 
 
 def _gs_match(my_pos, enemies=None, walls=None, cubes=None, hp=None, super_pct=None, w=1920, h=1080):
@@ -122,9 +126,15 @@ class TestColtStrategyBasic:
 
 
 class TestColtStrategyShoot:
+    def _shoot_tick(self, colt, gs):
+        """Helper: ColtStrategy alternates shoot/move; call twice to land
+        on a shoot tick (even counter)."""
+        colt.decide(gs)  # tick 1 = move
+        return colt.decide(gs)  # tick 2 = shoot
+
     def test_shoots_enemy_in_range_with_los(self, colt):
         enemy = Enemy(bbox=BBox(900, 400, 1000, 500), brawler_class="shelly", confidence=1.0)
-        a = colt.decide(_gs_match(my_pos=(500, 500), enemies=[enemy]))
+        a = self._shoot_tick(colt, _gs_match(my_pos=(500, 500), enemies=[enemy]))
         assert a is not None
         assert a.type == ActionType.AIMED_ATTACK
         # Target should be enemy center (~950, 450).
@@ -147,35 +157,39 @@ class TestColtStrategyShoot:
     def test_picks_nearest_enemy(self, colt):
         close = Enemy(bbox=BBox(700, 450, 800, 550), brawler_class="bull", confidence=1.0)
         far = Enemy(bbox=BBox(900, 400, 1000, 500), brawler_class="shelly", confidence=1.0)
-        a = colt.decide(_gs_match(my_pos=(500, 500), enemies=[close, far]))
+        a = self._shoot_tick(colt, _gs_match(my_pos=(500, 500), enemies=[close, far]))
         assert a is not None and a.type == ActionType.AIMED_ATTACK
         # Should target the closer one.
         assert a.x == 750  # close enemy center x
 
 
 class TestColtStrategySuper:
+    def _shoot_tick(self, colt, gs):
+        colt.decide(gs)
+        return colt.decide(gs)
+
     def test_no_super_below_100(self, colt):
         e = Enemy(bbox=BBox(800, 450, 900, 550), brawler_class="shelly", confidence=1.0)
-        a = colt.decide(_gs_match(my_pos=(500, 500), enemies=[e], super_pct=80))
-        # Above attack range? 850-500 = 350 < 546 -> would still shoot first.
+        a = self._shoot_tick(colt, _gs_match(my_pos=(500, 500), enemies=[e], super_pct=80))
         assert a is not None and a.type == ActionType.AIMED_ATTACK
 
     def test_super_at_100_and_target_out_of_attack_range(self, colt):
         # Place an enemy beyond attack_range but within super_range.
         e = Enemy(bbox=BBox(1100, 400, 1200, 500), brawler_class="shelly", confidence=1.0)
-        # distance 650 > attack 546, < super 704
-        a = colt.decide(_gs_match(my_pos=(500, 500), enemies=[e], super_pct=100))
+        a = self._shoot_tick(colt, _gs_match(my_pos=(500, 500), enemies=[e], super_pct=100))
         assert a is not None
         assert a.type == ActionType.AIMED_SUPER
 
 
 class TestColtStrategyKite:
-    def test_too_close_backs_off(self, colt):
+    def _shoot_tick(self, colt, gs):
+        colt.decide(gs)
+        return colt.decide(gs)
+
+    def test_too_close_shoots_on_shoot_tick(self, colt):
         # Enemy within safe_range * 0.9 = ~290.
         e = Enemy(bbox=BBox(550, 500, 650, 600), brawler_class="bull", confidence=1.0)
-        # distance ~150 < 290 -> should kite away. But also <attack range so will shoot first.
-        a = colt.decide(_gs_match(my_pos=(500, 500), enemies=[e]))
-        # Shoot is priority. Kite happens when no shot is possible.
+        a = self._shoot_tick(colt, _gs_match(my_pos=(500, 500), enemies=[e]))
         assert a is not None and a.type == ActionType.AIMED_ATTACK
 
     def test_kite_when_enemy_behind_wall_and_too_close(self, colt):
@@ -199,8 +213,10 @@ class TestColtStrategyCubes:
     def test_ignores_cube_when_enemy_close(self, colt):
         cube = BBox(540, 520, 580, 560)
         enemy = Enemy(bbox=BBox(700, 500, 800, 600), brawler_class="bull", confidence=1.0)  # ~250 away
-        # Will shoot enemy instead of pickup (within attack range).
-        a = colt.decide(_gs_match(my_pos=(500, 500), cubes=[cube], enemies=[enemy]))
+        # On a shoot tick, shoots enemy instead of pickup (within attack range).
+        gs = _gs_match(my_pos=(500, 500), cubes=[cube], enemies=[enemy])
+        colt.decide(gs)  # move tick
+        a = colt.decide(gs)  # shoot tick
         assert a is not None and a.type == ActionType.AIMED_ATTACK
 
 

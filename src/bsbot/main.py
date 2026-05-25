@@ -166,11 +166,19 @@ def run(config: dict, dry_run: bool = False) -> int:
     max_minutes = int(session_cfg.get("max_duration_minutes", 0))
     start = time.monotonic()
 
+    max_matches = int(session_cfg.get("max_matches", 0))
     try:
         while not stop_event.is_set():
             time.sleep(1.0)
             if max_minutes > 0 and (time.monotonic() - start) >= max_minutes * 60:
                 logger.info("Session duration limit reached, stopping.")
+                stop_event.set()
+                break
+            if max_matches > 0 and brain.stats.matches_completed >= max_matches:
+                logger.info(
+                    "Match limit reached (%d/%d completed), stopping.",
+                    brain.stats.matches_completed, max_matches,
+                )
                 stop_event.set()
                 break
     finally:

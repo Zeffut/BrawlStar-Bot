@@ -30,15 +30,13 @@ class MenuCoords:
     config.toml `[menu]` section.
     """
 
-    # Calibrated for Mi 9T Pro (2340x1080 landscape) on 2026-05-25.
-    play_button: tuple[int, int] = (2115, 930)
-    continue_button: tuple[int, int] = (2130, 1000)  # blue CONTINUER button bottom-right
-    # Top-right home icon — works to dismiss reward popups (star drop, coins, brawler unlocked).
-    popup_close: tuple[int, int] = (2204, 58)
-    # "RECHARGER" link in the AFK-kick popup (Déconnexion pour non-participation).
-    reconnect_button: tuple[int, int] = (575, 728)
+    # Calibrated for BlueStacks (2560x1440 landscape) on 2026-05-25.
+    play_button: tuple[int, int] = (2295, 1340)
+    continue_button: tuple[int, int] = (2295, 1340)
+    popup_close: tuple[int, int] = (2470, 80)
+    reconnect_button: tuple[int, int] = (700, 900)
     # Generic safe-tap when stuck — center of screen.
-    fallback: tuple[int, int] = (1170, 540)
+    fallback: tuple[int, int] = (1280, 720)
 
 
 class MenuStrategy(Strategy):

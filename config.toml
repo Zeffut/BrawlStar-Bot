@@ -3,7 +3,8 @@
 
 [adb]
 # Empty = first device detected by adb. Otherwise set serial (see `adb devices`).
-device_serial = ""
+# Use "emulator-5554" for BlueStacks, or your phone's serial.
+device_serial = "emulator-5554"
 
 [game]
 mode = "solo_showdown"
@@ -11,7 +12,7 @@ brawler = "brock"
 
 [session]
 max_duration_minutes = 6     # ~1 match + entry/end transitions
-max_matches = 0              # 0 = unlimited
+max_matches = 1              # stop after N completed matches (0 = unlimited)
 
 [performance]
 target_ips = 30

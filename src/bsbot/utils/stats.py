@@ -51,7 +51,10 @@ class SessionStats:
                 return
             if new_state == "match" and prev in ("lobby", None, "starting", "unknown"):
                 self.matches_started += 1
-            if new_state == "end" and prev == "match":
+            # Count a match as completed whenever we ENTER the end state,
+            # regardless of the immediate predecessor (state often oscillates
+            # match → unknown → end on real devices).
+            if new_state == "end":
                 self.matches_completed += 1
             if new_state == "disconnect":
                 self.disconnects += 1

@@ -90,7 +90,7 @@ class ColtStrategy(Strategy):
         self,
         stats: BrawlerStats,
         tuning: ColtTuning | None = None,
-        min_action_interval_s: float = 0.2,
+        min_action_interval_s: float = 0.08,
     ):
         self.stats = stats
         self.tuning = tuning or ColtTuning()
@@ -99,6 +99,10 @@ class ColtStrategy(Strategy):
         self.min_action_interval_s = min_action_interval_s
         self._last_decision_at = 0.0
         self._last_action_type: str | None = None
+        # Tick counter so we can alternate shoot/move (avoids AFK kick when
+        # an enemy is in range — Brawl Stars flags us if the joystick never
+        # moves even if we're shooting).
+        self._tick_counter = 0
 
     # ------------------------------------------------------------------ decide
 
@@ -112,6 +116,11 @@ class ColtStrategy(Strategy):
         if now - self._last_decision_at < self.min_action_interval_s:
             return None
         self._last_decision_at = now
+        self._tick_counter += 1
+        # Alternate: even ticks SHOOT (if possible), odd ticks MOVE. This
+        # keeps the brawler moving even while attacking, defeating Brawl
+        # Stars' AFK detection (which checks for joystick movement).
+        prefer_movement = (self._tick_counter % 2 == 1)
 
         # 1. Survive (skip if HP unknown — v1 placeholder).
         if gs.my_health_pct is not None and gs.my_health_pct < self.tuning.flee_hp_threshold_pct:
@@ -121,10 +130,11 @@ class ColtStrategy(Strategy):
 
         # 2. Escape danger zone — TODO when we detect the ring.
 
-        # 3. Opportunistic shot.
-        shoot = self._maybe_shoot(gs)
-        if shoot is not None:
-            return shoot
+        # 3. Opportunistic shot — only on "shoot" ticks (alternate with move).
+        if not prefer_movement:
+            shoot = self._maybe_shoot(gs)
+            if shoot is not None:
+                return shoot
 
         # 4. Super.
         if gs.my_super_charge_pct is not None and gs.my_super_charge_pct >= 100.0:

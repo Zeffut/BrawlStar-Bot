@@ -170,8 +170,35 @@ def build_match_state(
 ) -> GameState:
     """Convenience constructor: turn all detector outputs into one GameState(match)."""
     walls, bushes = parse_tile_detections(tile_raw)
+    # Filter brawler detections that heavily overlap walls/bushes — those
+    # are phantom hits where the model misfired on tile patterns.
+    obstacles = walls + bushes
+    filtered_brawler_raw: dict[str, list[list[int]]] = {}
+    for cls, boxes in brawler_raw.items():
+        kept: list[list[int]] = []
+        for xyxy in boxes:
+            b = BBox.from_xyxy(xyxy)
+            # If >40% of this bbox area overlaps a wall/bush, drop it.
+            max_iou = 0.0
+            for obs in obstacles:
+                if b.intersects(obs):
+                    ix1 = max(b.x1, obs.x1)
+                    iy1 = max(b.y1, obs.y1)
+                    ix2 = min(b.x2, obs.x2)
+                    iy2 = min(b.y2, obs.y2)
+                    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                    if b.area > 0:
+                        ratio = inter / b.area
+                        if ratio > max_iou:
+                            max_iou = ratio
+            if max_iou <= 0.4:
+                kept.append(xyxy)
+        if kept:
+            filtered_brawler_raw[cls] = kept
+
     my_pos, enemies = parse_brawler_detections(
-        brawler_raw, my_brawler_class, frame_width=frame_width, frame_height=frame_height
+        filtered_brawler_raw, my_brawler_class,
+        frame_width=frame_width, frame_height=frame_height,
     )
     cubes = parse_power_cubes(main_raw or {})
     return GameState(

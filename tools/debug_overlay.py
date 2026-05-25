@@ -57,6 +57,85 @@ def load_detectors():
     }
 
 
+def compute_detections(
+    frame: np.ndarray,
+    state_finder: StateFinder,
+    detectors: dict,
+    conf_thresh: float = 0.5,
+) -> dict:
+    """Run all models and return a dict of detection results to be drawn later.
+
+    Decoupled from drawing so the slow ONNX work can run at a low rate
+    while a fast UI thread redraws over fresh raw frames.
+    """
+    h, w = frame.shape[:2]
+    sm = state_finder.detect(frame)
+    tile_raw = detectors["tile"].detect_objects(frame, conf_thresh=conf_thresh)
+    brawler_raw = detectors["brawler"].detect_objects(frame, conf_thresh=conf_thresh)
+    main_raw = detectors["main"].detect_objects(frame, conf_thresh=conf_thresh)
+    from bsbot.vision.postprocess import parse_brawler_detections
+    my_pos, _ = parse_brawler_detections(brawler_raw, frame_width=w, frame_height=h)
+    return {
+        "width": w, "height": h,
+        "state": sm.state if sm else "unknown",
+        "state_score": round(sm.score, 3) if sm else 0.0,
+        "tile_raw": tile_raw,
+        "brawler_raw": brawler_raw,
+        "main_raw": main_raw,
+        "my_pos": my_pos,
+    }
+
+
+def draw_from_detections(frame: np.ndarray, det: dict) -> tuple[np.ndarray, dict]:
+    """Draw overlay using PRE-COMPUTED detections on a fresh raw frame.
+
+    Frame motion stays fluid while overlay reflects slightly-stale detections.
+    """
+    img = frame.copy()
+    n_walls = n_bushes = n_brawlers = n_main = 0
+    brawler_boxes: list[tuple[int, int]] = []
+    for cls, boxes in det.get("tile_raw", {}).items():
+        for xyxy in boxes:
+            x1, y1, x2, y2 = map(int, xyxy)
+            if cls == "wall":
+                color = (0, 255, 255); n_walls += 1
+            else:
+                color = (0, 255, 0); n_bushes += 1
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+    for cls, boxes in det.get("brawler_raw", {}).items():
+        for xyxy in boxes:
+            x1, y1, x2, y2 = map(int, xyxy)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 3)
+            n_brawlers += 1
+            brawler_boxes.append(((x1 + x2) // 2, (y1 + y2) // 2))
+    for cls, boxes in det.get("main_raw", {}).items():
+        for xyxy in boxes:
+            x1, y1, x2, y2 = map(int, xyxy)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 0), 2)
+            n_main += 1
+    my_pos = det.get("my_pos")
+    if my_pos:
+        cv2.drawMarker(img, my_pos, (255, 255, 255), markerType=cv2.MARKER_CROSS,
+                       markerSize=60, thickness=3)
+        if brawler_boxes:
+            from bsbot.utils.geometry import distance as _dist
+            target = min(brawler_boxes, key=lambda p: (p[0] - my_pos[0]) ** 2 + (p[1] - my_pos[1]) ** 2)
+            d = _dist(my_pos, target)
+            cv2.arrowedLine(img, my_pos, target, (255, 0, 255), 3, tipLength=0.05)
+    # Banner with summary on top.
+    h, w = img.shape[:2]
+    banner = np.zeros((70, w, 3), dtype=np.uint8)
+    txt = (f"STATE: {det.get('state','?')}  score={det.get('state_score',0):.2f}  | "
+           f"brawlers={n_brawlers}  walls={n_walls}  bushes={n_bushes}  main={n_main}")
+    cv2.putText(banner, txt, (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2, cv2.LINE_AA)
+    img = np.vstack([banner, img])
+    info = {
+        "state": det.get("state"), "brawlers": n_brawlers,
+        "walls": n_walls, "bushes": n_bushes, "main": n_main,
+    }
+    return img, info
+
+
 def annotate(
     frame: np.ndarray,
     state_finder: StateFinder,
