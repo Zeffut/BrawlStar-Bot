@@ -1,0 +1,29 @@
+[match]
+enabled = false
+template = """{emoji} {result_upper} — {brawler}
+Trophies: {before} → {after} ({sign}{delta})
+Match {match_n} • W/L/D {wins}/{losses}/{draws} ({wr:.0f}% WR)
+Session: {session_sign}{session_delta} trophies • Target {target}"""
+
+[match.filter]
+victory = true
+defeat = true
+draw = true
+
+[target_reached]
+enabled = false
+template = "🎯 Target reached for {brawler}: {trophies}/{target}"
+
+[cycle_started]
+enabled = false
+template = """📊 Starting cycle on {brawler}
+Current: {current} trophies → Target: {target}
+Need: {needed} more"""
+
+[cycle_started_no_ocr]
+enabled = false
+template = "⚠️ Could not read current trophies for {brawler}. Cycle started — target {target}."
+
+[stop_during_init]
+enabled = false
+template = "🛑 Bot stopped during init (no match started)."
