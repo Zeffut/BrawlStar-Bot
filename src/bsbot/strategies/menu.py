@@ -131,7 +131,18 @@ class MenuStrategy(Strategy):
             self._unknown_attempt_idx += 1
             action = Action.tap(*t)
         elif gs.state == "disconnect":
-            action = Action.tap(*self.coords.reconnect_button)
+            # Try RECHARGER first; if disconnect persists (e.g. AFK kick on
+            # post-match DÉFAITE/VICTOIRE where reconnect does nothing),
+            # cycle through QUITTER/REJOUER/home positions.
+            targets = [
+                self.coords.reconnect_button,  # RECHARGER link
+                (2230, 1000),                  # QUITTER button bottom-right
+                (1990, 1000),                  # REJOUER button (left of QUITTER)
+                self.coords.popup_close,       # home icon top-right
+            ]
+            t = targets[self._unknown_attempt_idx % len(targets)]
+            self._unknown_attempt_idx += 1
+            action = Action.tap(*t)
         elif gs.state == "unknown":
             # When stuck on an unrecognized screen (event banners, season
             # popups, daily offers...) we cycle through known dismiss
