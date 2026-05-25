@@ -1,3 +1,6 @@
+import difflib
+import logging
+import subprocess
 import time
 
 import numpy as np
@@ -7,6 +10,7 @@ from typization import BrawlerName
 from utils import extract_text_and_positions, count_hsv_pixels, load_toml_as_dict, find_template_center
 
 debug = load_toml_as_dict("cfg/general_config.toml")['super_debug'] == "yes"
+log = logging.getLogger(__name__)
 
 class LobbyAutomation:
 
@@ -25,10 +29,77 @@ class LobbyAutomation:
         if gray_pixels > 1000:
             self.window_controller.click(int(535 * wr), int(615 * hr))
 
-    def select_brawler(self, brawler):
+    def select_brawler(self, brawler, max_attempts: int = 3):
+        """Select a brawler by name. Resilient: if the first attempt fails
+        (menu didn't open, scroll missed, OCR was off), close the menu
+        with BACK and retry up to `max_attempts` times.
+        """
+        log.info("select_brawler: target=%r (max_attempts=%d)", brawler, max_attempts)
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            log.info("select_brawler attempt %d/%d", attempt, max_attempts)
+            try:
+                self._select_brawler_once(brawler)
+                log.info("select_brawler: SUCCESS on attempt %d", attempt)
+                return
+            except Exception as exc:
+                log.warning("select_brawler attempt %d failed: %s", attempt, exc)
+                last_exc = exc
+                # Reset: BACK key to close any open menu, give the game
+                # 2s to settle before next attempt.
+                self._reset_to_lobby()
+        # All attempts exhausted.
+        log.error("select_brawler: ALL %d attempts failed; last error: %s",
+                  max_attempts, last_exc)
+        raise last_exc or ValueError(
+            f"Brawler '{brawler}' could not be selected after {max_attempts} attempts."
+        )
+
+    @staticmethod
+    def _fuzzy_match(target: str, candidates, min_ratio: float = 0.7) -> str | None:
+        """Return the candidate whose name is the closest fuzzy match to
+        `target` (Ratcliff/Obershelp ratio ≥ min_ratio), or None.
+
+        Also accepts an exact substring match — useful when OCR adds
+        leading/trailing chars (e.g. `?colt`).
+        """
+        target = target.lower().strip()
+        best: tuple[float, str] | None = None
+        for c in candidates:
+            c_norm = c.lower().strip()
+            if not c_norm:
+                continue
+            # Skip purely-numeric strings (trophy counts).
+            if c_norm.replace(".", "").isdigit():
+                continue
+            # Substring match wins immediately.
+            if target in c_norm or c_norm in target:
+                return c
+            ratio = difflib.SequenceMatcher(None, target, c_norm).ratio()
+            if ratio >= min_ratio and (best is None or ratio > best[0]):
+                best = (ratio, c)
+        return best[1] if best else None
+
+    def _reset_to_lobby(self) -> None:
+        """Press BACK a couple of times to close any open menus."""
+        try:
+            serial = getattr(self.window_controller, "device_serial", None) or "emulator-5554"
+            for _ in range(2):
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "input", "keyevent", "4"],
+                    timeout=3, check=False,
+                )
+                time.sleep(0.6)
+            time.sleep(1.0)
+            log.debug("reset_to_lobby: BACK pressed")
+        except Exception as exc:
+            log.warning("reset_to_lobby failed: %s", exc)
+
+    def _select_brawler_once(self, brawler):
         self.window_controller.screenshot()
         brawler_menu_treshold = 0.8
         found = False
+        brawler_menu_btn_coords = None
         while not found:
             brawler_menu_btn_coords = find_template_center(self.window_controller.screenshot(), load_image(
                 r'state_finder/images_to_detect/brawler_menu_btn.png', self.window_controller.scale_factor),
@@ -36,7 +107,7 @@ class LobbyAutomation:
             if brawler_menu_btn_coords:
                 found = True
             else:
-                print("Brawler menu button not found, retrying...")
+                log.debug("brawler menu button not found at threshold=%.2f", brawler_menu_treshold)
                 brawler_menu_treshold -= 0.1
                 time.sleep(1)
             if not found and brawler_menu_treshold < 0.5:
@@ -44,51 +115,68 @@ class LobbyAutomation:
                 image.save(r'brawler_menu_btn_not_found.png')
                 raise ValueError("Brawler menu button not found on screen, even at low threshold.")
         x, y = brawler_menu_btn_coords
+        log.debug("clicking brawler menu button at (%d,%d)", x, y)
         self.window_controller.click(x, y)
-        c = 0
-        found_brawler = False
-        for i in range(50):
-            screenshot = self.window_controller.screenshot()
-            screenshot = screenshot.resize((int(screenshot.width * 0.65), int(screenshot.height * 0.65)))
-            screenshot = np.array(screenshot)
-            if debug: print("extracting text on current screen...")
-            results = extract_text_and_positions(screenshot)
-            reworked_results = {}
-            for key in results.keys():
-                orig_key = key
-                for symbol in [' ', '-', '.', "&"]:
-                    key = key.replace(symbol, "")
-                
-                key = self.resolve_ocr_typos(key)
-                reworked_results[key] = results[orig_key]
-            if debug:
-                print("All detected text while looking for brawler name:", reworked_results.keys())
-                print()
-            if brawler in reworked_results.keys():
-                print("Found brawler ", brawler, "clicking on its icon at ", int(x * 1.5385), int(y * 1.5385))
-                x, y = reworked_results[brawler]['center']
-                self.window_controller.click(int(x * 1.5385), int(y * 1.5385))
-                time.sleep(1)
-                select_x, select_y = self.coords_cfg['lobby']['select_btn'][0], self.coords_cfg['lobby']['select_btn'][1]
-                self.window_controller.click(select_x, select_y, already_include_ratio=False)
-                time.sleep(0.5)
-                print("Selected brawler ", brawler)
-                found_brawler = True
-                break
-            if c == 0:
-                wr = self.window_controller.width_ratio
-                hr = self.window_controller.height_ratio
-                self.window_controller.swipe(int(1700 * wr), int(900 * hr), int(1700 * wr), int(850 * hr), duration=0.8)
-                c += 1
-                continue
-            wr = self.window_controller.width_ratio
-            hr = self.window_controller.height_ratio
-            self.window_controller.swipe(int(1700 * wr), int(900 * hr), int(1700 * wr), int(650 * hr), duration=0.8)
-            time.sleep(1)
-        if not found_brawler:
-            print(f"WARNING: Brawler '{brawler}' was not found after 50 scroll attempts. "
-                  f"The bot will continue with the currently selected brawler.")
-            raise ValueError(f"Brawler '{brawler}' could not be found in the brawler selection menu.")
+        time.sleep(1.2)  # menu open animation
+        wr = self.window_controller.width_ratio
+        hr = self.window_controller.height_ratio
+
+        # Two phases: forward scroll (50 swipes down), then a "scroll-back-up"
+        # phase (15 swipes up) in case the menu jumped past the target.
+        for phase, (swipes, dy_start, dy_step) in enumerate([
+            (50, 850, 650),     # forward scroll
+            (15, 250, 450),     # reverse — swipe upward to scroll back
+        ]):
+            log.debug("select_brawler phase %d: %d swipes", phase, swipes)
+            for i in range(swipes):
+                screenshot = self.window_controller.screenshot()
+                screenshot_small = screenshot.resize(
+                    (int(screenshot.width * 0.65), int(screenshot.height * 0.65)))
+                results = extract_text_and_positions(np.array(screenshot_small))
+                reworked_results = {}
+                for key in results.keys():
+                    orig_key = key
+                    for symbol in [' ', '-', '.', "&"]:
+                        key = key.replace(symbol, "")
+                    key = self.resolve_ocr_typos(key)
+                    reworked_results[key] = results[orig_key]
+                if i < 3:
+                    log.debug("phase %d swipe %d: OCR keys=%s",
+                              phase, i, list(reworked_results.keys())[:20])
+                # Fuzzy match: EasyOCR mis-reads many brawler names
+                # (colt→cowt, shelly→shey, bibi→bbi, …). Pick the OCR
+                # key with the closest match to the target, accepting
+                # any with similarity ≥ 0.7 (Ratcliff/Obershelp).
+                match_key = self._fuzzy_match(brawler, reworked_results.keys())
+                if match_key is not None:
+                    bx, by = reworked_results[match_key]['center']
+                    real_x, real_y = int(bx * 1.5385), int(by * 1.5385)
+                    log.info("FOUND brawler %r (OCR=%r) at (%d,%d) — clicking",
+                             brawler, match_key, real_x, real_y)
+                    self.window_controller.click(real_x, real_y)
+                    time.sleep(1.5)
+                    # Press SELECT exactly ONCE. Clicking twice was the
+                    # source of "the Brawl Pass opens after select": the
+                    # second click hits a UI element below the menu.
+                    select_x = self.coords_cfg['lobby']['select_btn'][0]
+                    select_y = self.coords_cfg['lobby']['select_btn'][1]
+                    log.debug("clicking SELECT at (%d,%d)", select_x, select_y)
+                    self.window_controller.click(select_x, select_y, already_include_ratio=False)
+                    time.sleep(1.5)
+                    log.info("brawler %r selected", brawler)
+                    return
+                # Swipe to scroll within the menu.
+                start_y = 900 if phase == 0 else dy_start
+                end_y = dy_start if phase == 0 else dy_step
+                self.window_controller.swipe(
+                    int(1700 * wr), int(start_y * hr),
+                    int(1700 * wr), int(end_y * hr),
+                    duration=0.8,
+                )
+                time.sleep(0.6)
+
+        # Not found anywhere — fail this attempt; outer loop will retry.
+        raise ValueError(f"Brawler '{brawler}' not found in menu OCR.")
 
     @staticmethod
     def resolve_ocr_typos(potential_brawler_name: str) -> str:

@@ -1,10 +1,13 @@
 import os.path
 import sys
 import asyncio
+import logging
 import time
 import cv2
 import numpy as np
 import requests
+
+log = logging.getLogger(__name__)
 
 from state_finder.main import get_state
 from trophy_observer import TrophyObserver
@@ -46,7 +49,7 @@ class StageManager:
             'lobby': self.start_game,
             'play_store': self.click_brawl_stars,
             'star_drop': self.click_star_drop,
-            'trophy_reward': lambda: self.window_controller.press_key("Q")
+            'trophy_reward': self.click_trophy_reward,
         }
         self.Lobby_automation = lobby_automator
         self.lobby_config = load_toml_as_dict("cfg/lobby_config.toml")
@@ -81,6 +84,18 @@ class StageManager:
         return int(numbers)
 
     def start_game(self, data):
+        # push_max: a previous match's hook may have scheduled a brawler
+        # swap. Execute it now (we're back on the lobby screen).
+        pending = getattr(self, "_pending_swap", None)
+        if pending:
+            log.info("start_game: executing pending brawler swap → %s", pending)
+            self._pending_swap = None
+            try:
+                self.Lobby_automation.select_brawler(pending)
+                # Update brawlers_pick_data so subsequent logic uses the new brawler.
+                self.brawlers_pick_data[0]['brawler'] = pending
+            except Exception:
+                log.exception("brawler swap to %s failed", pending)
         print("state is lobby, starting game")
         values = {
             "trophies": self.Trophy_observer.current_trophies,
@@ -140,11 +155,51 @@ class StageManager:
             x, y = detection
             self.window_controller.click(x=x + 50, y=y)
 
+    def click_trophy_reward(self):
+        """Tap CONTINUE button at bottom-center of screen (covers both the
+        old 'GO' trophy reward popup AND the new POWER/COINS/etc. result
+        screens that show a single CONTINUE button)."""
+        log.info("state=trophy_reward → tapping CONTINUE")
+        import subprocess
+        sw = self.window_controller.width or 1920
+        sh = self.window_controller.height or 1080
+        # CONTINUE button is around 90-95% of screen height, centered.
+        cx, cy = sw // 2, int(sh * 0.92)
+        serial = getattr(self.window_controller, "device_serial", None) or "emulator-5554"
+        try:
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "input", "tap", str(cx), str(cy)],
+                timeout=3, check=False,
+            )
+        except Exception:
+            self.window_controller.click(cx, cy, already_include_ratio=True)
+
     def click_star_drop(self):
-        if self.long_press_star_drop == "yes":
-            self.window_controller.press_key("Q", 10)
-        else:
-            self.window_controller.press_key("Q")
+        log.info("state=star_drop → long-press center")
+        # "TAP AND HOLD" / "TOUCHEZ ET MAINTENEZ" — needs a real long-press
+        # at screen center.
+        # scrcpy.control.touch DOWN+UP is silently ignored by Brawl Stars
+        # (Unity touch filter). ADB `input swipe X Y X Y 4000` is treated as
+        # a proper long-press by BlueStacks and works reliably.
+        import subprocess
+        sw = self.window_controller.width or 1920
+        sh = self.window_controller.height or 1080
+        cx, cy = sw // 2, sh // 2
+        duration_ms = 4000 if self.long_press_star_drop == "yes" else 50
+        # Pick the connected ADB device serial (works for BlueStacks
+        # emulator-5554 and physical phones alike).
+        serial = getattr(self.window_controller, "device_serial", None) or "emulator-5554"
+        try:
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "input", "swipe",
+                 str(cx), str(cy), str(cx), str(cy), str(duration_ms)],
+                timeout=duration_ms / 1000 + 3,
+                check=False,
+            )
+        except Exception as exc:
+            print(f"click_star_drop fallback (ADB failed: {exc})")
+            self.window_controller.click(cx, cy, delay=duration_ms / 1000.0,
+                                         already_include_ratio=True)
 
     def end_game(self):
         screenshot = self.window_controller.screenshot()
@@ -180,7 +235,10 @@ class StageManager:
 
     def do_state(self, state, data=None):
         if state in self.states:
+            log.debug("do_state: %s", state)
             try:
                 self.states[state](data)
             except TypeError:
                 self.states[state]()
+        else:
+            log.warning("do_state: unknown state %r (skipped)", state)

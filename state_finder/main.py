@@ -137,11 +137,24 @@ def is_in_end_of_a_match(image):
 
 def is_in_trophy_reward(image):
     image = np.array(image)
+    # Original PylaAI check: bottom-right quadrant for "GO" text.
     starting_x = int(image.shape[1] * 0.75)
     starting_y = int(image.shape[0] * 0.75)
-    image = image[starting_y:, starting_x:]
-    all_text = (" ".join(extract_text_and_positions(image).keys())).lower().replace("'", "")
-    return "go" in all_text
+    bottom_right = image[starting_y:, starting_x:]
+    text_br = (" ".join(extract_text_and_positions(bottom_right).keys())).lower().replace("'", "")
+    if "go" in text_br:
+        return True
+    # Star drop result variants (POWER/COINS/etc. + CONTINUE button at the
+    # bottom-center). OCR the center-bottom strip for "continue".
+    cb_y1 = int(image.shape[0] * 0.85)
+    cb_y2 = image.shape[0]
+    cb_x1 = int(image.shape[1] * 0.30)
+    cb_x2 = int(image.shape[1] * 0.70)
+    center_bottom = image[cb_y1:cb_y2, cb_x1:cb_x2]
+    text_cb = (" ".join(extract_text_and_positions(center_bottom).keys())).lower()
+    if "continue" in text_cb:
+        return True
+    return False
 
 def is_in_brawl_pass(image):
     # Note: PNG must match actual file extension on disk
