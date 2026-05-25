@@ -37,6 +37,7 @@ from bsbot.utils.geometry import (
     line_of_sight,
     normalize,
 )
+from bsbot.utils.pathfinding import GridSpec, next_waypoint_vector
 from bsbot.vision.postprocess import Enemy, GameState
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ class ColtTuning:
     cube_pickup_safe_radius_px: float = 400.0
     use_super_min_enemies_in_line: int = 1  # 1 enemy enough for now (Colt super is long range)
     drift_toward_center: bool = True
+    pathfinding_cell_size: int = 48  # px per A* cell; smaller = finer = slower
 
 
 class ColtStrategy(Strategy):
@@ -221,8 +223,28 @@ class ColtStrategy(Strategy):
         return None  # Already at good distance, no kite move needed.
 
     def _move_toward(self, gs: GameState, target: tuple[int, int]) -> Action:
+        """Move toward `target`. Uses A* around walls if walls are present and
+        line of sight to target is blocked; otherwise direct vector.
+        """
         assert gs.my_pos is not None
-        dx = target[0] - gs.my_pos[0]
-        dy = target[1] - gs.my_pos[1]
-        ux, uy = normalize((dx, dy))
-        return Action.joystick_move(ux, uy)
+        # Fast path: no walls or LoS clear → direct vector.
+        if not gs.walls or line_of_sight(gs.my_pos, target, gs.walls):
+            dx = target[0] - gs.my_pos[0]
+            dy = target[1] - gs.my_pos[1]
+            ux, uy = normalize((dx, dy))
+            return Action.joystick_move(ux, uy)
+
+        # Walls block direct path → A*.
+        spec = GridSpec.for_frame(
+            gs.frame_width or 1920,
+            gs.frame_height or 1080,
+            cell_size=self.tuning.pathfinding_cell_size,
+        )
+        v = next_waypoint_vector(spec, gs.walls, gs.my_pos, target)
+        if v is None:
+            # No path — fall back to direct vector (better than freezing).
+            dx = target[0] - gs.my_pos[0]
+            dy = target[1] - gs.my_pos[1]
+            ux, uy = normalize((dx, dy))
+            return Action.joystick_move(ux, uy)
+        return Action.joystick_move(v[0], v[1])
