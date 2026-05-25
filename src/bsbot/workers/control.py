@@ -54,6 +54,7 @@ class ControlWorker(threading.Thread):
         joystick_tick_ms: int = 80,
         landscape_w: int = 2340,
         landscape_h: int = 1080,
+        capture_worker=None,
     ):
         super().__init__(name="ControlWorker", daemon=True)
         self.bus = bus
@@ -65,9 +66,15 @@ class ControlWorker(threading.Thread):
         # (independent of `adb.screen_width/height` which return portrait).
         self.landscape_w = landscape_w
         self.landscape_h = landscape_h
+        # Optional: reference to CaptureWorker — if provided, ControlWorker
+        # can use its scrcpy.Client.control for continuous touch (smoother
+        # joystick than ADB `input swipe`).
+        self.capture_worker = capture_worker
 
         self._joystick_dir: tuple[float, float] | None = None  # (dx, dy) or None
         self._last_joystick_tick = 0.0
+        self._joystick_finger_down = False
+        self._joystick_last_pos: tuple[int, int] | None = None
 
     def run(self) -> None:
         logger.info("ControlWorker starting")
@@ -105,6 +112,16 @@ class ControlWorker(threading.Thread):
             self._last_joystick_tick = time.monotonic()
         elif t == ActionType.JOYSTICK_RELEASE:
             self._joystick_dir = None
+            client = getattr(self.capture_worker, "client", None) if self.capture_worker else None
+            if client is not None and self._joystick_finger_down and self._joystick_last_pos:
+                try:
+                    import scrcpy as _scrcpy
+                    x, y = self._joystick_last_pos
+                    client.control.touch(x, y, _scrcpy.ACTION_UP)
+                except Exception:
+                    pass
+            self._joystick_finger_down = False
+            self._joystick_last_pos = None
         elif t == ActionType.PRESS_BUTTON:
             self.adb.tap(*self._button_coords(action.button))
         elif t in (ActionType.AIMED_ATTACK, ActionType.AIMED_SUPER):
@@ -124,7 +141,22 @@ class ControlWorker(threading.Thread):
         cx, cy = self.layout.joystick_center
         r = self.layout.joystick_radius
         tx, ty = int(cx + dx * r), int(cy + dy * r)
-        # Short swipe with slightly-longer-than-tick duration to feel continuous.
+
+        # Prefer scrcpy continuous touch (no gap between events) if available.
+        client = getattr(self.capture_worker, "client", None) if self.capture_worker else None
+        if client is not None and getattr(client, "control", None) is not None:
+            try:
+                import scrcpy as _scrcpy
+                if not self._joystick_finger_down:
+                    client.control.touch(cx, cy, _scrcpy.ACTION_DOWN)
+                    self._joystick_finger_down = True
+                client.control.touch(tx, ty, _scrcpy.ACTION_MOVE)
+                self._joystick_last_pos = (tx, ty)
+                return
+            except Exception as exc:
+                logger.debug("scrcpy touch failed, falling back to ADB: %s", exc)
+
+        # Fallback: ADB swipe (less smooth).
         self.adb.swipe(cx, cy, tx, ty, duration_ms=self.joystick_tick_ms + 20)
 
     def _aimed(self, action: Action) -> None:

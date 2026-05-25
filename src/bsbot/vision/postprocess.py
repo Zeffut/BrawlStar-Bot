@@ -96,6 +96,13 @@ def parse_brawler_detections(
       detection is considered hostile.
     """
     MIN_BRAWLER_SIZE_PX = 150
+    # Real brawlers in landscape are roughly 200-400px wide; phantom hits on
+    # tile patterns can sometimes be 500-800px wide. Cap to filter those out.
+    MAX_BRAWLER_SIZE_PX = 450
+    # Brawler sprite is taller than wide (humanoid). Aspect ratio h/w between
+    # 0.8 and 2.0 covers all real shapes; values outside are likely phantoms.
+    MIN_ASPECT_RATIO_H_OVER_W = 0.7
+    MAX_ASPECT_RATIO_H_OVER_W = 2.5
     # The camera doesn't always center perfectly on the player (offset when
     # moving). Within this search radius around screen center, the LARGEST
     # detection is treated as us and excluded.
@@ -112,20 +119,26 @@ def parse_brawler_detections(
             b = BBox.from_xyxy(xyxy)
             if min(b.w, b.h) < MIN_BRAWLER_SIZE_PX:
                 continue
+            if max(b.w, b.h) > MAX_BRAWLER_SIZE_PX:
+                continue  # too big, probably a wall/floor cluster
+            ratio = b.h / max(b.w, 1)
+            if ratio < MIN_ASPECT_RATIO_H_OVER_W or ratio > MAX_ASPECT_RATIO_H_OVER_W:
+                continue
             valid.append((cls, b))
 
-    # Identify "ourself": largest detection within SELF_SEARCH_RADIUS of my_pos.
+    # Identify "ourself": detection closest to my_pos within SELF_SEARCH_RADIUS.
+    # Closer wins (camera centers on player, so we should be nearest to
+    # screen center even if an enemy passes by with a bigger bbox).
     self_idx: int | None = None
     if my_pos is not None and valid:
-        candidates: list[tuple[int, int]] = []  # (idx, area)
+        best_dist2: float | None = None
         for i, (_cls, b) in enumerate(valid):
             dx = b.cx - my_pos[0]
             dy = b.cy - my_pos[1]
-            if (dx * dx + dy * dy) <= (SELF_SEARCH_RADIUS_PX ** 2):
-                candidates.append((i, b.area))
-        if candidates:
-            # Pick the largest in radius — that's the camera-focused player.
-            self_idx = max(candidates, key=lambda t: t[1])[0]
+            d2 = dx * dx + dy * dy
+            if d2 <= (SELF_SEARCH_RADIUS_PX ** 2) and (best_dist2 is None or d2 < best_dist2):
+                best_dist2 = d2
+                self_idx = i
 
     enemies: list[Enemy] = [
         Enemy(bbox=b, brawler_class=cls, confidence=1.0)

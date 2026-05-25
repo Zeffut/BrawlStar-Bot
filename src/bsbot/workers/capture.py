@@ -50,6 +50,11 @@ class CaptureWorker(threading.Thread):
         self._last_frame_time = 0.0
 
     @property
+    def client(self):
+        """Return the underlying scrcpy.Client (or None if not started)."""
+        return self._client
+
+    @property
     def frames_received(self) -> int:
         return self._frames_received
 

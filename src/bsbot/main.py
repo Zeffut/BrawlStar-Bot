@@ -148,7 +148,12 @@ def run(config: dict, dry_run: bool = False) -> int:
     workers.append(brain)
 
     if not dry_run and adb is not None:
-        control = ControlWorker(control_bus, adb, stop_event, layout=ButtonLayout())
+        capture_worker = next((w for w in workers if w.name == "CaptureWorker"), None)
+        control = ControlWorker(
+            control_bus, adb, stop_event,
+            layout=ButtonLayout(),
+            capture_worker=capture_worker,
+        )
         workers.append(control)
 
     # Start everything.
