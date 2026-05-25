@@ -1,11 +1,11 @@
 [
     {
-        "brawler": "colt",
-        "push_until": 500,
-        "trophies": 271,
-        "wins": 3,
+        "brawler": "nita",
+        "trophies": 260,
+        "wins": 0,
+        "win_streak": 0,
+        "automatically_pick": true,
         "type": "trophies",
-        "automatically_pick": false,
-        "win_streak": 2
+        "push_until": 99999
     }
 ]

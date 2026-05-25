@@ -4,8 +4,8 @@ victory = 54
 draw = 1
 
 [total]
-defeat = 0
-victory = 1
+defeat = 2
+victory = 3
 draw = 0
 
 [shelly]
@@ -15,5 +15,15 @@ draw = 0
 
 [colt]
 defeat = 0
-victory = 1
+victory = 2
+draw = 0
+
+[brock]
+defeat = 4
+victory = 19
+draw = 1
+
+[nita]
+defeat = 2
+victory = 3
 draw = 0
