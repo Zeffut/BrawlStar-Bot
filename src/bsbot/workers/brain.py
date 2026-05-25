@@ -6,6 +6,7 @@ import threading
 
 from bsbot.buses import ControlBus, LatestSlot
 from bsbot.strategies.base import Strategy
+from bsbot.utils.stats import SessionStats
 from bsbot.vision.postprocess import GameState
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class BrainWorker(threading.Thread):
         strategies: dict[str, Strategy],
         default_strategy: Strategy | None = None,
         tick_timeout_s: float = 0.5,
+        stats: SessionStats | None = None,
     ):
         super().__init__(name="BrainWorker", daemon=True)
         self.state_slot = state_slot
@@ -43,6 +45,7 @@ class BrainWorker(threading.Thread):
         self.strategies = strategies
         self.default_strategy = default_strategy
         self.tick_timeout_s = tick_timeout_s
+        self.stats = stats or SessionStats()
         self._last_seen_version = 0
 
     def run(self) -> None:
@@ -52,13 +55,16 @@ class BrainWorker(threading.Thread):
             if gs is None or version == self._last_seen_version:
                 continue
             self._last_seen_version = version
+            self.stats.record_frame()
+            self.stats.record_state_transition(gs.state)
             try:
                 action = self._dispatch(gs)
                 if action is not None:
                     self.control_bus.put(action, block=False)
             except Exception:
+                self.stats.record_error()
                 logger.exception("Strategy dispatch failed for state %s", gs.state)
-        logger.info("BrainWorker stopped")
+        logger.info("BrainWorker stopped — final stats: %s", self.stats.snapshot())
 
     def _dispatch(self, gs: GameState):
         strategy = self.strategies.get(gs.state, self.default_strategy)
