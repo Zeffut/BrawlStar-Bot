@@ -17,21 +17,23 @@ logger = logging.getLogger(__name__)
 class ButtonLayout:
     """Pixel coordinates of in-game UI elements, in *device* native resolution.
 
-    Filled by the calibration step (M3+). Defaults are placeholders.
+    Calibrated for Mi 9T Pro (2340×1080 landscape) on 2026-05-25.
+    Values estimated from a Brawl Ball screenshot; fine-tune by running
+    the bot and observing whether movements / shots land correctly.
     """
 
-    # Joystick center (bottom-left), radius in px
-    joystick_center: tuple[int, int] = (250, 1800)
-    joystick_radius: int = 200
-    # Attack button (bottom-right). For Colt aimed-attack, we drag from this
+    # Joystick center (bottom-left of landscape screen), radius in px
+    joystick_center: tuple[int, int] = (370, 870)
+    joystick_radius: int = 160
+    # Attack button (bottom-right). For aimed-attack, we drag from this
     # button toward the target.
-    attack_button: tuple[int, int] = (1700, 1850)
-    attack_drag_radius: int = 300
+    attack_button: tuple[int, int] = (2070, 870)
+    attack_drag_radius: int = 250
     # Super button (just left of attack)
-    super_button: tuple[int, int] = (1500, 1700)
-    super_drag_radius: int = 300
-    # Gadget button (top-right of attack)
-    gadget_button: tuple[int, int] = (1850, 1600)
+    super_button: tuple[int, int] = (1840, 830)
+    super_drag_radius: int = 250
+    # Gadget button (above attack)
+    gadget_button: tuple[int, int] = (2070, 600)
 
 
 class ControlWorker(threading.Thread):

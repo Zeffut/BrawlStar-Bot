@@ -7,7 +7,7 @@ device_serial = ""
 
 [game]
 mode = "solo_showdown"
-brawler = "colt"
+brawler = "brock"
 
 [session]
 max_duration_minutes = 600   # 0 = unlimited

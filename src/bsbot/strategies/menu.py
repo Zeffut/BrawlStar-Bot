@@ -23,12 +23,13 @@ class MenuCoords:
     config.toml `[menu]` section.
     """
 
-    play_button: tuple[int, int] = (1700, 1100)
-    continue_button: tuple[int, int] = (1700, 1900)
-    popup_close: tuple[int, int] = (1850, 200)
-    reconnect_button: tuple[int, int] = (960, 1200)
+    # Calibrated for Mi 9T Pro (2340x1080 landscape) on 2026-05-25.
+    play_button: tuple[int, int] = (2115, 930)
+    continue_button: tuple[int, int] = (2115, 930)  # TBD when we see end screen
+    popup_close: tuple[int, int] = (2240, 90)       # TBD
+    reconnect_button: tuple[int, int] = (1170, 540)  # TBD (screen center fallback)
     # Generic safe-tap when stuck — center of screen.
-    fallback: tuple[int, int] = (960, 540)
+    fallback: tuple[int, int] = (1170, 540)
 
 
 class MenuStrategy(Strategy):
