@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BrawlStar Bot — Cloud Panel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header>
+  <h1>☁️ BrawlStar Bot — Fleet</h1>
+  <div id="fleet-summary" class="fleet"></div>
+</header>
+
+<main>
+  <aside id="account-list">
+    <h2>Instances</h2>
+    <ul id="instances"></ul>
+    <h2 style="margin-top:18px">Accounts</h2>
+    <ul id="accounts"></ul>
+  </aside>
+
+  <section id="account-detail">
+    <div id="empty-state">Pick an account.</div>
+    <div id="detail-content" hidden>
+      <header class="detail-header">
+        <div>
+          <h2 id="acc-name"></h2>
+          <div class="tag" id="acc-tag"></div>
+          <div class="muted" id="acc-instance"></div>
+        </div>
+      </header>
+      <section class="cards">
+        <div class="card"><label>Sessions</label><div id="kpi-sessions">—</div></div>
+        <div class="card"><label>Total matches</label><div id="kpi-matches">—</div></div>
+        <div class="card"><label>Win rate</label><div id="kpi-wr">—</div></div>
+        <div class="card"><label>Last seen</label><div id="kpi-seen">—</div></div>
+      </section>
+      <section class="charts">
+        <div class="chart-card">
+          <h3>Account trophies over time</h3>
+          <canvas id="chart-progression"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Win rate by brawler</h3>
+          <canvas id="chart-winrate"></canvas>
+        </div>
+      </section>
+      <section class="lists">
+        <div class="list-card">
+          <h3>Recent matches</h3>
+          <table id="matches-table">
+            <thead><tr><th>Time</th><th>Brawler</th><th>Result</th><th>Δ</th><th>Trophies</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="list-card">
+          <h3>Sessions</h3>
+          <table id="sessions-table">
+            <thead><tr><th>Started</th><th>Brawler</th><th>Target</th><th>Δ</th><th>Status</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

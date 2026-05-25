@@ -1,0 +1,8 @@
+# Cloud panel sync — pushes match/session events to a central VPS panel.
+# Copy to cfg/cloud.toml and fill in your values.
+
+enabled = false
+url = "https://panel.example.com"
+token = "shared-secret-set-in-CLOUD_AUTH_TOKEN-env-on-vps"
+instance_id = "mac-zeffut"   # unique short id, no spaces
+name = "Mac de Zeffut"       # display name shown on the panel
