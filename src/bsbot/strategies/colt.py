@@ -90,15 +90,28 @@ class ColtStrategy(Strategy):
         self,
         stats: BrawlerStats,
         tuning: ColtTuning | None = None,
+        min_action_interval_s: float = 0.2,
     ):
         self.stats = stats
         self.tuning = tuning or ColtTuning()
+        # Throttle: don't flood ControlBus with 30 actions/sec; ADB can only
+        # process ~10-15 distinct inputs/sec without lag.
+        self.min_action_interval_s = min_action_interval_s
+        self._last_decision_at = 0.0
+        self._last_action_type: str | None = None
 
     # ------------------------------------------------------------------ decide
 
     def decide(self, gs: GameState) -> Action | None:
         if gs.state != "match" or gs.my_pos is None:
             return None  # Not in a match or we don't see ourselves.
+
+        import time as _t
+        now = _t.monotonic()
+        # Throttle: skip until min interval has elapsed (avoid ADB flood).
+        if now - self._last_decision_at < self.min_action_interval_s:
+            return None
+        self._last_decision_at = now
 
         # 1. Survive (skip if HP unknown — v1 placeholder).
         if gs.my_health_pct is not None and gs.my_health_pct < self.tuning.flee_hp_threshold_pct:
@@ -129,9 +142,15 @@ class ColtStrategy(Strategy):
         if kite is not None:
             return kite
 
-        # 7. Drift toward center.
+        # 7. Move toward the closest enemy (out of attack range — close gap).
+        if gs.enemies:
+            target = min(gs.enemies, key=lambda e: distance(gs.my_pos, e.position))
+            return self._move_toward(gs, target.position)
+
+        # 8. No enemies in view — drift upward (toward map exploration).
         if self.tuning.drift_toward_center:
-            return self._move_toward(gs, (gs.frame_width // 2, gs.frame_height // 2))
+            target_y = max(0, (gs.my_pos[1] if gs.my_pos else 0) - 200)
+            return self._move_toward(gs, (gs.my_pos[0] if gs.my_pos else 0, target_y))
 
         return Action.joystick_release()
 

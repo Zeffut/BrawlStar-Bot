@@ -85,44 +85,33 @@ def parse_brawler_detections(
 ) -> tuple[tuple[int, int] | None, list[Enemy]]:
     """Split `brawlersInGame` output into (my_pos, enemies).
 
-    Strategy:
-    1. If a detection's class name exactly matches `my_brawler_class`, treat
-       it as ours (pick the largest if multiple).
-    2. Otherwise (e.g. numeric class IDs because we didn't pass a class list),
-       fall back to: the brawler detection whose center is **closest to the
-       bottom-center of the frame** is most likely us (camera centers on
-       player). All others = enemies.
+    Brawl Stars centers the camera on the local player, so the player's
+    sprite is always approximately at the middle of the frame (slightly
+    below center). We exploit that:
+
+    - **my_pos = (frame_width/2, frame_height * 0.55)** — assumed fixed.
+    - Every detection from the model is treated as an enemy/teammate.
+      We can't reliably tell teammates from enemies without UI hints
+      (allies have a blue circle, enemies a red one) so for v1 every
+      detection is considered hostile.
     """
+    # Min bbox dimension to be considered a "real" on-field brawler.
+    # Brawler portraits in UI corners (score indicators, party icons) are
+    # ~70-90px tall; actual brawlers in landscape view are ~150-400px tall.
+    # 110px threshold filters most UI false positives.
+    MIN_BRAWLER_SIZE_PX = 110
+
     enemies: list[Enemy] = []
-    my_candidates: list[BBox] = []
-    all_boxes: list[tuple[str, BBox]] = []
     for cls, boxes in raw.items():
         for xyxy in boxes:
             b = BBox.from_xyxy(xyxy)
-            all_boxes.append((cls, b))
-            if my_brawler_class and cls == my_brawler_class:
-                my_candidates.append(b)
+            if min(b.w, b.h) < MIN_BRAWLER_SIZE_PX:
+                continue
+            enemies.append(Enemy(bbox=b, brawler_class=cls, confidence=1.0))
 
     my_pos: tuple[int, int] | None = None
-    my_box: BBox | None = None
-
-    if my_candidates:
-        my_box = max(my_candidates, key=lambda b: b.area)
-        my_pos = my_box.center
-    elif all_boxes and frame_width > 0 and frame_height > 0:
-        # Heuristic fallback: closest detection to bottom-center.
-        cx, cy = frame_width // 2, int(frame_height * 0.6)
-        def dist_to_anchor(item):
-            _cls, b = item
-            return (b.cx - cx) ** 2 + (b.cy - cy) ** 2
-        my_cls, my_box = min(all_boxes, key=dist_to_anchor)
-        my_pos = my_box.center
-
-    for cls, b in all_boxes:
-        if my_box is not None and b is my_box:
-            continue
-        enemies.append(Enemy(bbox=b, brawler_class=cls, confidence=1.0))
-
+    if frame_width > 0 and frame_height > 0:
+        my_pos = (frame_width // 2, int(frame_height * 0.55))
     return my_pos, enemies
 
 

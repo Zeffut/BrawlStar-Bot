@@ -35,45 +35,36 @@ class TestParseTiles:
 
 
 class TestParseBrawlers:
-    def test_no_self_class_all_enemies(self):
-        raw = {"shelly": [[10, 10, 30, 30]], "colt": [[100, 100, 130, 130]]}
-        my_pos, enemies = parse_brawler_detections(raw, my_brawler_class=None)
-        assert my_pos is None
+    def test_all_detections_become_enemies(self):
+        """Camera-centered assumption: my_pos is always screen center;
+        every (sufficiently large) detection is an enemy."""
+        # Use big bboxes that pass MIN_BRAWLER_SIZE_PX filter.
+        raw = {"shelly": [[10, 10, 200, 200]], "colt": [[300, 300, 500, 500]]}
+        my_pos, enemies = parse_brawler_detections(
+            raw, my_brawler_class=None, frame_width=1000, frame_height=1000
+        )
+        assert my_pos == (500, 550)  # frame_width/2, frame_height*0.55
         assert len(enemies) == 2
 
-    def test_self_extracted_from_class_match(self):
-        raw = {
-            "colt": [[100, 100, 200, 200]],  # us (largest)
-            "shelly": [[10, 10, 30, 30]],
-        }
-        my_pos, enemies = parse_brawler_detections(raw, my_brawler_class="colt")
-        assert my_pos == (150, 150)
-        assert len(enemies) == 1
-        assert enemies[0].brawler_class == "shelly"
-
-    def test_self_picks_largest_candidate(self):
-        # If two "colt" detections (us + an enemy Colt), our brawler is the
-        # most prominent (largest bbox); the other becomes an enemy.
-        raw = {
-            "colt": [[100, 100, 200, 200], [0, 0, 20, 20]],  # 100x100 and 20x20
-        }
-        my_pos, enemies = parse_brawler_detections(raw, my_brawler_class="colt")
-        assert my_pos == (150, 150)
-        assert len(enemies) == 1
-        assert enemies[0].bbox.center == (10, 10)
-
-    def test_bottom_center_fallback_when_no_class_match(self):
-        # When my_brawler_class doesn't match any detection but frame size is
-        # provided, the closest-to-bottom-center detection is treated as ours.
-        raw = {"0": [[800, 850, 900, 950], [100, 100, 150, 150]]}
-        my_pos, enemies = parse_brawler_detections(
-            raw, my_brawler_class=None, frame_width=1920, frame_height=1080
+    def test_small_ui_detections_filtered_out(self):
+        """Tiny brawler bboxes (e.g. score icons in UI corners) are ignored."""
+        raw = {"shelly": [[10, 10, 80, 80]]}  # 70x70 — too small
+        _, enemies = parse_brawler_detections(
+            raw, frame_width=1000, frame_height=1000
         )
-        # bottom-center anchor = (960, 648). First box center (850, 900),
-        # second (125, 125) — first is much closer.
-        assert my_pos == (850, 900)
+        assert enemies == []
+
+    def test_my_pos_none_when_frame_unknown(self):
+        raw = {"colt": [[100, 100, 300, 300]]}  # 200x200 — big enough
+        my_pos, enemies = parse_brawler_detections(raw)
+        assert my_pos is None  # no frame size → can't compute center
         assert len(enemies) == 1
-        assert enemies[0].bbox.center == (125, 125)
+
+    def test_my_pos_at_landscape_center(self):
+        my_pos, _ = parse_brawler_detections(
+            {}, frame_width=2340, frame_height=1080
+        )
+        assert my_pos == (1170, 594)  # 2340/2, 1080*0.55 = 594
 
 
 class TestParsePowerCubes:
@@ -96,16 +87,17 @@ class TestBuildMatchState:
             frame_width=1080,
             frame_height=1920,
             tile_raw={"wall": [[0, 0, 50, 50]], "bush": [[100, 100, 150, 150]]},
-            brawler_raw={"colt": [[400, 800, 500, 900]], "shelly": [[200, 200, 300, 300]]},
+            brawler_raw={"colt": [[400, 800, 600, 1000]], "shelly": [[200, 200, 400, 400]]},
             main_raw={"power_cube": [[600, 600, 620, 620]]},
             my_brawler_class="colt",
         )
         assert gs.state == "match"
         assert gs.frame_id == 42
         assert gs.frame_width == 1080
-        assert gs.my_pos == (450, 850)
-        assert len(gs.enemies) == 1
-        assert gs.enemies[0].brawler_class == "shelly"
+        # my_pos = screen center (camera follows player).
+        assert gs.my_pos == (540, 1056)  # 1080/2, 1920*0.55
+        # All brawler detections are enemies now.
+        assert len(gs.enemies) == 2
         assert len(gs.walls) == 1
         assert len(gs.bushes) == 1
         assert len(gs.power_cubes) == 1
