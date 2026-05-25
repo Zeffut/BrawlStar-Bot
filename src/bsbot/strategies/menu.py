@@ -27,7 +27,8 @@ class MenuCoords:
     play_button: tuple[int, int] = (2115, 930)
     continue_button: tuple[int, int] = (2115, 930)  # TBD when we see end screen
     popup_close: tuple[int, int] = (2240, 90)       # TBD
-    reconnect_button: tuple[int, int] = (1170, 540)  # TBD (screen center fallback)
+    # "RECHARGER" link in the AFK-kick popup (Déconnexion pour non-participation).
+    reconnect_button: tuple[int, int] = (575, 728)
     # Generic safe-tap when stuck — center of screen.
     fallback: tuple[int, int] = (1170, 540)
 
