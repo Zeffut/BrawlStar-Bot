@@ -95,33 +95,43 @@ def parse_brawler_detections(
       (allies have a blue circle, enemies a red one) so for v1 every
       detection is considered hostile.
     """
-    # Min bbox dimension to be considered a "real" on-field brawler.
-    # Brawler portraits in UI corners (score indicators, party icons) are
-    # ~70-90px tall; phantom detections from the model on tile patterns can
-    # also be 100-140px. 150px threshold filters those out while still
-    # keeping actual brawlers in landscape view (typically 200-400px).
     MIN_BRAWLER_SIZE_PX = 150
-    # The camera centers on the player, so any detection within this radius
-    # of my_pos is actually US (Brock) — exclude as a self-target.
-    SELF_EXCLUSION_RADIUS_PX = 220
+    # The camera doesn't always center perfectly on the player (offset when
+    # moving). Within this search radius around screen center, the LARGEST
+    # detection is treated as us and excluded.
+    SELF_SEARCH_RADIUS_PX = 350
 
     my_pos: tuple[int, int] | None = None
     if frame_width > 0 and frame_height > 0:
         my_pos = (frame_width // 2, int(frame_height * 0.55))
 
-    enemies: list[Enemy] = []
+    # Collect all valid (large enough) brawler detections.
+    valid: list[tuple[str, BBox]] = []
     for cls, boxes in raw.items():
         for xyxy in boxes:
             b = BBox.from_xyxy(xyxy)
             if min(b.w, b.h) < MIN_BRAWLER_SIZE_PX:
                 continue
-            if my_pos is not None:
-                dx = b.cx - my_pos[0]
-                dy = b.cy - my_pos[1]
-                if (dx * dx + dy * dy) < (SELF_EXCLUSION_RADIUS_PX ** 2):
-                    continue  # Skip self.
-            enemies.append(Enemy(bbox=b, brawler_class=cls, confidence=1.0))
+            valid.append((cls, b))
 
+    # Identify "ourself": largest detection within SELF_SEARCH_RADIUS of my_pos.
+    self_idx: int | None = None
+    if my_pos is not None and valid:
+        candidates: list[tuple[int, int]] = []  # (idx, area)
+        for i, (_cls, b) in enumerate(valid):
+            dx = b.cx - my_pos[0]
+            dy = b.cy - my_pos[1]
+            if (dx * dx + dy * dy) <= (SELF_SEARCH_RADIUS_PX ** 2):
+                candidates.append((i, b.area))
+        if candidates:
+            # Pick the largest in radius — that's the camera-focused player.
+            self_idx = max(candidates, key=lambda t: t[1])[0]
+
+    enemies: list[Enemy] = [
+        Enemy(bbox=b, brawler_class=cls, confidence=1.0)
+        for i, (cls, b) in enumerate(valid)
+        if i != self_idx
+    ]
     return my_pos, enemies
 
 

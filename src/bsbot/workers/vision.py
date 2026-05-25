@@ -122,6 +122,9 @@ class VisionWorker(threading.Thread):
         h, w = frame.shape[:2]
         state_match = self.state_finder.detect(frame)
         state_name = state_match.state if state_match else "unknown"
+        if state_match and self._frame_id % 30 == 0:
+            logger.info("state_finder: %s via %s (%.3f)",
+                        state_match.state, state_match.template_name, state_match.score)
 
         if state_name not in self.run_full_detection_on_states:
             # Cheap path: only publish the state, no expensive ONNX.
@@ -139,11 +142,18 @@ class VisionWorker(threading.Thread):
         # walls/UI) — only keep detections we're very confident about.
         assert self._tile_detector and self._brawlers_detector and self._main_detector
         tile_raw = self._tile_detector.detect_objects(frame, conf_thresh=0.6)
-        brawler_raw = self._brawlers_detector.detect_objects(frame, conf_thresh=0.78)
+        brawler_raw = self._brawlers_detector.detect_objects(frame, conf_thresh=0.85)
         main_raw = self._main_detector.detect_objects(frame, conf_thresh=0.6)
 
         # If state_finder said "unknown" but we got brawlers, assume match.
         effective_state = "match" if (state_name == "unknown" and brawler_raw) else state_name
+
+        # Conversely: if state_finder says "match" but the brawler model
+        # finds zero plausible enemies, it's almost certainly a false
+        # positive (loading screen, popup with match background, etc.).
+        # Downgrade so MenuStrategy can handle the dismiss.
+        if effective_state == "match" and not brawler_raw:
+            effective_state = "unknown"
 
         if effective_state == "match":
             return build_match_state(
