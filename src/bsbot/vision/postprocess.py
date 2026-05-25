@@ -80,31 +80,49 @@ def parse_tile_detections(raw: dict[str, list[list[int]]]) -> tuple[list[BBox], 
 def parse_brawler_detections(
     raw: dict[str, list[list[int]]],
     my_brawler_class: str | None = None,
+    frame_width: int = 0,
+    frame_height: int = 0,
 ) -> tuple[tuple[int, int] | None, list[Enemy]]:
     """Split `brawlersInGame` output into (my_pos, enemies).
 
-    Heuristic for v1: PylaAI's brawlersInGame model produces a class per brawler
-    name. If `my_brawler_class` matches a detection, treat that bbox as our
-    own position; everything else is enemy. If multiple matches, pick the
-    largest (closest to camera in screen). If `my_brawler_class` is None or
-    no match, fall back to "the bbox in the bottom-center quadrant" as ours.
+    Strategy:
+    1. If a detection's class name exactly matches `my_brawler_class`, treat
+       it as ours (pick the largest if multiple).
+    2. Otherwise (e.g. numeric class IDs because we didn't pass a class list),
+       fall back to: the brawler detection whose center is **closest to the
+       bottom-center of the frame** is most likely us (camera centers on
+       player). All others = enemies.
     """
     enemies: list[Enemy] = []
     my_candidates: list[BBox] = []
+    all_boxes: list[tuple[str, BBox]] = []
     for cls, boxes in raw.items():
         for xyxy in boxes:
             b = BBox.from_xyxy(xyxy)
-            # confidence isn't returned by Detect (yet); place 1.0 as default.
+            all_boxes.append((cls, b))
             if my_brawler_class and cls == my_brawler_class:
                 my_candidates.append(b)
-            else:
-                enemies.append(Enemy(bbox=b, brawler_class=cls, confidence=1.0))
 
     my_pos: tuple[int, int] | None = None
+    my_box: BBox | None = None
+
     if my_candidates:
-        # Pick largest (most prominent on screen = ours).
         my_box = max(my_candidates, key=lambda b: b.area)
         my_pos = my_box.center
+    elif all_boxes and frame_width > 0 and frame_height > 0:
+        # Heuristic fallback: closest detection to bottom-center.
+        cx, cy = frame_width // 2, int(frame_height * 0.6)
+        def dist_to_anchor(item):
+            _cls, b = item
+            return (b.cx - cx) ** 2 + (b.cy - cy) ** 2
+        my_cls, my_box = min(all_boxes, key=dist_to_anchor)
+        my_pos = my_box.center
+
+    for cls, b in all_boxes:
+        if my_box is not None and b is my_box:
+            continue
+        enemies.append(Enemy(bbox=b, brawler_class=cls, confidence=1.0))
+
     return my_pos, enemies
 
 
@@ -130,7 +148,9 @@ def build_match_state(
 ) -> GameState:
     """Convenience constructor: turn all detector outputs into one GameState(match)."""
     walls, bushes = parse_tile_detections(tile_raw)
-    my_pos, enemies = parse_brawler_detections(brawler_raw, my_brawler_class)
+    my_pos, enemies = parse_brawler_detections(
+        brawler_raw, my_brawler_class, frame_width=frame_width, frame_height=frame_height
+    )
     cubes = parse_power_cubes(main_raw or {})
     return GameState(
         state="match",

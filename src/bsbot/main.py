@@ -44,12 +44,27 @@ def load_config(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def build_strategies(config: dict) -> dict:
+def build_strategies(config: dict, adb=None) -> dict:
     """Wire MenuStrategy + ColtStrategy based on config."""
     brawler = config.get("game", {}).get("brawler", "colt")
     stats = BrawlerStats.load(DATA_DIR / "brawlers_info.json", brawler)
     colt_strategy = ColtStrategy(stats=stats, tuning=ColtTuning())
-    menu_strategy = MenuStrategy(MenuCoords())
+
+    def restart_brawl_stars():
+        if adb is None:
+            return
+        logger.warning("Restarting Brawl Stars (stuck recovery)")
+        try:
+            adb.device.shell("am force-stop com.supercell.brawlstars")
+            import time as _t
+            _t.sleep(2.0)
+            adb.device.shell(
+                "monkey -p com.supercell.brawlstars -c android.intent.category.LAUNCHER 1"
+            )
+        except Exception as exc:
+            logger.error("Restart failed: %s", exc)
+
+    menu_strategy = MenuStrategy(MenuCoords(), on_stuck_callback=restart_brawl_stars)
     return {
         "match": colt_strategy,
         "lobby": menu_strategy,
@@ -101,7 +116,7 @@ def run(config: dict, dry_run: bool = False) -> int:
 
     # Strategies.
     try:
-        strategies = build_strategies(config)
+        strategies = build_strategies(config, adb=adb)
     except Exception as exc:
         logger.exception("Failed to build strategies: %s", exc)
         return 3

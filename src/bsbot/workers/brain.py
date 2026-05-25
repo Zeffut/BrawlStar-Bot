@@ -55,8 +55,11 @@ class BrainWorker(threading.Thread):
             if gs is None or version == self._last_seen_version:
                 continue
             self._last_seen_version = version
+            prev_state = self.stats._last_state
             self.stats.record_frame()
             self.stats.record_state_transition(gs.state)
+            if gs.state != prev_state:
+                logger.info("BrainWorker: state changed %s → %s", prev_state, gs.state)
             try:
                 action = self._dispatch(gs)
                 if action is not None:

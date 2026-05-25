@@ -53,16 +53,27 @@ class TestParseBrawlers:
 
     def test_self_picks_largest_candidate(self):
         # If two "colt" detections (us + an enemy Colt), our brawler is the
-        # most prominent (largest bbox).
+        # most prominent (largest bbox); the other becomes an enemy.
         raw = {
             "colt": [[100, 100, 200, 200], [0, 0, 20, 20]],  # 100x100 and 20x20
         }
         my_pos, enemies = parse_brawler_detections(raw, my_brawler_class="colt")
         assert my_pos == (150, 150)
-        # No enemies because both bboxes consumed as "candidates for us" and we
-        # picked one; current impl puts the unpicked one nowhere. (See note.)
-        # For now, accept this — it's a known limitation.
-        assert enemies == []
+        assert len(enemies) == 1
+        assert enemies[0].bbox.center == (10, 10)
+
+    def test_bottom_center_fallback_when_no_class_match(self):
+        # When my_brawler_class doesn't match any detection but frame size is
+        # provided, the closest-to-bottom-center detection is treated as ours.
+        raw = {"0": [[800, 850, 900, 950], [100, 100, 150, 150]]}
+        my_pos, enemies = parse_brawler_detections(
+            raw, my_brawler_class=None, frame_width=1920, frame_height=1080
+        )
+        # bottom-center anchor = (960, 648). First box center (850, 900),
+        # second (125, 125) — first is much closer.
+        assert my_pos == (850, 900)
+        assert len(enemies) == 1
+        assert enemies[0].bbox.center == (125, 125)
 
 
 class TestParsePowerCubes:

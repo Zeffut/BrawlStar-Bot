@@ -10,12 +10,12 @@ mode = "solo_showdown"
 brawler = "brock"
 
 [session]
-max_duration_minutes = 600   # 0 = unlimited
+max_duration_minutes = 5     # SHORT first run for safety
 max_matches = 0              # 0 = unlimited
 
 [performance]
 target_ips = 30
-scrcpy_max_size = 1280       # downscale stream for perf (0 = native)
+scrcpy_max_size = 0          # 0 = native (must match template resolution)
 scrcpy_bitrate = 8000000
 inference_device = "auto"    # "auto" = CoreML if available, else CPU. "cpu" forces CPU.
 

@@ -37,9 +37,25 @@ class TestMenuStrategy:
         s = MenuStrategy()
         assert s.decide(GameState(state="unknown")) is None
 
-    def test_starting_does_nothing(self):
+    def test_starting_taps_fallback_to_dismiss(self):
+        """starting (e.g. star drop) — strategy tries to dismiss via center tap."""
         s = MenuStrategy()
-        assert s.decide(GameState(state="starting")) is None
+        a = s.decide(GameState(state="starting"))
+        assert a is not None
+        assert a.type == ActionType.TAP
+
+    def test_starting_timeout_triggers_callback(self):
+        """If we're stuck in 'starting' for >timeout, callback fires."""
+        called = []
+        s = MenuStrategy(
+            starting_timeout_s=0.05,
+            on_stuck_callback=lambda: called.append(True),
+            action_cooldown_s=10.0,
+        )
+        s.decide(GameState(state="starting"))
+        time.sleep(0.1)
+        s.decide(GameState(state="starting"))
+        assert called == [True]
 
     def test_throttles_repeated_state(self):
         s = MenuStrategy(action_cooldown_s=0.2)

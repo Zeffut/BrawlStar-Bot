@@ -88,6 +88,7 @@ class ControlWorker(threading.Thread):
         t = action.type
         if t == ActionType.NOOP:
             return
+        logger.info("Action dispatch: %s", action)
         if t == ActionType.TAP:
             self.adb.tap(action.x, action.y)
         elif t == ActionType.SWIPE:

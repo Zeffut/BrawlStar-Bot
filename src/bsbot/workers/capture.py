@@ -87,6 +87,10 @@ class CaptureWorker(threading.Thread):
                 return
             self._frames_received += 1
             self._last_frame_time = time.monotonic()
+            if self._frames_received == 1:
+                logger.info("CaptureWorker: first frame received! shape=%s", frame.shape)
+            elif self._frames_received % 600 == 0:
+                logger.info("CaptureWorker: %d frames received", self._frames_received)
             self.frame_slot.set(frame)
 
         self._client.add_listener(scrcpy.EVENT_FRAME, on_frame)
