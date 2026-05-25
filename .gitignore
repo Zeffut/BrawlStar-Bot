@@ -15,3 +15,8 @@ dist/
 *.log
 debug_*.png
 debug/
+brawler_menu_btn_not_found.png
+
+# Runtime / persisted state
+data/
+logs/
