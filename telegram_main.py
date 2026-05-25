@@ -35,11 +35,11 @@ import requests
 import tomllib
 import tkinter as tk
 
-# Same prelude as main.py — silence noisy logs.
+# Same prelude as main.py — silence noisy 3rd-party stdout. Our own
+# logging is reconfigured via logging_setup below.
 os.environ.setdefault("ORT_LOGGING_LEVEL", "3")
 os.environ.setdefault("ONNXRUNTIME_LOGGING_LEVEL", "3")
 warnings.filterwarnings("ignore")
-logging.disable(logging.CRITICAL)
 
 # Patch Tk to avoid background-thread destruction errors (PylaAI uses Tk
 # internally for some helpers; we don't show any GUI but keep the lib happy).
@@ -67,14 +67,15 @@ from state_finder.main import get_state  # noqa: E402
 from stage_manager import StageManager  # noqa: E402
 from play import Play  # noqa: E402
 from lobby_automation import LobbyAutomation  # noqa: E402
+from account_detect import detect_player_tag, fetch_owned_brawlers, fetch_account_profile, ensure_lobby  # noqa: E402
+import db  # noqa: E402
+from worker_pool import POOL, BotWorker  # noqa: E402
+import alerts  # noqa: E402
+from push_max import PushMaxStrategy  # noqa: E402
+from logging_setup import setup_logging  # noqa: E402
 
-# Re-enable our own logger (we silenced everything globally above).
+setup_logging()
 log = logging.getLogger("telegram_main")
-log.disabled = False
-log.setLevel(logging.INFO)
-_h = logging.StreamHandler()
-_h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-log.addHandler(_h)
 
 
 # ----------------------------------------------------------- bot lifecycle
@@ -90,52 +91,142 @@ class BotRunner:
         self.started_at: float = 0.0
         self.stop_flag = threading.Event()
         self._lock = threading.Lock()
+        # Set by TelegramBot; called with a plain-text status line whenever
+        # the bot finishes a match, hits the trophy target, etc.
+        self.notify: "callable | None" = None
+        # Cached starting values so we can report deltas in /status and on stop.
+        self._initial_trophies: int = 0
+        self._match_count: int = 0
+        self._win_count: int = 0
+        self._loss_count: int = 0
+        self._draw_count: int = 0
+        self._target_trophies: int = 0
+        self._account_id: int | None = None
+        self._session_id: int | None = None
+        # When non-None we're in "push max" mode and this controls
+        # brawler rotation between matches.
+        self._push_max: PushMaxStrategy | None = None
+        # Running account-wide trophy total (sum across all brawlers).
+        # Seeded from brawlace at session start, then updated by deltas
+        # from each match. Used by the panel for the progression chart.
+        self._account_trophies: int = 0
 
     def is_running(self) -> bool:
         return self.thread is not None and self.thread.is_alive()
 
-    def start(self, brawler: str, trophies: int, wins: int) -> tuple[bool, str]:
+    def start(self, brawler: str, trophies: int, wins: int,
+              mode: str = "single",
+              owned_brawlers: list[dict] | None = None) -> tuple[bool, str]:
+        """Start a cycle.
+
+        mode = "single"   → push one brawler to a fixed target (current behaviour)
+        mode = "push_max" → smart rotation across all owned brawlers,
+                             ignoring `trophies` (target). Requires
+                             `owned_brawlers` to seed the strategy.
+        """
+        log.info("BotRunner.start(brawler=%r, target=%d, mode=%s, wins=%d)",
+                 brawler, trophies, mode, wins)
         with self._lock:
             if self.is_running():
+                log.warning("start denied: bot already running")
                 return False, "Bot already running. Use /stop first."
+            if mode == "push_max":
+                if not owned_brawlers:
+                    return False, "push_max needs the owned-brawlers list."
+                self._push_max = PushMaxStrategy.from_owned(owned_brawlers)
+                # Pick the starter brawler from the strategy.
+                first = self._push_max.pick_next()
+                if first is None:
+                    return False, "No eligible brawler in push_max."
+                brawler = first.name
+                trophies = 99999  # unused in push_max, but PylaAI checks it
+                log.info("push_max starting brawler: %s", brawler)
+            else:
+                self._push_max = None
             data = [{
                 "brawler": brawler,
-                "trophies": trophies,
+                # Placeholder for current trophies; overridden by OCR in
+                # _install_match_hook once we're on the lobby screen.
+                "trophies": 0,
                 "wins": wins,
                 "win_streak": 0,
                 "automatically_pick": True,
                 "type": "trophies",
-                "push_until": trophies + 100,  # placeholder
+                "push_until": trophies,
             }]
+            self._target_trophies = trophies
             try:
                 save_brawler_data(data)
             except Exception as exc:
                 log.warning("save_brawler_data failed: %s", exc)
             self.brawler_data = data
             self.stop_flag.clear()
+            # Make sure the game is on the lobby screen before the worker
+            # spins up (it calls select_brawler immediately on init).
+            if not ensure_lobby():
+                log.warning("start: ensure_lobby failed — launching anyway")
             self.thread = threading.Thread(target=self._run, args=(data,), daemon=True)
             self.thread.start()
             self.started_at = time.time()
             return True, f"Started bot for {brawler} (target {trophies} trophies)."
 
     def stop(self) -> tuple[bool, str]:
+        log.info("BotRunner.stop() called (soft)")
+        """Soft stop: finish the current match, then stop (no new matches).
+
+        PylaAI's Main loop already handles `in_cooldown`: it replaces the
+        lobby handler with a no-op so the bot won't tap PLAY again. After
+        the cooldown_duration (default 3 min) it breaks out of the loop.
+        """
         with self._lock:
             if not self.is_running():
                 return False, "Bot is not running."
-            # PylaAI's Main loop checks `self.time_to_stop` — we trigger it.
+            try:
+                if self.main_instance is not None:
+                    self.main_instance.in_cooldown = True
+                    self.main_instance.cooldown_start_time = time.time()
+                    # Prevent starting new matches (PylaAI does this itself
+                    # when in_cooldown is set; ensuring the override.)
+                    self.main_instance.Stage_manager.states['lobby'] = lambda: 0
+            except Exception as exc:
+                log.warning("could not set cooldown on Main: %s", exc)
+            return True, (
+                "Bot will finish the current match (max ~3 min), "
+                "then stop. Use /forcestop for immediate."
+            )
+
+    def force_stop(self) -> tuple[bool, str]:
+        log.info("BotRunner.force_stop() called (hard)")
+        """Hard stop: kill the loop right now, abandoning the current match.
+
+        If called during the init phase (model loading, select_brawler),
+        the stop_flag prevents the main loop from starting at all once init
+        finishes — so no match is launched.
+        """
+        with self._lock:
+            if not self.is_running():
+                return False, "Bot is not running."
+            # Always set stop_flag first — _run checks it after Main() init
+            # and before entering the main loop, so even if init is still
+            # in progress the match loop will be skipped.
+            self.stop_flag.set()
             try:
                 if self.main_instance is not None:
                     self.main_instance.time_to_stop = True
                     self.main_instance.in_cooldown = True
                     self.main_instance.cooldown_start_time = time.time()
+                    msg = "Bot force-stopped (current match abandoned)."
+                else:
+                    msg = (
+                        "Stop requested during init — bot will exit as soon "
+                        "as initialization finishes (no match will start)."
+                    )
             except Exception as exc:
                 log.warning("could not set stop flag on Main: %s", exc)
-            self.stop_flag.set()
-            # Give the loop ~3 seconds to exit gracefully.
-            if self.thread:
-                self.thread.join(timeout=3.0)
-            self.main_instance = None
-            return True, "Bot stopping."
+                msg = "Stop requested."
+            # Don't null main_instance here — the run thread owns its
+            # lifecycle and clears it in its finally block.
+            return True, msg
 
     def _run(self, data: list[dict]) -> None:
         # This mirrors pyla_main() in main.py but exposes the Main instance
@@ -235,12 +326,226 @@ class BotRunner:
 
         try:
             self.main_instance = Main()
+            if self.stop_flag.is_set():
+                log.info("force_stop received during init — skipping main loop")
+                msg = alerts.format_alert("stop_during_init")
+                if msg and self.notify:
+                    try: self.notify(msg)
+                    except Exception: pass
+                return
+            self._install_match_hook(self.main_instance)
+            # _install_match_hook can take ~10s for trophy OCR; honor stops
+            # that come in during that window too.
+            if self.stop_flag.is_set():
+                log.info("force_stop received before main loop — exiting")
+                return
             self.main_instance.main()
         except Exception:
             log.exception("Bot crashed")
         finally:
+            # Close any open DB session row.
+            if self._session_id is not None:
+                try:
+                    end_trophies = None
+                    if self.main_instance is not None:
+                        try:
+                            end_trophies = self.main_instance.Stage_manager.Trophy_observer.current_trophies
+                        except Exception:
+                            pass
+                    db.end_session(self._session_id, status="stopped",
+                                   end_trophies=end_trophies)
+                except Exception:
+                    pass
+                self._session_id = None
             self.main_instance = None
             log.info("Bot run ended")
+
+    def _read_brawler_trophies(self, main_instance) -> int | None:
+        """OCR the trophy badge on the current brawler's lobby card.
+
+        Returns the trophy count if found, else None. Tries for ~10s,
+        waiting until the bot is back on the lobby screen.
+        """
+        import numpy as np
+        from utils import extract_text_and_positions
+
+        wc = main_instance.window_controller
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            try:
+                frame = wc.screenshot()
+                if frame is None:
+                    time.sleep(0.3)
+                    continue
+                if get_state(frame) != "lobby":
+                    time.sleep(0.5)
+                    continue
+                # Trophy badge on the brawler card: "<cup-icon> NNN" with
+                # a circular rank badge to the right. The leading "1" gets
+                # confused with the gold cup icon if we OCR the raw crop
+                # (returns "761" instead of "161"). Fix: keep only
+                # near-white pixels — that drops the cup icon and the
+                # rank-circle background, leaving only the white digits.
+                img = frame.convert('RGB').resize((1920, 1080))
+                crop = np.array(img.crop((900, 150, 1100, 240)))
+                mask = (crop[:, :, 0] > 200) & (crop[:, :, 1] > 200) & (crop[:, :, 2] > 200)
+                clean = np.zeros_like(crop)
+                clean[mask] = [255, 255, 255]
+                from PIL import Image as _Image
+                up = _Image.fromarray(clean).resize(
+                    (clean.shape[1] * 4, clean.shape[0] * 4)
+                )
+                for key in extract_text_and_positions(np.array(up)).keys():
+                    d = ''.join(c for c in key if c.isdigit())
+                    if d and 0 < int(d) <= 9999:
+                        return int(d)
+            except Exception as exc:
+                log.warning("_read_brawler_trophies error: %s", exc)
+            time.sleep(0.5)
+        return None
+
+    def _install_match_hook(self, main_instance) -> None:
+        """Wrap Trophy_observer.add_trophies to push a Telegram log line
+        after every match (victory/defeat/draw, trophy delta, totals)."""
+        observer = main_instance.Stage_manager.Trophy_observer
+        self._match_count = self._win_count = self._loss_count = self._draw_count = 0
+        target = self._target_trophies or 0
+        brawler = (self.brawler_data[0].get('brawler') if self.brawler_data else '?')
+        log.info("_install_match_hook: brawler=%s target=%d", brawler, target)
+
+        # Seed the account-wide trophy total from the current brawlace
+        # snapshot. After this, each match delta will update it locally.
+        try:
+            acc = db.get_account(self._account_id) if self._account_id else None
+            if acc:
+                from account_detect import fetch_account_profile
+                profile = fetch_account_profile(acc["tag"])
+                self._account_trophies = sum(
+                    b.get("trophies", 0) for b in profile.get("brawlers", [])
+                )
+                log.info("seeded account trophies: %d (sum of %d brawlers)",
+                         self._account_trophies, len(profile.get("brawlers", [])))
+        except Exception:
+            log.exception("could not seed account trophies; starting at 0")
+            self._account_trophies = 0
+
+        # OCR the brawler card to read CURRENT trophies on the lobby card.
+        log.debug("starting trophy OCR on lobby card…")
+        current = self._read_brawler_trophies(main_instance)
+        log.info("trophy OCR result: %s", current)
+        if current is not None:
+            observer.current_trophies = current
+            self._initial_trophies = current
+            # Also update brawler_data so PylaAI's push_until logic is correct.
+            if self.brawler_data:
+                self.brawler_data[0]['trophies'] = current
+            msg = alerts.format_alert(
+                "cycle_started",
+                brawler=brawler, current=current, target=target,
+                needed=max(0, target - current),
+            )
+            if msg and self.notify:
+                try: self.notify(msg)
+                except Exception: pass
+        else:
+            self._initial_trophies = observer.current_trophies or 0
+            msg = alerts.format_alert(
+                "cycle_started_no_ocr", brawler=brawler, target=target,
+            )
+            if msg and self.notify:
+                try: self.notify(msg)
+                except Exception: pass
+
+        # Open / refresh the DB session row tied to this run.
+        if self._account_id is not None:
+            self._session_id = db.start_session(
+                self._account_id, brawler, target,
+                start_trophies=self._initial_trophies or None,
+            )
+            log.info("DB session opened: id=%d account=%d brawler=%s target=%d start_trophies=%s",
+                     self._session_id, self._account_id, brawler, target,
+                     self._initial_trophies)
+        else:
+            log.warning("No account_id bound; matches won't be persisted to DB")
+
+        original = observer.add_trophies
+        runner = self
+
+        emojis = {"victory": "🏆", "defeat": "💀", "draw": "🤝"}
+
+        def wrapped(game_result, current_brawler):
+            before = observer.current_trophies or 0
+            log.info("match ended: result=%s brawler=%s trophies_before=%d",
+                     game_result, current_brawler, before)
+            ret = original(game_result, current_brawler)
+            after = observer.current_trophies or 0
+            delta = after - before
+            log.info("match logged: delta=%+d trophies_after=%d", delta, after)
+            # Update the running account-wide trophy total.
+            runner._account_trophies += delta
+            # Persist to DB before counters update.
+            if runner._session_id is not None and runner._account_id is not None:
+                try:
+                    db.log_match(runner._session_id, runner._account_id,
+                                 current_brawler, game_result, before, after,
+                                 account_trophies_after=runner._account_trophies)
+                except Exception as exc:
+                    log.warning("db.log_match failed: %s", exc)
+            runner._match_count += 1
+            if game_result == "victory":
+                runner._win_count += 1
+            elif game_result == "defeat":
+                runner._loss_count += 1
+            elif game_result == "draw":
+                runner._draw_count += 1
+
+            # push_max: record match, swap brawler if current one is exhausted.
+            if runner._push_max is not None:
+                runner._push_max.record_match(current_brawler, game_result, after)
+                if runner._push_max.all_done():
+                    log.info("push_max: all brawlers exhausted — stopping bot")
+                    main_instance.time_to_stop = True
+                else:
+                    cur = runner._push_max.brawlers.get(current_brawler)
+                    if cur and cur.exhausted:
+                        nxt = runner._push_max.pick_next()
+                        if nxt is not None and nxt.name != current_brawler:
+                            log.info("push_max: scheduling brawler swap %s → %s",
+                                     current_brawler, nxt.name)
+                            main_instance.Stage_manager._pending_swap = nxt.name
+                            # Tell the new brawler's trophies to the
+                            # observer so subsequent matches log correctly.
+                            main_instance.Stage_manager.Trophy_observer.current_trophies = nxt.trophies
+
+            sign = "+" if delta >= 0 else ""
+            session_delta = after - runner._initial_trophies
+            session_sign = "+" if session_delta >= 0 else ""
+            wr = (runner._win_count / runner._match_count * 100) if runner._match_count else 0
+            msg = alerts.format_alert(
+                "match",
+                emoji=emojis.get(game_result, "•"),
+                result=game_result, result_upper=game_result.upper(),
+                brawler=current_brawler,
+                before=before, after=after, sign=sign, delta=delta,
+                match_n=runner._match_count, wins=runner._win_count,
+                losses=runner._loss_count, draws=runner._draw_count, wr=wr,
+                session_sign=session_sign, session_delta=session_delta,
+                target=target,
+            )
+            if msg and runner.notify:
+                try: runner.notify(msg)
+                except Exception as exc: log.warning("notify failed: %s", exc)
+            # Target-reached notification (single-brawler mode only).
+            if runner._push_max is None and after >= target > 0 and before < target:
+                tmsg = alerts.format_alert(
+                    "target_reached", brawler=brawler, trophies=after, target=target,
+                )
+                if tmsg and runner.notify:
+                    try: runner.notify(tmsg)
+                    except Exception: pass
+            return ret
+
+        observer.add_trophies = wrapped
 
     def status_summary(self) -> str:
         if not self.is_running():
@@ -254,8 +559,18 @@ class BotRunner:
         if m is not None:
             try:
                 lines.append(f"State: {m.state}")
-                lines.append(f"Current trophies: {m.Stage_manager.Trophy_observer.current_trophies}")
+                cur = m.Stage_manager.Trophy_observer.current_trophies
+                lines.append(f"Current trophies: {cur}")
+                if self._initial_trophies:
+                    sd = (cur or 0) - self._initial_trophies
+                    lines.append(f"Session: {sd:+d} trophies since start")
                 lines.append(f"Wins: {m.Stage_manager.Trophy_observer.current_wins}")
+                if self._match_count:
+                    wr = self._win_count / self._match_count * 100
+                    lines.append(
+                        f"Matches: {self._match_count} "
+                        f"(W{self._win_count}/L{self._loss_count}/D{self._draw_count}, {wr:.0f}% WR)"
+                    )
             except Exception:
                 pass
         return "\n".join(lines)
@@ -275,13 +590,30 @@ class BotRunner:
 
 
 class TelegramBot:
+    # Popular brawlers shown first; user can /list to see the rest.
+    POPULAR_BRAWLERS = [
+        "shelly", "colt", "brock", "bull", "rico", "piper", "8bit", "bea",
+        "nita", "jessie", "spike", "leon",
+    ]
+    # Trophy step buttons.
+    TROPHY_STEPS = [100, 250, 500, 1000]
+
     def __init__(self, token: str, chat_id: int, poll_timeout_s: int = 25):
         self.token = token
         self.chat_id = chat_id
         self.poll_timeout = poll_timeout_s
         self.api = f"https://api.telegram.org/bot{token}"
         self.runner = BotRunner()
+        # Send match results / target-reached events as Telegram messages.
+        self.runner.notify = lambda text: self.send(text)
         self.offset: int | None = None
+        # Conversation state: stores partial /start args between button taps.
+        # Key = chat_id (only one user, so single entry).
+        self._wizard: dict = {}
+        # Cached account info: {"tag": "PYLV98LG9", "brawlers": [{...}]}.
+        # Populated by /start (re-detects every time so the user can switch
+        # accounts between sessions).
+        self._account: dict | None = None
 
     # --- HTTP helpers ---
     def _post(self, method: str, **payload):
@@ -298,8 +630,17 @@ class TelegramBot:
             log.warning("Telegram %s failed: %s", method, exc)
             return {}
 
-    def send(self, text: str) -> None:
-        self._post("sendMessage", chat_id=self.chat_id, text=text)
+    def send(self, text: str, keyboard=None) -> dict:
+        payload = {"chat_id": self.chat_id, "text": text}
+        if keyboard is not None:
+            payload["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
+        return self._post("sendMessage", **payload)
+
+    def edit(self, message_id: int, text: str, keyboard=None) -> dict:
+        payload = {"chat_id": self.chat_id, "message_id": message_id, "text": text}
+        if keyboard is not None:
+            payload["reply_markup"] = json.dumps({"inline_keyboard": keyboard})
+        return self._post("editMessageText", **payload)
 
     def send_photo(self, jpeg_bytes: bytes, caption: str = "") -> None:
         self._post_file(
@@ -308,11 +649,63 @@ class TelegramBot:
             chat_id=self.chat_id, caption=caption,
         )
 
+    def answer_callback(self, callback_id: str, text: str = "") -> None:
+        self._post("answerCallbackQuery", callback_query_id=callback_id, text=text)
+
+    # --- keyboard builders ---
+    def _brawler_keyboard(self, page: int = 0):
+        per_page = 12
+        # Prefer the account-scraped list (owned brawlers + current
+        # trophies). Falls back to PylaAI's full brawler list.
+        if self._account and self._account.get("brawlers"):
+            owned = self._account["brawlers"]
+            # Sort by current trophies desc (most-pushed first).
+            owned = sorted(owned, key=lambda b: -b.get("trophies", 0))
+            ordered_items = [
+                (b["name"], f"{b['name'].capitalize()} ({b.get('trophies', '?')})")
+                for b in owned
+            ]
+        else:
+            try:
+                all_brawlers = sorted(get_brawler_list())
+            except Exception:
+                all_brawlers = self.POPULAR_BRAWLERS.copy()
+            ordered = self.POPULAR_BRAWLERS + [b for b in all_brawlers if b not in self.POPULAR_BRAWLERS]
+            ordered_items = [(b, b.capitalize()) for b in ordered]
+        start = page * per_page
+        page_items = ordered_items[start:start + per_page]
+        ordered = ordered_items  # alias for pagination logic below
+        rows = []
+        row = []
+        for key, label in page_items:
+            row.append({"text": label, "callback_data": f"brawler:{key}"})
+            if len(row) == 3:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        # Pagination
+        nav = []
+        if start > 0:
+            nav.append({"text": "◀ Prev", "callback_data": f"page:{page-1}"})
+        if start + per_page < len(ordered):
+            nav.append({"text": "Next ▶", "callback_data": f"page:{page+1}"})
+        if nav:
+            rows.append(nav)
+        rows.append([{"text": "✖ Cancel", "callback_data": "cancel"}])
+        return rows
+
+    def _cancel_keyboard(self):
+        return [[
+            {"text": "◀ Back", "callback_data": "back_to_brawlers"},
+            {"text": "✖ Cancel", "callback_data": "cancel"},
+        ]]
+
     # --- command dispatch ---
     HELP_TEXT = (
         "Commands:\n"
-        "/start <brawler> <trophies> <wins> — launch bot\n"
-        "/stop — stop the bot\n"
+        "/start — choose brawler & trophy target (interactive)\n"
+        "/stop — finish current match, then stop (soft)\n"
+        "/forcestop — stop NOW, abandon current match\n"
         "/status — current stats\n"
         "/screenshot — send a live screenshot\n"
         "/help — this message"
@@ -322,25 +715,79 @@ class TelegramBot:
         parts = text.strip().split()
         if not parts:
             return
+        # Wizard waits for a numeric trophy target — eat the message here
+        # so /commands still pass through when "/" is the first char.
+        if self._wizard.get("awaiting_target") and not text.startswith("/"):
+            try:
+                target = int(parts[0])
+            except ValueError:
+                self.send("That doesn't look like a number. Send the target trophy count (e.g. 700).")
+                return
+            brawler = self._wizard.get("brawler")
+            if not brawler:
+                self.send("Session lost. /start again.")
+                self._wizard.clear()
+                return
+            ok, msg = self.runner.start(brawler, target, 0)
+            self.send(f"{msg}\nTarget: {target} 🏆")
+            self._wizard.clear()
+            return
         cmd = parts[0].lower()
-        args = parts[1:]
-        if cmd in ("/help", "/start_help", "help"):
+        if cmd in ("/help", "help"):
             self.send(self.HELP_TEXT)
         elif cmd == "/start":
-            if len(args) < 3:
-                self.send("Usage: /start <brawler> <trophies> <wins>\nEx: /start colt 600 0")
+            if self.runner.is_running():
+                self.send("Bot already running. Use /stop first.")
                 return
-            brawler = args[0].lower()
-            try:
-                trophies = int(args[1])
-                wins = int(args[2])
-            except ValueError:
-                self.send("trophies and wins must be integers")
-                return
-            ok, msg = self.runner.start(brawler, trophies, wins)
-            self.send(msg)
+            self._wizard.clear()
+            # Detect the current account so the keyboard only shows owned
+            # brawlers (with their current trophies as labels).
+            self.send("🔍 Detecting account…")
+            tag = detect_player_tag()
+            if tag:
+                profile = fetch_account_profile(tag)
+                brawlers = profile["brawlers"]
+                if brawlers:
+                    self._account = {"tag": tag, "name": profile.get("name"),
+                                     "brawlers": brawlers}
+                    # Register the account in the DB + worker pool so the
+                    # panel can see it and so matches get persisted.
+                    account_id = db.upsert_account(
+                        tag, name=profile.get("name"),
+                        device_serial="emulator-5554",
+                        telegram_chat_id=self.chat_id,
+                    )
+                    self.runner._account_id = account_id
+                    POOL.register(account_id, BotWorker(
+                        account_id, "emulator-5554", self.runner,
+                    ))
+                    db.log_event("account_detected",
+                                 {"tag": tag, "brawlers_owned": len(brawlers)},
+                                 account_id=account_id)
+                    label = profile.get("name") or f"#{tag}"
+                    self.send(
+                        f"Account: {label} (#{tag})\n"
+                        f"{len(brawlers)} brawlers owned.\n"
+                        f"Pick one:",
+                        keyboard=self._brawler_keyboard(0),
+                    )
+                    return
+                self.send(
+                    f"⚠️ Got tag #{tag} but brawlace.com returned no data — "
+                    "falling back to full list."
+                )
+            else:
+                self.send(
+                    "⚠️ Couldn't detect account tag (is the lobby visible?). "
+                    "Falling back to full list."
+                )
+            self._account = None
+            self.send("Pick a brawler:", keyboard=self._brawler_keyboard(0))
         elif cmd == "/stop":
-            ok, msg = self.runner.stop()
+            _ok, msg = self.runner.stop()
+            self.send(msg)
+        elif cmd == "/forcestop":
+            _ok, msg = self.runner.force_stop()
             self.send(msg)
         elif cmd == "/status":
             self.send(self.runner.status_summary())
@@ -351,11 +798,38 @@ class TelegramBot:
             else:
                 self.send_photo(img, caption=f"State: {getattr(self.runner.main_instance, 'state', '?')}")
         else:
-            self.send(f"Unknown command. {self.HELP_TEXT}")
+            self.send(f"Unknown command.\n{self.HELP_TEXT}")
+
+    def handle_callback(self, data: str, message_id: int, callback_id: str) -> None:
+        """Handle inline-button callbacks (the /start wizard)."""
+        self.answer_callback(callback_id)
+        if data == "cancel":
+            self._wizard.clear()
+            self.edit(message_id, "Cancelled.")
+            return
+        if data.startswith("page:"):
+            page = int(data.split(":", 1)[1])
+            self.edit(message_id, "Pick a brawler:", keyboard=self._brawler_keyboard(page))
+            return
+        if data == "back_to_brawlers":
+            self.edit(message_id, "Pick a brawler:", keyboard=self._brawler_keyboard(0))
+            return
+        if data.startswith("brawler:"):
+            brawler = data.split(":", 1)[1]
+            self._wizard["brawler"] = brawler
+            self._wizard["awaiting_target"] = True
+            self.edit(
+                message_id,
+                f"Brawler: {brawler.capitalize()}\n"
+                f"Send the TARGET trophy count for this brawler "
+                f"(e.g. 700 = push until 700 🏆).",
+                keyboard=self._cancel_keyboard(),
+            )
+            return
+        self.edit(message_id, f"Unknown action: {data}")
 
     # --- main loop ---
     def run(self) -> None:
-        self.send("Bot interface online. Send /help for commands.")
         while True:
             params = {"timeout": self.poll_timeout}
             if self.offset is not None:
@@ -369,12 +843,29 @@ class TelegramBot:
                 continue
             for upd in data.get("result", []):
                 self.offset = upd["update_id"] + 1
+                # 1. Inline-button callbacks (wizard flow)
+                cq = upd.get("callback_query")
+                if cq:
+                    cb_chat = cq.get("message", {}).get("chat", {}).get("id")
+                    if cb_chat != self.chat_id:
+                        continue
+                    payload = cq.get("data", "")
+                    msg_id = cq["message"]["message_id"]
+                    cb_id = cq["id"]
+                    log.info("CB: %s", payload)
+                    try:
+                        self.handle_callback(payload, msg_id, cb_id)
+                    except Exception:
+                        log.exception("callback error")
+                        self.send("Error handling button — check logs.")
+                    continue
+                # 2. Text commands
                 msg = upd.get("message") or upd.get("edited_message")
                 if not msg:
                     continue
                 chat_id = msg.get("chat", {}).get("id")
                 if chat_id != self.chat_id:
-                    continue  # ignore messages from other chats
+                    continue
                 text = msg.get("text", "")
                 if not text:
                     continue
@@ -386,10 +877,57 @@ class TelegramBot:
                     self.send("Error handling command — check logs.")
 
 
+def _bootstrap_account(bot: "TelegramBot") -> None:
+    """Detect the account once at startup so the panel isn't empty."""
+    try:
+        tag = detect_player_tag()
+        if not tag:
+            log.info("bootstrap: no tag detected (game not in lobby?)")
+            return
+        profile = fetch_account_profile(tag)
+        brawlers = profile["brawlers"]
+        if not brawlers:
+            # Brawlace returned nothing — the OCR'd tag is almost
+            # certainly wrong. Don't pollute the DB with bogus accounts.
+            log.warning("bootstrap: tag #%s returned no brawlers from "
+                        "brawlace — likely OCR error, skipping",
+                        tag)
+            return
+        account_id = db.upsert_account(
+            tag, name=profile.get("name"),
+            device_serial="emulator-5554",
+            telegram_chat_id=bot.chat_id,
+        )
+        bot.runner._account_id = account_id
+        bot._account = {"tag": tag, "name": profile.get("name"), "brawlers": brawlers}
+        POOL.register(account_id, BotWorker(
+            account_id, "emulator-5554", bot.runner,
+        ))
+        log.info("bootstrap: registered account #%s (%d brawlers)",
+                 tag, len(brawlers))
+    except Exception:
+        log.exception("bootstrap_account failed")
+
+
+def _start_panel_thread() -> None:
+    """Run the FastAPI panel in a daemon thread, bound to 127.0.0.1:8000."""
+    import uvicorn
+    from panel.app import app as panel_app
+
+    config = uvicorn.Config(panel_app, host="127.0.0.1", port=8000,
+                            log_level="warning")
+    server = uvicorn.Server(config)
+    t = threading.Thread(target=server.run, daemon=True, name="panel")
+    t.start()
+    log.info("Panel listening on http://127.0.0.1:8000")
+
+
 def main() -> int:
     cfg_path = BASE / "cfg" / "telegram.toml"
     with cfg_path.open("rb") as f:
         cfg = tomllib.load(f)
+    # Init DB up-front so both Telegram and panel see the schema.
+    db.init()
     if api_base_url != "localhost":
         try:
             all_brawlers = get_brawler_list()
@@ -402,6 +940,16 @@ def main() -> int:
         except Exception:
             log.exception("non-fatal startup update failed; continuing")
     bot = TelegramBot(cfg["bot_token"], cfg["chat_id"], cfg.get("poll_timeout_s", 25))
+    # Share the bot's runner with the panel so panel-side controls can
+    # lazy-register workers for accounts seen in the DB.
+    from panel import app as panel_module
+    panel_module.set_shared_runner(bot.runner)
+    _start_panel_thread()
+    # Best-effort: detect the connected account at startup so the panel
+    # has something to show before the user runs /start. Silently skips
+    # if the game isn't on the lobby screen.
+    threading.Thread(target=_bootstrap_account, args=(bot,),
+                     daemon=True, name="bootstrap-account").start()
     signal.signal(signal.SIGINT, lambda *a: sys.exit(0))
     bot.run()
     return 0
