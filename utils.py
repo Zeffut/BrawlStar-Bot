@@ -75,8 +75,9 @@ def extract_text_and_positions(image_path):
 
 class DefaultEasyOCR:
     def __init__(self):
-        # OCR initialized with GPU disabled for compatibility across providers
-        self.reader = easyocr.Reader(['en'], gpu=False)
+        # Auto-pick the fastest device: CUDA → MPS (Apple Silicon) → CPU.
+        # Massively cooler on M-series Macs vs CPU.
+        self.reader = easyocr.Reader(['en'], gpu=True)
 
     def readtext(self, image_input):
         return self.reader.readtext(image_input)
