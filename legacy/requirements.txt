@@ -1,0 +1,8 @@
+opencv-python-headless
+numpy
+mss
+pyobjc-framework-Quartz
+pyautogui
+pytesseract
+requests
+colorama

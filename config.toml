@@ -1,0 +1,25 @@
+# BrawlStar-Bot v2 — user configuration
+# All paths relative to repo root unless absolute.
+
+[adb]
+# Empty = first device detected by adb. Otherwise set serial (see `adb devices`).
+device_serial = ""
+
+[game]
+mode = "solo_showdown"
+brawler = "colt"
+
+[session]
+max_duration_minutes = 600   # 0 = unlimited
+max_matches = 0              # 0 = unlimited
+
+[performance]
+target_ips = 30
+scrcpy_max_size = 1280       # downscale stream for perf (0 = native)
+scrcpy_bitrate = 8000000
+inference_device = "auto"    # "auto" = CoreML if available, else CPU. "cpu" forces CPU.
+
+[debug]
+log_level = "INFO"
+save_screenshots_on_error = true
+record_session = false

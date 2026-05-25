@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bsbot"
+version = "0.1.0"
+description = "Brawl Stars automation bot — Mac brain + Android USB phone (v2, inspired by PylaAI)"
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["bsbot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --color=yes"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.bsbot]
+# Marker for project tooling; runtime config lives in config.toml.
