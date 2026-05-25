@@ -1,160 +1,78 @@
-# PylaAI
+# BrawlStar-Bot
 
-PylaAI is currently the best external Brawl Stars bot. This repository is intended for developers.
+Brawl Stars automation bot with a Telegram interface and a web dashboard.
 
-> ⚠️ **Warning:** This repository contains the **source code**.  
-> If you are not a developer, it is recommended to use the **official compiled build** from our Discord [found here](#-project-links),
-> which comes as a ready-to-use `.exe` for Windows users and `.sh` for Linux users
+The bot drives an Android emulator (or a real device via USB) over
+`adb` + `scrcpy`, plays matches with on-device ONNX vision models,
+and tracks per-account match/session/trophy history in SQLite.
 
----
+## Features
 
-# Supported Platforms
-- **Windows 10/11**
-- **Linux**
-- **Mac silcon**
+- **Telegram control** — interactive `/start` wizard with the brawler
+  list filtered to those you own (scraped from brawlace.com), `/stop`,
+  `/forcestop`, `/status`, `/screenshot`.
+- **Web panel** (`http://127.0.0.1:8000`) — live KPIs, account
+  trophy progression chart, win-rate-by-brawler, recent matches +
+  session history, controls (Start, Push max, Stop, Force stop), a
+  global Settings modal for editing Telegram alerts on the fly.
+- **Push-max mode** — smart rotation across every brawler you own:
+  picks the brawler with the highest expected gain, switches after N
+  consecutive defeats, stops when every brawler is exhausted.
+- **Configurable Telegram alerts** — toggle and template each event
+  (match, target reached, cycle started, …) in `cfg/alerts.toml`. Hot
+  reload, no restart needed.
+- **Auto account detection** — taps the in-game profile, OCRs the
+  player tag (`#XXXXXXX`), and fetches the owned-brawlers list from
+  brawlace.com. Re-detected on each `/start` so you can swap accounts
+  between runs.
+- **Multi-account ready** — every component (DB schema, `WorkerPool`,
+  panel routes) is keyed by `account_id`. Adding a second worker
+  bound to a different device serial is a one-liner.
+- **GPU OCR on Apple Silicon** — EasyOCR runs on MPS by default.
+  CUDA on nvidia, CPU fallback elsewhere.
 
+## Requirements
 
-## 🚀 Installation & Running
+- Python 3.12+
+- ADB + scrcpy installed on the host
+- An Android emulator (BlueStacks on macOS/Windows) or a real Android
+  device connected over USB with debugging enabled
+- Brawl Stars installed and signed in on the emulator/device
 
-### Install Python
-
-This version of PylaAI has been tested with:
+## Setup
 
 ```bash
-Python 3.12.3
+git clone https://github.com/Zeffut/BrawlStar-Bot.git
+cd BrawlStar-Bot
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt   # or see setup notes
+cp cfg/telegram.toml.example cfg/telegram.toml  # fill in your bot token + chat id
+python telegram_main.py
 ```
 
-Download & install Git & Python:
+Open the panel at <http://127.0.0.1:8000>, or interact via Telegram.
 
-[Python 3.12](https://www.python.org/downloads/release/python-3123/) **make sure to add it to PATH on windows**
+## Project layout
 
-[Git](https://git-scm.com/install/)
+```
+telegram_main.py    — entry point (Telegram bot + panel server + bot worker)
+panel/              — FastAPI backend + single-page HTML dashboard
+db.py               — SQLite schema and helpers
+worker_pool.py      — multi-account worker registry
+account_detect.py   — in-game profile OCR + brawlace.com scraper
+push_max.py         — smart-rotation strategy
+alerts.py           — configurable Telegram alerts (hot-reloaded)
+logging_setup.py    — central logging configuration
+stage_manager.py    — state-machine match driver
+play.py             — match-play logic
+lobby_automation.py — brawler selection in the in-game menu
+state_finder/       — screen-state detection (lobby/match/popup/...)
+models/             — ONNX vision models
+cfg/                — configuration files
+data/               — SQLite database (gitignored)
+logs/               — rotating bot logs (gitignored)
+```
 
----
-## Linux & Mac
--------------
-### environment
-1. create an environment
-`python -m venv nameoftheenv`
+## License
 
-
-2. Activate your environment
-
-open up your terminal
-
-`cd Path/to/your/folder`
-
-`source nameoftheenv/bin/activate`
-
-**Note:you have to run** `source nameoftheenv/bin/activate` **everytime you open your terminal**
-
-### **Download PylaAI**
-in cmd run `git clone -b compatibility https://github.com/PylaAI/PylaAI.git`
-
-### Run Setup
-
-run the smart installer:
-
-in your terminal run `python setup.py install`
-
-### Start Your Emulator
-
-see how you can setup your emulator in our [guide](https://pyla-ai.pages.dev/#docs)
-
----
-
-### Launch PylaAI
-
-Run the bot:
-
-`python main.py`
-
----
-
-## Windows
--------------
-> you can also open an environment if you want it sperate from your
-> other python libarys learn how to do it [here](#environment)
-### **Download PylaAI**
-
-`cd Path\to\your\folder`
-
-in cmd run `git clone -b compatibility https://github.com/PylaAI/PylaAI.git`
-
-### Run Setup
-
-run the smart installer:
-
-in your cmd run `python setup.py install`
-
-### Start Your Emulator
-
-see how you can setup your emulator in our [guide](https://pyla-ai.pages.dev/#docs)
-
----
-
-### Launch PylaAI
-
-Run the bot:
-
-`python main.py`
-------------------------
-
-### Localhost Mode
-
-This open-source version runs in **localhost mode**.
-
-The following cloud features are disabled by default:
-
-- Login system
-- Cloud statistics
-- Auto updates
-- Remote API services
-
----
-
-### Running Tests
-
-To make sure changes do not introduce regressions:
-
- `python -m unittest discover`
-
----
-
-## 🤝 Contribution
-
-Contributions are welcome.
-
-If you want to help improve PylaAI:
-
-1. Fork the repository
-2. Create a new branch
-3. Submit a Pull Request
-
-You can also open an **Issue** for bugs or feature requests.
-
----
-
-## 📌 Project Links
-
-- **[Discord](https://discord.gg/xUusk3fw4A)** Join the PylaAi Server
-- **[Trello](https://trello.com/b/SAz9J6AA/public-pyla-trello)** see what you can contrtibute
-- **[Our Website](https://pyla-ai.pages.dev/)**
-
----
-
-## ⚖️ License
-
-Please respect the **"No Selling" license** out of respect for the work of the official developers.
-
-This project is **not permitted to be sold or monetized**.
-
----
-
-## 👨‍💻 Official Developers
-
-- **ivanyordanovgt** / iyordanov
-- **AngelFireLA** / AngelFire
-- **awarzu** / (M)
-
-### this was converted to Linux & Mac by: Maayan080 
+See [LICENSE](LICENSE).

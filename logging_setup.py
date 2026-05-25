@@ -47,8 +47,8 @@ _DATEFMT = "%H:%M:%S"
 
 def setup_logging(level: int = logging.DEBUG) -> None:
     """Configure all loggers. Idempotent."""
-    # PylaAI did `logging.disable(logging.CRITICAL)` — undo it so our
-    # loggers can emit again.
+    # Earlier code did `logging.disable(logging.CRITICAL)` to silence
+    # 3rd-party noise — undo it so our loggers can emit again.
     logging.disable(logging.NOTSET)
 
     root = logging.getLogger()

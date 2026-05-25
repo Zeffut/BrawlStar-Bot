@@ -20,7 +20,7 @@ user_webhook = load_toml_as_dict("cfg/general_config.toml")['personal_webhook']
 
 def notify_user(message_type):
     message_data = {
-        'content': f"<@{user_id}> Pyla Bot has completed all it's targets !"
+        'content': f"<@{user_id}> Bot has completed all its targets!"
     }
     response = requests.post(user_webhook, json=message_data)
     if response.status_code != 204:

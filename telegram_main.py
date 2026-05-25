@@ -1,7 +1,7 @@
-"""Telegram-controlled PylaAI bot.
+"""Telegram-controlled Brawl Stars bot.
 
-Replaces the Tkinter GUI (login + select_brawler) with a Telegram bot
-interface. The PylaAI core (Play, StageManager, etc.) is started in a
+Replaces the legacy Tkinter GUI with a Telegram bot + web panel. The
+match-playing core (Play, StageManager, etc.) is started in a
 background thread on /start.
 
 Commands:
@@ -41,8 +41,9 @@ os.environ.setdefault("ORT_LOGGING_LEVEL", "3")
 os.environ.setdefault("ONNXRUNTIME_LOGGING_LEVEL", "3")
 warnings.filterwarnings("ignore")
 
-# Patch Tk to avoid background-thread destruction errors (PylaAI uses Tk
-# internally for some helpers; we don't show any GUI but keep the lib happy).
+# Patch Tk to avoid background-thread destruction errors (some legacy
+# helpers still touch Tk at import time; we don't show any GUI but keep
+# the lib happy).
 def _safe_tk_del(self):
     try:
         if self._tk.getboolean(self._tk.call("info", "exists", self._name)):
@@ -82,11 +83,11 @@ log = logging.getLogger("telegram_main")
 
 
 class BotRunner:
-    """Manages the PylaAI bot in a background thread."""
+    """Manages the bot worker in a background thread."""
 
     def __init__(self) -> None:
         self.thread: threading.Thread | None = None
-        self.main_instance = None  # PylaAI Main() instance (when running)
+        self.main_instance = None  # Main() instance (when running)
         self.brawler_data: list[dict] | None = None
         self.started_at: float = 0.0
         self.stop_flag = threading.Event()
@@ -139,7 +140,7 @@ class BotRunner:
                 if first is None:
                     return False, "No eligible brawler in push_max."
                 brawler = first.name
-                trophies = 99999  # unused in push_max, but PylaAI checks it
+                trophies = 99999  # unused in push_max, but the core checks it
                 log.info("push_max starting brawler: %s", brawler)
             else:
                 self._push_max = None
@@ -174,9 +175,9 @@ class BotRunner:
         log.info("BotRunner.stop() called (soft)")
         """Soft stop: finish the current match, then stop (no new matches).
 
-        PylaAI's Main loop already handles `in_cooldown`: it replaces the
-        lobby handler with a no-op so the bot won't tap PLAY again. After
-        the cooldown_duration (default 3 min) it breaks out of the loop.
+        The Main loop honors `in_cooldown`: it replaces the lobby
+        handler with a no-op so the bot won't tap PLAY again. After the
+        cooldown_duration (default 3 min) it breaks out of the loop.
         """
         with self._lock:
             if not self.is_running():
@@ -185,8 +186,8 @@ class BotRunner:
                 if self.main_instance is not None:
                     self.main_instance.in_cooldown = True
                     self.main_instance.cooldown_start_time = time.time()
-                    # Prevent starting new matches (PylaAI does this itself
-                    # when in_cooldown is set; ensuring the override.)
+                    # Prevent starting new matches (the Main loop also
+                    # does this when in_cooldown is set; force the override).
                     self.main_instance.Stage_manager.states['lobby'] = lambda: 0
             except Exception as exc:
                 log.warning("could not set cooldown on Main: %s", exc)
@@ -229,7 +230,7 @@ class BotRunner:
             return True, msg
 
     def _run(self, data: list[dict]) -> None:
-        # This mirrors pyla_main() in main.py but exposes the Main instance
+        # Inline Main class — exposes the instance via self.main_instance
         # so /stop and /status can reach into it.
         class Main:
             def __init__(_self):
@@ -436,7 +437,7 @@ class BotRunner:
         if current is not None:
             observer.current_trophies = current
             self._initial_trophies = current
-            # Also update brawler_data so PylaAI's push_until logic is correct.
+            # Also update brawler_data so the push_until logic is correct.
             if self.brawler_data:
                 self.brawler_data[0]['trophies'] = current
             msg = alerts.format_alert(
@@ -656,7 +657,7 @@ class TelegramBot:
     def _brawler_keyboard(self, page: int = 0):
         per_page = 12
         # Prefer the account-scraped list (owned brawlers + current
-        # trophies). Falls back to PylaAI's full brawler list.
+        # trophies). Falls back to the full brawler list.
         if self._account and self._account.get("brawlers"):
             owned = self._account["brawlers"]
             # Sort by current trophies desc (most-pushed first).

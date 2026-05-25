@@ -220,7 +220,7 @@ def check_version():
     if api_base_url != "localhost":
         latest = get_latest_version()
         if latest:
-            current = load_toml_as_dict("cfg/general_config.toml").get('pyla_version', '')
+            current = load_toml_as_dict("cfg/general_config.toml").get('bot_version', '')
             if version.parse(current) < version.parse(latest):
                 print(f"Update available.")
 

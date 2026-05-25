@@ -137,7 +137,7 @@ def is_in_end_of_a_match(image):
 
 def is_in_trophy_reward(image):
     image = np.array(image)
-    # Original PylaAI check: bottom-right quadrant for "GO" text.
+    # Original check: bottom-right quadrant for "GO" text.
     starting_x = int(image.shape[1] * 0.75)
     starting_y = int(image.shape[0] * 0.75)
     bottom_right = image[starting_y:, starting_x:]
