@@ -32,7 +32,8 @@ class MenuCoords:
 
     # Calibrated for BlueStacks (2560x1440 landscape) on 2026-05-25.
     play_button: tuple[int, int] = (2295, 1340)
-    continue_button: tuple[int, int] = (2295, 1340)
+    # PROCEED button on Victory/Defeat end screen.
+    continue_button: tuple[int, int] = (2216, 1318)
     popup_close: tuple[int, int] = (2470, 80)
     reconnect_button: tuple[int, int] = (700, 900)
     # Generic safe-tap when stuck — center of screen.
@@ -49,6 +50,7 @@ class MenuStrategy(Strategy):
         starting_timeout_s: float = 25.0,
         unknown_dismiss_after_s: float = 4.0,
         unknown_restart_after_s: float = 30.0,
+        play_cooldown_s: float = 15.0,
         on_stuck_callback=None,
     ):
         self.coords = coords or MenuCoords()
@@ -75,6 +77,11 @@ class MenuStrategy(Strategy):
         # exceeds the threshold, force app restart.
         self._last_gameplay_at: float = 0.0
         self._no_gameplay_restart_after_s: float = 60.0
+        # Hard cooldown after tapping PLAY — prevents re-tapping during
+        # matchmaking screens which often look like lobby (state oscillates
+        # lobby/unknown) and whose Exit button is at PLAY's position.
+        self._last_play_tap_at: float = 0.0
+        self._play_cooldown_s: float = play_cooldown_s
 
     def decide(self, gs: GameState) -> Action | None:
         now = time.monotonic()
@@ -157,16 +164,21 @@ class MenuStrategy(Strategy):
 
         action: Action | None = None
         if gs.state == "lobby":
+            # Don't re-tap PLAY during matchmaking (state oscillates lobby/
+            # unknown and the EXIT button sits at PLAY's position).
+            if (now - self._last_play_tap_at) < self._play_cooldown_s:
+                return None
+            self._last_play_tap_at = now
             action = Action.tap(*self.coords.play_button)
         elif gs.state == "end":
-            # VICTOIRE screen has a single CONTINUER button (2130, 1000).
-            # DÉFAITE screen has REJOUER (1990, 1000) + QUITTER (2230, 1000).
-            # Rotate to make sure we hit something dismissive.
+            # BlueStacks Victory/Defeat: PLAY AGAIN (left, 1675, 1318)
+            # + PROCEED (right, 2216, 1318). PROCEED returns to lobby.
+            # Old phone coords kept as fallback for legacy device.
             targets = [
-                self.coords.continue_button,   # CONTINUER (VICTOIRE)
-                (2230, 1000),                  # QUITTER (DÉFAITE)
-                (1990, 1000),                  # REJOUER (DÉFAITE)
-                self.coords.popup_close,       # home icon (fallback)
+                self.coords.continue_button,   # PROCEED (2216, 1318)
+                (1675, 1318),                  # PLAY AGAIN (BlueStacks)
+                (2230, 1000),                  # QUITTER (phone fallback)
+                self.coords.popup_close,       # home icon fallback
             ]
             t = targets[self._unknown_attempt_idx % len(targets)]
             self._unknown_attempt_idx += 1

@@ -80,9 +80,11 @@ class LiveView:
     def _scrcpy_loop(self) -> None:
         import scrcpy
         log.info("Starting scrcpy client (serial=%r)…", self.serial or "<first>")
+        # Lower max_width + lower bitrate to reduce scrcpy encode/decode
+        # buffer latency (~100-300ms saved at native 2560x1440 8Mbps).
         self._scrcpy_client = scrcpy.Client(
             device=self.serial if self.serial else None,
-            max_width=0, bitrate=8_000_000, max_fps=60,
+            max_width=1280, bitrate=4_000_000, max_fps=60,
             block_frame=False, connection_timeout=5000,
         )
 

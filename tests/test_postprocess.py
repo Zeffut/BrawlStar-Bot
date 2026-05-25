@@ -35,45 +35,32 @@ class TestParseTiles:
 
 
 class TestParseBrawlers:
-    def test_all_detections_become_enemies(self):
-        """Camera-centered assumption: my_pos is always screen center;
-        large detections far from center become enemies."""
-        # Both bboxes are far from center (500, 550) so neither is excluded.
-        raw = {"shelly": [[10, 10, 200, 200]], "colt": [[800, 800, 999, 999]]}
-        my_pos, enemies = parse_brawler_detections(
-            raw, my_brawler_class=None, frame_width=1000, frame_height=1000
-        )
-        assert my_pos == (500, 550)
+    def test_player_class_gives_my_pos(self):
+        raw = {"player": [[400, 500, 600, 700]]}
+        my_pos, enemies = parse_brawler_detections(raw)
+        assert my_pos == (500, 600)
+        assert enemies == []
+
+    def test_enemy_class_becomes_enemies(self):
+        raw = {"enemy": [[100, 100, 200, 200], [800, 800, 900, 900]]}
+        _, enemies = parse_brawler_detections(raw, frame_width=1000, frame_height=1000)
         assert len(enemies) == 2
 
-    def test_self_detection_at_center_excluded(self):
-        """Detection within SELF_EXCLUSION_RADIUS_PX of my_pos = ourself."""
-        # Center at (500, 550). This detection is centered at (510, 560) — that's us.
-        raw = {"brock": [[450, 510, 570, 630]]}
-        _my_pos, enemies = parse_brawler_detections(
-            raw, frame_width=1000, frame_height=1000
-        )
+    def test_teammate_class_ignored(self):
+        raw = {"teammate": [[100, 100, 200, 200]]}
+        _, enemies = parse_brawler_detections(raw, frame_width=1000, frame_height=1000)
         assert enemies == []
 
-    def test_small_ui_detections_filtered_out(self):
-        """Tiny brawler bboxes (e.g. score icons in UI corners) are ignored."""
-        raw = {"shelly": [[10, 10, 80, 80]]}  # 70x70 — too small
-        _, enemies = parse_brawler_detections(
-            raw, frame_width=1000, frame_height=1000
-        )
-        assert enemies == []
+    def test_my_pos_falls_back_to_center(self):
+        raw = {"enemy": [[100, 100, 200, 200]]}
+        my_pos, _ = parse_brawler_detections(raw, frame_width=2340, frame_height=1080)
+        # No 'player' detection → use screen center heuristic.
+        assert my_pos == (1170, 594)
 
-    def test_my_pos_none_when_frame_unknown(self):
-        raw = {"colt": [[100, 100, 300, 300]]}  # 200x200 — big enough
-        my_pos, enemies = parse_brawler_detections(raw)
-        assert my_pos is None  # no frame size → can't compute center
-        assert len(enemies) == 1
-
-    def test_my_pos_at_landscape_center(self):
-        my_pos, _ = parse_brawler_detections(
-            {}, frame_width=2340, frame_height=1080
-        )
-        assert my_pos == (1170, 594)  # 2340/2, 1080*0.55 = 594
+    def test_my_pos_none_when_frame_unknown_and_no_player(self):
+        raw = {"enemy": [[100, 100, 300, 300]]}
+        my_pos, _ = parse_brawler_detections(raw)
+        assert my_pos is None
 
 
 class TestParsePowerCubes:
@@ -96,16 +83,18 @@ class TestBuildMatchState:
             frame_width=1080,
             frame_height=1920,
             tile_raw={"wall": [[0, 0, 50, 50]], "bush": [[100, 100, 150, 150]]},
-            brawler_raw={"colt": [[50, 50, 250, 250]], "shelly": [[800, 1700, 1000, 1900]]},
+            brawler_raw={
+                "player": [[400, 900, 700, 1200]],
+                "enemy": [[50, 50, 250, 250], [800, 1700, 1000, 1900]],
+            },
             main_raw={"power_cube": [[600, 600, 620, 620]]},
             my_brawler_class="colt",
         )
         assert gs.state == "match"
         assert gs.frame_id == 42
         assert gs.frame_width == 1080
-        # my_pos = screen center (camera follows player).
-        assert gs.my_pos == (540, 1056)  # 1080/2, 1920*0.55
-        # All brawler detections are enemies now.
+        # my_pos comes from 'player' detection now.
+        assert gs.my_pos == (550, 1050)
         assert len(gs.enemies) == 2
         assert len(gs.walls) == 1
         assert len(gs.bushes) == 1

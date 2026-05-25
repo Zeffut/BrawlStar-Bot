@@ -142,21 +142,10 @@ class ControlWorker(threading.Thread):
         r = self.layout.joystick_radius
         tx, ty = int(cx + dx * r), int(cy + dy * r)
 
-        # Prefer scrcpy continuous touch (no gap between events) if available.
-        client = getattr(self.capture_worker, "client", None) if self.capture_worker else None
-        if client is not None and getattr(client, "control", None) is not None:
-            try:
-                import scrcpy as _scrcpy
-                if not self._joystick_finger_down:
-                    client.control.touch(cx, cy, _scrcpy.ACTION_DOWN)
-                    self._joystick_finger_down = True
-                client.control.touch(tx, ty, _scrcpy.ACTION_MOVE)
-                self._joystick_last_pos = (tx, ty)
-                return
-            except Exception as exc:
-                logger.debug("scrcpy touch failed, falling back to ADB: %s", exc)
-
-        # Fallback: ADB swipe (less smooth).
+        # ADB swipe (Brawl Stars on BlueStacks responds reliably to these).
+        # scrcpy.control.touch was unreliable on BlueStacks, so we use ADB
+        # exclusively now. Slightly less smooth than continuous touch but
+        # inputs actually register.
         self.adb.swipe(cx, cy, tx, ty, duration_ms=self.joystick_tick_ms + 20)
 
     def _aimed(self, action: Action) -> None:

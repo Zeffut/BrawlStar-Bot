@@ -65,16 +65,19 @@ class VisionWorker(threading.Thread):
                 classes=TILE_CLASSES,
                 preferred_device=self.preferred_device,
             )
+        # PylaAI uses mainInGameModel with explicit class names for entity
+        # detection. brawlersInGame is for brawler-identity, not what we need.
+        if self._main_detector is None:
+            self._main_detector = Detect(
+                str(self.models_dir / "mainInGameModel.onnx"),
+                classes=["enemy", "teammate", "player"],
+                preferred_device=self.preferred_device,
+            )
+        # brawlersInGame kept lazy but not used in match loop anymore.
         if self._brawlers_detector is None:
             self._brawlers_detector = Detect(
                 str(self.models_dir / "brawlersInGame.onnx"),
                 classes=BRAWLERS_CLASSES,
-                preferred_device=self.preferred_device,
-            )
-        if self._main_detector is None:
-            self._main_detector = Detect(
-                str(self.models_dir / "mainInGameModel.onnx"),
-                classes=None,
                 preferred_device=self.preferred_device,
             )
 
@@ -118,15 +121,23 @@ class VisionWorker(threading.Thread):
 
         logger.info("VisionWorker stopped.")
 
+    def _ensure_pool(self):
+        if not hasattr(self, "_pool"):
+            from concurrent.futures import ThreadPoolExecutor
+            self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="onnx")
+
     def _process_frame(self, frame: np.ndarray) -> GameState:
         h, w = frame.shape[:2]
-        # State detection is expensive (~186ms). Cache the last result and
-        # re-run only every Nth frame. State doesn't change faster than
-        # ~1 Hz in practice, so caching for 3 frames is safe.
+        # State detection is expensive (~190ms with scale=0.5). Cache it and
+        # re-run rarely:
+        # - In match: every 10 frames (state stays match for entire game)
+        # - Outside match: every 3 frames (transitions matter for menus)
         if not hasattr(self, "_state_cache"):
             self._state_cache = None
             self._state_cache_frame_id = -1
-        if self._state_cache is None or (self._frame_id - self._state_cache_frame_id) >= 3:
+        prev_state = self._state_cache.state if self._state_cache else None
+        cache_every = 10 if prev_state == "match" else 3
+        if self._state_cache is None or (self._frame_id - self._state_cache_frame_id) >= cache_every:
             self._state_cache = self.state_finder.detect(frame)
             self._state_cache_frame_id = self._frame_id
             if self._state_cache and self._frame_id % 30 == 0:
@@ -146,14 +157,19 @@ class VisionWorker(threading.Thread):
                 frame_height=h,
             )
 
-        # Expensive path: run all three detectors (or as many as relevant).
-        # On Mac CoreML, each Detect.detect_objects takes ~15-30ms in 640x640.
-        # Higher conf threshold on brawlers (model produces phantom boxes on
-        # walls/UI) — only keep detections we're very confident about.
-        assert self._tile_detector and self._brawlers_detector and self._main_detector
-        tile_raw = self._tile_detector.detect_objects(frame, conf_thresh=0.6)
-        brawler_raw = self._brawlers_detector.detect_objects(frame, conf_thresh=0.85)
-        main_raw = self._main_detector.detect_objects(frame, conf_thresh=0.6)
+        # Run tile + main in parallel.
+        # mainInGameModel returns {enemy, teammate, player} with explicit
+        # class labels — this gives us self position + enemy targets
+        # without confusing walls/bushes as brawlers.
+        assert self._tile_detector and self._main_detector
+        self._ensure_pool()
+        f_tile = self._pool.submit(self._tile_detector.detect_objects, frame, 0.6)
+        f_main = self._pool.submit(self._main_detector.detect_objects, frame, 0.6)
+        tile_raw = f_tile.result()
+        main_raw = f_main.result()
+        # We pass `main_raw` AS the brawler_raw because mainInGameModel now
+        # plays that role with proper class labels.
+        brawler_raw = main_raw
 
         # If state_finder said "unknown" but we got brawlers, assume match.
         effective_state = "match" if (state_name == "unknown" and brawler_raw) else state_name

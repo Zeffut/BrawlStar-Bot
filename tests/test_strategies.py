@@ -58,7 +58,7 @@ class TestMenuStrategy:
         assert called == [True]
 
     def test_throttles_repeated_state(self):
-        s = MenuStrategy(action_cooldown_s=0.2)
+        s = MenuStrategy(action_cooldown_s=0.2, play_cooldown_s=0.2)
         gs = GameState(state="lobby")
         first = s.decide(gs)
         assert first is not None
@@ -69,7 +69,7 @@ class TestMenuStrategy:
         assert s.decide(gs) is not None
 
     def test_state_change_breaks_throttle(self):
-        s = MenuStrategy(action_cooldown_s=5.0)
+        s = MenuStrategy(action_cooldown_s=5.0, play_cooldown_s=0.0)
         s.decide(GameState(state="lobby"))
         # Different state immediately should fire.
         assert s.decide(GameState(state="end")) is not None

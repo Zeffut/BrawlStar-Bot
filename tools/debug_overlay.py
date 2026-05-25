@@ -129,6 +129,23 @@ def draw_from_detections(frame: np.ndarray, det: dict) -> tuple[np.ndarray, dict
            f"brawlers={n_brawlers}  walls={n_walls}  bushes={n_bushes}  main={n_main}")
     cv2.putText(banner, txt, (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2, cv2.LINE_AA)
     img = np.vstack([banner, img])
+    # Legend at bottom: colored swatches + labels.
+    legend = np.zeros((40, w, 3), dtype=np.uint8)
+    items = [
+        ("brawler", (0, 0, 255)),
+        ("wall", (0, 255, 255)),
+        ("bush", (0, 255, 0)),
+        ("main", (255, 255, 0)),
+        ("my_pos", (255, 255, 255)),
+        ("target", (255, 0, 255)),
+    ]
+    x = 20
+    for name, color in items:
+        cv2.rectangle(legend, (x, 12), (x + 28, 30), color, -1)
+        cv2.putText(legend, name, (x + 35, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 1, cv2.LINE_AA)
+        x += 180
+    img = np.vstack([img, legend])
     info = {
         "state": det.get("state"), "brawlers": n_brawlers,
         "walls": n_walls, "bushes": n_bushes, "main": n_main,

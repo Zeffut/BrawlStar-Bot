@@ -8,7 +8,7 @@ device_serial = "emulator-5554"
 
 [game]
 mode = "solo_showdown"
-brawler = "brock"
+brawler = "colt"
 
 [session]
 max_duration_minutes = 6     # ~1 match + entry/end transitions

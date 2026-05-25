@@ -61,8 +61,9 @@ class LatestSlot(Generic[T]):
                 return value, version
             if deadline is not None and (_time.monotonic() - start) >= deadline:
                 return value, version
-            # Wait briefly for next set(); 50ms granularity keeps it responsive.
-            self._event.wait(timeout=0.05)
+            # Wait briefly for next set(); 10ms granularity keeps it responsive
+            # — important for end-to-end latency (frame→state→action).
+            self._event.wait(timeout=0.01)
             self._event.clear()
 
     def clear(self) -> None:

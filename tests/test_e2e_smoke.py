@@ -111,8 +111,11 @@ def test_lobby_fixture_triggers_play_tap(workers_and_buses):
 
     action = _wait_for_action(control_bus, ActionType.TAP, timeout_s=8.0)
     assert action is not None, "expected a TAP action within 8s"
-    # play_button is (2115, 930) — the default MenuCoords.
-    assert (action.x, action.y) == (2115, 930), f"expected play button tap, got {action}"
+    # play_button = MenuCoords.play_button (current calibration)
+    from bsbot.strategies.menu import MenuCoords
+    assert (action.x, action.y) == MenuCoords().play_button, (
+        f"expected play button tap, got {action}"
+    )
 
 
 @pytest.mark.slow
@@ -125,7 +128,10 @@ def test_disconnect_fixture_triggers_reconnect_tap(workers_and_buses):
 
     action = _wait_for_action(control_bus, ActionType.TAP, timeout_s=8.0)
     assert action is not None, "expected a TAP action"
-    assert (action.x, action.y) == (575, 728), f"expected RECHARGER tap, got {action}"
+    from bsbot.strategies.menu import MenuCoords
+    assert (action.x, action.y) == MenuCoords().reconnect_button, (
+        f"expected reconnect tap, got {action}"
+    )
 
 
 @pytest.mark.slow
