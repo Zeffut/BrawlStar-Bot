@@ -1,153 +1,160 @@
-# BrawlStar-Bot v2
+# PylaAI
 
-Bot Brawl Stars en Python qui joue **en autonomie sur un téléphone Android
-branché en USB**, avec un Mac qui sert de cerveau (capture vidéo via `scrcpy`,
-inférence ML via `onnxruntime` + CoreML Apple Silicon, contrôle via `adbutils`).
+PylaAI is currently the best external Brawl Stars bot. This repository is intended for developers.
 
-**Statut** : v0.1.0 — squelette complet, en attente de calibration sur device
-réel. Voir [`docs/superpowers/specs/2026-05-25-bsbot-design.md`](docs/superpowers/specs/2026-05-25-bsbot-design.md)
-pour le design détaillé.
+> ⚠️ **Warning:** This repository contains the **source code**.  
+> If you are not a developer, it is recommended to use the **official compiled build** from our Discord [found here](#-project-links),
+> which comes as a ready-to-use `.exe` for Windows users and `.sh` for Linux users
 
-## Architecture
+---
 
-Quatre threads communiquent via des bus thread-safe :
+# Supported Platforms
+- **Windows 10/11**
+- **Linux**
+- **Mac silcon**
 
-```
-Phone Android ─USB─ Mac ─┬─ CaptureWorker (scrcpy → frames)
-                         ├─ VisionWorker  (ONNX → GameState)
-                         ├─ BrainWorker   (Strategy → Action)
-                         └─ ControlWorker (Action → ADB inputs)
-```
 
-## Crédit
+## 🚀 Installation & Running
 
-Ce projet réutilise (avec attribution) les modèles ONNX et la logique de
-détection de [**PylaAI**](https://github.com/PylaAI/PylaAI) (branche
-`compatibility`, port macOS par Maayan080). Licence "No Selling" — usage
-personnel uniquement.
+### Install Python
 
-## Prérequis
-
-- macOS Apple Silicon (testé sur Darwin 25.x, M-series)
-- Python 3.12 (via Homebrew : `brew install python@3.12 python-tk@3.12`)
-- ADB : `brew install android-platform-tools` (fournit `adb`)
-- scrcpy : `brew install scrcpy`
-- Téléphone Android branché en USB, avec **USB Debugging activé** dans
-  *Developer Options*, et la popup "Authorize this computer" acceptée
-- Brawl Stars installé sur le téléphone
-
-## Installation
+This version of PylaAI has been tested with:
 
 ```bash
-git clone … BrawlStar-Bot
-cd BrawlStar-Bot
-./install.sh
+Python 3.12.3
 ```
 
-Le script crée `venv/`, installe les deps, gère le conflit
-`scrcpy-client` ⇄ `adbutils` (cf. `install.sh`), et installe le package
-en éditable.
+Download & install Git & Python:
 
-## Smoke test (sans toucher au jeu)
+[Python 3.12](https://www.python.org/downloads/release/python-3123/) **make sure to add it to PATH on windows**
 
-```bash
-source venv/bin/activate
-python tools/smoke_test.py
-```
+[Git](https://git-scm.com/install/)
 
-Vérifie :
-1. La connexion ADB au téléphone
-2. Une capture d'écran via `adb exec-out screencap`
-3. Le chargement et l'inférence des 4 modèles ONNX (sur CoreML si dispo)
+---
+## Linux & Mac
+-------------
+### environment
+1. create an environment
+`python -m venv nameoftheenv`
 
-Aucune action n'est envoyée au jeu.
 
-## Calibration des templates (à faire une fois)
+2. Activate your environment
 
-Le `StateFinder` détecte l'état du jeu (lobby / match / end / popup /
-disconnect) par template matching. Au début, le dossier
-`src/bsbot/data/state_templates/` est vide. Pour le peupler :
+open up your terminal
 
-```bash
-# Ouvre Brawl Stars sur le téléphone, va dans le lobby, puis :
-python tools/capture_template.py --state lobby --name play_button \
-    --crop 1500,1000,1900,1200
+`cd Path/to/your/folder`
 
-# Aller dans un match…
-python tools/capture_template.py --state match --name joystick_ring \
-    --crop 100,1600,400,1900
+`source nameoftheenv/bin/activate`
 
-# Après un match, écran de résultat :
-python tools/capture_template.py --state end --name continue_button \
-    --crop 1500,1800,1900,1980
-```
+**Note:you have to run** `source nameoftheenv/bin/activate` **everytime you open your terminal**
 
-Les coordonnées de crop dépendent de la résolution de ton téléphone — utilise
-un screenshot complet (`--crop` omis) pour identifier les zones, puis crop
-proprement avec un éditeur d'image.
+### **Download PylaAI**
+in cmd run `git clone -b compatibility https://github.com/PylaAI/PylaAI.git`
 
-Une fois qu'au moins un template par état est en place, le bot peut tourner.
+### Run Setup
 
-## Lancer le bot
+run the smart installer:
 
-```bash
-source venv/bin/activate
-python -m bsbot.main                # config par défaut = ./config.toml
-python -m bsbot.main --dry-run      # sans phone (smoke check uniquement)
-```
+in your terminal run `python setup.py install`
 
-Ctrl-C pour arrêter (graceful : drain des queues, ferme scrcpy proprement).
+### Start Your Emulator
 
-## Configuration
+see how you can setup your emulator in our [guide](https://pyla-ai.pages.dev/#docs)
 
-Éditer `config.toml`. Sections :
+---
 
-- `[adb]` — `device_serial` vide = premier device détecté
-- `[game]` — `mode` et `brawler` (v1 : `solo_showdown` + `colt`)
-- `[session]` — `max_duration_minutes` (0 = illimité)
-- `[performance]` — `target_ips`, taille/bitrate scrcpy, device d'inférence
-- `[debug]` — niveau log, capture d'écran sur erreur
+### Launch PylaAI
 
-## Tests
+Run the bot:
 
-```bash
-source venv/bin/activate
-pytest                # 84+ tests unitaires
-```
+`python main.py`
 
-Tous les tests utilisent des mocks — pas besoin de phone réel.
+---
 
-## Limitations connues (v1)
+## Windows
+-------------
+> you can also open an environment if you want it sperate from your
+> other python libarys learn how to do it [here](#environment)
+### **Download PylaAI**
 
-- **Templates manquants** → le bot reste en état `unknown` au démarrage tant
-  que la calibration n'est pas faite.
-- **HP / Super charge non lus** depuis l'écran → les règles 1 (fuite si HP
-  bas) et 4 (super si chargé) de la ColtStrategy sont neutralisées (HP=None,
-  super=None signifie "skip").
-- **Pas de pathfinding tile-based** — déplacements en vecteurs directs (OK
-  sur map ouverte comme Solo Showdown la plupart du temps).
-- **Détection de la zone qui rétrécit** non implémentée.
-- **Coordonnées des boutons (joystick, attack, super)** sont des valeurs par
-  défaut pour 1080×2400 portrait. À calibrer pour ton phone (M3 du design).
+`cd Path\to\your\folder`
 
-## Roadmap
+in cmd run `git clone -b compatibility https://github.com/PylaAI/PylaAI.git`
 
-Voir le design doc, section 11. Jalons :
-- M1 — Capture & inputs ✅
-- M2 — Vision pipeline ✅
-- M3 — Orchestration & menus ⚠️ (code OK, calibration à faire)
-- M4 — Combat Colt basique ✅ (code OK, à tester sur device)
-- M5 — Combat Colt complet (super, cubes, pathfinding tile)
-- M6 — Stabilisation 10h+
+### Run Setup
 
-## Licence
+run the smart installer:
 
-Code original sous MIT (à confirmer si tu veux publier). Modèles ONNX et
-`detect.py` adaptés de PylaAI sous "No Selling" — usage personnel uniquement,
-pas de redistribution commerciale.
+in your cmd run `python setup.py install`
 
-## Avertissement
+### Start Your Emulator
 
-L'utilisation de bots sur Brawl Stars **peut entraîner un ban** de ton compte
-Supercell. Utilise à tes risques et périls, idéalement sur un compte
-secondaire dédié.
+see how you can setup your emulator in our [guide](https://pyla-ai.pages.dev/#docs)
+
+---
+
+### Launch PylaAI
+
+Run the bot:
+
+`python main.py`
+------------------------
+
+### Localhost Mode
+
+This open-source version runs in **localhost mode**.
+
+The following cloud features are disabled by default:
+
+- Login system
+- Cloud statistics
+- Auto updates
+- Remote API services
+
+---
+
+### Running Tests
+
+To make sure changes do not introduce regressions:
+
+ `python -m unittest discover`
+
+---
+
+## 🤝 Contribution
+
+Contributions are welcome.
+
+If you want to help improve PylaAI:
+
+1. Fork the repository
+2. Create a new branch
+3. Submit a Pull Request
+
+You can also open an **Issue** for bugs or feature requests.
+
+---
+
+## 📌 Project Links
+
+- **[Discord](https://discord.gg/xUusk3fw4A)** Join the PylaAi Server
+- **[Trello](https://trello.com/b/SAz9J6AA/public-pyla-trello)** see what you can contrtibute
+- **[Our Website](https://pyla-ai.pages.dev/)**
+
+---
+
+## ⚖️ License
+
+Please respect the **"No Selling" license** out of respect for the work of the official developers.
+
+This project is **not permitted to be sold or monetized**.
+
+---
+
+## 👨‍💻 Official Developers
+
+- **ivanyordanovgt** / iyordanov
+- **AngelFireLA** / AngelFire
+- **awarzu** / (M)
+
+### this was converted to Linux & Mac by: Maayan080 

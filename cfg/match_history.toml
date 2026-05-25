@@ -1,0 +1,19 @@
+[emz]
+defeat = 61
+victory = 54
+draw = 1
+
+[total]
+defeat = 0
+victory = 1
+draw = 0
+
+[shelly]
+defeat = 0
+victory = 0
+draw = 0
+
+[colt]
+defeat = 0
+victory = 1
+draw = 0

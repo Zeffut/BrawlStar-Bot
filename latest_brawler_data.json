@@ -1,0 +1,11 @@
+[
+    {
+        "brawler": "colt",
+        "push_until": 500,
+        "trophies": 271,
+        "wins": 3,
+        "type": "trophies",
+        "automatically_pick": false,
+        "win_streak": 2
+    }
+]
