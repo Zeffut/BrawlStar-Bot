@@ -41,9 +41,19 @@ class Detect:
         self.model_path = model_path
         self.classes = classes
         self.ignore_classes = set(ignore_classes or ())
-        self.input_size = input_size
         self.preferred_device = preferred_device
         self.session, self.active_provider = self._load_session()
+        # Auto-detect input size from model: input shape is (N, C, H, W).
+        # Falls back to the user-provided default if shape is dynamic.
+        try:
+            in_shape = self.session.get_inputs()[0].shape
+            h, w = in_shape[2], in_shape[3]
+            if isinstance(h, int) and isinstance(w, int):
+                self.input_size = (h, w)
+            else:
+                self.input_size = input_size
+        except Exception:
+            self.input_size = input_size
 
     def _load_session(self) -> tuple[ort.InferenceSession, str]:
         available = ort.get_available_providers()
