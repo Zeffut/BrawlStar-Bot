@@ -129,8 +129,13 @@ def test_disconnect_fixture_triggers_reconnect_tap(workers_and_buses):
 
 
 @pytest.mark.slow
-def test_end_fixture_triggers_continue_tap(workers_and_buses):
-    """Inject post-match screen → bot should TAP CONTINUER (2130, 1000)."""
+def test_end_fixture_triggers_dismiss_tap(workers_and_buses):
+    """Inject post-match screen → bot should TAP a known dismiss position.
+
+    End-screen layouts vary (VICTOIRE has CONTINUER; DÉFAITE has
+    REJOUER+QUITTER) so we only assert the tap is in the bottom-right
+    button strip (y ~1000, x in 1900-2300).
+    """
     vision, brain, control, frame_slot, state_slot, control_bus, adb, stop_event = workers_and_buses
 
     frame = _load_fixture("end")
@@ -138,4 +143,5 @@ def test_end_fixture_triggers_continue_tap(workers_and_buses):
 
     action = _wait_for_action(control_bus, ActionType.TAP, timeout_s=8.0)
     assert action is not None, "expected a TAP action"
-    assert (action.x, action.y) == (2130, 1000), f"expected CONTINUER tap, got {action}"
+    assert 1900 <= action.x <= 2300, f"expected x in [1900,2300], got {action}"
+    assert action.y >= 900, f"expected bottom-row button (y>=900), got {action}"

@@ -68,6 +68,10 @@ class MenuStrategy(Strategy):
         self._unknown_since: float | None = None
         # Rotation of dismiss strategies for unknown popups.
         self._unknown_attempt_idx = 0
+        # Track entry time for every non-gameplay state, to escalate to
+        # app-restart if any dismiss strategy fails to free us.
+        self._state_entered_at: float = 0.0
+        self._stuck_restart_after_s: float = 25.0
 
     def decide(self, gs: GameState) -> Action | None:
         now = time.monotonic()
@@ -76,10 +80,31 @@ class MenuStrategy(Strategy):
         # Reset unknown timer when we move to a known state.
         if gs.state != "unknown":
             self._unknown_since = None
-        # Reset dismiss rotation index when we escape into lobby/match/end
-        # (those are "good" states where dismissal succeeded).
-        if gs.state in ("lobby", "match", "end"):
+        # Reset dismiss rotation index only when we ESCAPE into a true gameplay
+        # state (lobby or match). 'end' is itself a dismiss state — resetting
+        # there would lock us on the first dismiss position forever.
+        if gs.state in ("lobby", "match"):
             self._unknown_attempt_idx = 0
+
+        # Track when we entered the current non-gameplay state.
+        if gs.state != self._last_state:
+            self._state_entered_at = now
+        # Last-resort: if we've been stuck in any dismiss state for too long,
+        # restart Brawl Stars to recover (the AFK kick popup on top of a
+        # post-match screen, for example, can be unkillable with taps).
+        if (
+            gs.state in ("disconnect", "popup", "end", "starting")
+            and (now - self._state_entered_at) > self._stuck_restart_after_s
+            and self.on_stuck_callback
+        ):
+            logger.warning(
+                "MenuStrategy: stuck in state %r for %.0fs — restarting app",
+                gs.state, now - self._state_entered_at,
+            )
+            self.on_stuck_callback()
+            self._state_entered_at = now  # reset timer
+            self._last_state = None
+            return None
 
         if gs.state == "starting":
             if self._starting_since is None:
@@ -116,7 +141,18 @@ class MenuStrategy(Strategy):
         if gs.state == "lobby":
             action = Action.tap(*self.coords.play_button)
         elif gs.state == "end":
-            action = Action.tap(*self.coords.continue_button)
+            # VICTOIRE screen has a single CONTINUER button (2130, 1000).
+            # DÉFAITE screen has REJOUER (1990, 1000) + QUITTER (2230, 1000).
+            # Rotate to make sure we hit something dismissive.
+            targets = [
+                self.coords.continue_button,   # CONTINUER (VICTOIRE)
+                (2230, 1000),                  # QUITTER (DÉFAITE)
+                (1990, 1000),                  # REJOUER (DÉFAITE)
+                self.coords.popup_close,       # home icon (fallback)
+            ]
+            t = targets[self._unknown_attempt_idx % len(targets)]
+            self._unknown_attempt_idx += 1
+            action = Action.tap(*t)
         elif gs.state == "popup":
             # Different popups have different dismiss buttons (home icon,
             # green OK, back arrow). Rotate through known positions until
