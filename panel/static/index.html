@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BrawlStar Bot Panel</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header>
+  <h1>🤖 BrawlStar Bot</h1>
+  <div class="header-right">
+    <div id="fleet-summary" class="fleet"></div>
+    <button class="header-btn" onclick="openSettings()">⚙ Settings</button>
+  </div>
+</header>
+
+<main>
+  <aside id="account-list">
+    <h2>Accounts</h2>
+    <ul id="accounts"></ul>
+  </aside>
+
+  <section id="account-detail">
+    <div id="empty-state">Select an account.</div>
+
+    <div id="detail-content" hidden>
+      <header class="detail-header">
+        <div>
+          <h2 id="acc-name"></h2>
+          <div class="tag" id="acc-tag"></div>
+        </div>
+        <div class="controls" id="acc-controls"></div>
+      </header>
+
+      <section class="cards">
+        <div class="card"><label>Status</label><div id="kpi-status">—</div></div>
+        <div class="card"><label>Current Brawler</label><div id="kpi-brawler">—</div></div>
+        <div class="card"><label>Current Trophies</label><div id="kpi-trophies">—</div></div>
+        <div class="card"><label>Session Δ</label><div id="kpi-delta">—</div></div>
+        <div class="card"><label>Matches (session)</label><div id="kpi-matches">—</div></div>
+        <div class="card"><label>Win Rate (session)</label><div id="kpi-wr">—</div></div>
+      </section>
+
+      <section class="charts">
+        <div class="chart-card">
+          <h3>Account trophies (all brawlers)</h3>
+          <canvas id="chart-progression"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Win rate by brawler (all-time)</h3>
+          <canvas id="chart-winrate"></canvas>
+        </div>
+      </section>
+
+      <section class="lists">
+        <div class="list-card">
+          <h3>Recent matches</h3>
+          <table id="matches-table">
+            <thead><tr><th>Time</th><th>Brawler</th><th>Result</th><th>Δ</th><th>Trophies</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="list-card">
+          <h3>Sessions</h3>
+          <table id="sessions-table">
+            <thead><tr><th>Started</th><th>Brawler</th><th>Target</th><th>Δ</th><th>Status</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<!-- Settings modal (global, not per-account) -->
+<div id="settings-modal" class="modal" hidden>
+  <div class="modal-card">
+    <header>
+      <h2>⚙ Settings</h2>
+      <button class="modal-close" onclick="closeSettings()">✕</button>
+    </header>
+    <div class="modal-body">
+      <h3 class="settings-section-title">Telegram alerts</h3>
+      <p class="modal-subtitle">Global — applies to every account.</p>
+      <div id="alerts-config"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Start-cycle modal -->
+<div id="start-modal" class="modal" hidden>
+  <div class="modal-card">
+    <header>
+      <h2>Start cycle</h2>
+      <button class="modal-close" onclick="closeStartModal()">✕</button>
+    </header>
+    <div class="modal-body">
+      <div class="target-bar">
+        <label>Target 🏆</label>
+        <input id="target-input" type="number" value="500" />
+        <div class="modal-quick-targets">
+          <button type="button" onclick="setTarget(300)">300</button>
+          <button type="button" onclick="setTarget(500)">500</button>
+          <button type="button" onclick="setTarget(700)">700</button>
+          <button type="button" onclick="setTarget(1000)">1000</button>
+        </div>
+      </div>
+      <p class="modal-subtitle">Click a brawler to start pushing it.</p>
+      <div id="brawler-grid"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
