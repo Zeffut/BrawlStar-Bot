@@ -72,6 +72,11 @@ class MenuStrategy(Strategy):
         # app-restart if any dismiss strategy fails to free us.
         self._state_entered_at: float = 0.0
         self._stuck_restart_after_s: float = 25.0
+        # Absolute timer: time since we last saw a "safe" gameplay state
+        # (lobby or match). Independent of state oscillation — when this
+        # exceeds the threshold, force app restart.
+        self._last_gameplay_at: float = 0.0
+        self._no_gameplay_restart_after_s: float = 60.0
 
     def decide(self, gs: GameState) -> Action | None:
         now = time.monotonic()
@@ -89,20 +94,35 @@ class MenuStrategy(Strategy):
         # Track when we entered the current non-gameplay state.
         if gs.state != self._last_state:
             self._state_entered_at = now
-        # Last-resort: if we've been stuck in any dismiss state for too long,
-        # restart Brawl Stars to recover (the AFK kick popup on top of a
-        # post-match screen, for example, can be unkillable with taps).
-        if (
+        # Update last-seen-gameplay timestamp.
+        if gs.state in ("lobby", "match"):
+            self._last_gameplay_at = now
+        elif self._last_gameplay_at == 0.0:
+            # First non-gameplay state encountered — anchor the timer here.
+            self._last_gameplay_at = now
+
+        # Restart trigger A: stuck on a single non-gameplay state for too long.
+        stuck_in_state = (
             gs.state in ("disconnect", "popup", "end", "starting")
             and (now - self._state_entered_at) > self._stuck_restart_after_s
-            and self.on_stuck_callback
-        ):
+        )
+        # Restart trigger B: been bouncing without reaching lobby/match for too
+        # long (resilient to state oscillation).
+        no_gameplay = (
+            self._last_gameplay_at > 0.0
+            and (now - self._last_gameplay_at) > self._no_gameplay_restart_after_s
+        )
+        if (stuck_in_state or no_gameplay) and self.on_stuck_callback:
+            reason = "single-state stuck" if stuck_in_state else "no-gameplay timeout"
             logger.warning(
-                "MenuStrategy: stuck in state %r for %.0fs — restarting app",
-                gs.state, now - self._state_entered_at,
+                "MenuStrategy: %s in state %r (single=%.0fs, no_gp=%.0fs) — restarting app",
+                reason, gs.state,
+                now - self._state_entered_at,
+                now - self._last_gameplay_at,
             )
             self.on_stuck_callback()
-            self._state_entered_at = now  # reset timer
+            self._state_entered_at = now
+            self._last_gameplay_at = now
             self._last_state = None
             return None
 
