@@ -1,0 +1,9 @@
+# Telegram bot credentials.
+# Get token from @BotFather; chat_id from any message you sent to the bot
+# (https://api.telegram.org/bot<TOKEN>/getUpdates).
+
+bot_token = "8927602653:AAHlj4gALCVNUHujBJSol1fX4ImagUlfVqU"
+chat_id = 6423758768
+
+# Polling settings.
+poll_timeout_s = 25  # long-poll timeout (Telegram caps at 50)
