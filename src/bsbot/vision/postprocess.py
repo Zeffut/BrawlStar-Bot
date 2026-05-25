@@ -97,9 +97,10 @@ def parse_brawler_detections(
     """
     # Min bbox dimension to be considered a "real" on-field brawler.
     # Brawler portraits in UI corners (score indicators, party icons) are
-    # ~70-90px tall; actual brawlers in landscape view are ~150-400px tall.
-    # 110px threshold filters most UI false positives.
-    MIN_BRAWLER_SIZE_PX = 110
+    # ~70-90px tall; phantom detections from the model on tile patterns can
+    # also be 100-140px. 150px threshold filters those out while still
+    # keeping actual brawlers in landscape view (typically 200-400px).
+    MIN_BRAWLER_SIZE_PX = 150
 
     enemies: list[Enemy] = []
     for cls, boxes in raw.items():

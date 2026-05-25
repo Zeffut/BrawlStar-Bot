@@ -135,10 +135,12 @@ class VisionWorker(threading.Thread):
 
         # Expensive path: run all three detectors (or as many as relevant).
         # On Mac CoreML, each Detect.detect_objects takes ~15-30ms in 640x640.
+        # Higher conf threshold on brawlers (model produces phantom boxes on
+        # walls/UI) — only keep detections we're very confident about.
         assert self._tile_detector and self._brawlers_detector and self._main_detector
-        tile_raw = self._tile_detector.detect_objects(frame)
-        brawler_raw = self._brawlers_detector.detect_objects(frame)
-        main_raw = self._main_detector.detect_objects(frame)
+        tile_raw = self._tile_detector.detect_objects(frame, conf_thresh=0.6)
+        brawler_raw = self._brawlers_detector.detect_objects(frame, conf_thresh=0.78)
+        main_raw = self._main_detector.detect_objects(frame, conf_thresh=0.6)
 
         # If state_finder said "unknown" but we got brawlers, assume match.
         effective_state = "match" if (state_name == "unknown" and brawler_raw) else state_name

@@ -76,6 +76,9 @@ class MenuStrategy(Strategy):
         # Reset unknown timer when we move to a known state.
         if gs.state != "unknown":
             self._unknown_since = None
+        # Reset dismiss rotation index when we escape into lobby/match/end
+        # (those are "good" states where dismissal succeeded).
+        if gs.state in ("lobby", "match", "end"):
             self._unknown_attempt_idx = 0
 
         if gs.state == "starting":
@@ -115,7 +118,18 @@ class MenuStrategy(Strategy):
         elif gs.state == "end":
             action = Action.tap(*self.coords.continue_button)
         elif gs.state == "popup":
-            action = Action.tap(*self.coords.popup_close)
+            # Different popups have different dismiss buttons (home icon,
+            # green OK, back arrow). Rotate through known positions until
+            # one dismisses.
+            targets = [
+                self.coords.popup_close,       # top-right home icon
+                (1170, 970),                   # green OK button bottom-center
+                self.coords.fallback,          # screen center
+                (75, 35),                      # top-left back arrow
+            ]
+            t = targets[self._unknown_attempt_idx % len(targets)]
+            self._unknown_attempt_idx += 1
+            action = Action.tap(*t)
         elif gs.state == "disconnect":
             action = Action.tap(*self.coords.reconnect_button)
         elif gs.state == "unknown":
