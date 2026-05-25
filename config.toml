@@ -10,7 +10,7 @@ mode = "solo_showdown"
 brawler = "brock"
 
 [session]
-max_duration_minutes = 30    # longer sessions now that basics work
+max_duration_minutes = 6     # ~1 match + entry/end transitions
 max_matches = 0              # 0 = unlimited
 
 [performance]

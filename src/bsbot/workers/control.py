@@ -52,6 +52,8 @@ class ControlWorker(threading.Thread):
         stop_event: threading.Event,
         layout: ButtonLayout | None = None,
         joystick_tick_ms: int = 80,
+        landscape_w: int = 2340,
+        landscape_h: int = 1080,
     ):
         super().__init__(name="ControlWorker", daemon=True)
         self.bus = bus
@@ -59,6 +61,10 @@ class ControlWorker(threading.Thread):
         self.stop_event = stop_event
         self.layout = layout or ButtonLayout()
         self.joystick_tick_ms = joystick_tick_ms
+        # Landscape frame dimensions used for aim direction computation
+        # (independent of `adb.screen_width/height` which return portrait).
+        self.landscape_w = landscape_w
+        self.landscape_h = landscape_h
 
         self._joystick_dir: tuple[float, float] | None = None  # (dx, dy) or None
         self._last_joystick_tick = 0.0
@@ -122,16 +128,24 @@ class ControlWorker(threading.Thread):
         self.adb.swipe(cx, cy, tx, ty, duration_ms=self.joystick_tick_ms + 20)
 
     def _aimed(self, action: Action) -> None:
-        """Drag from attack/super button toward target world coords."""
+        """Drag from attack/super button toward target world coords.
+
+        `action.x/y` are pixel coords in the captured frame (landscape
+        orientation, e.g. 2340x1080 for Mi 9T Pro). The drag direction is
+        computed FROM our position (assumed at landscape screen center,
+        because the camera follows the player) TO the target.
+
+        Note: `adb.screen_width/screen_height` come from `wm size` which
+        returns PORTRAIT dimensions (1080x2340 even when device is in
+        landscape). We use the layout's landscape dimensions instead.
+        """
         is_super = action.type == ActionType.AIMED_SUPER
         bx, by = self.layout.super_button if is_super else self.layout.attack_button
         r = self.layout.super_drag_radius if is_super else self.layout.attack_drag_radius
-        # Compute direction from button to target *on screen*. For Colt the
-        # attack is aimed in the same screen direction as the drag.
-        # We assume action.x/y are pixel coords on the captured frame, in the
-        # same resolution as device. (If frame is downscaled, BrainWorker
-        # should rescale before issuing the action.)
-        cx, cy = self.adb.screen_width // 2, self.adb.screen_height // 2
+        # Landscape center — same heuristic the strategy uses for my_pos.
+        # Hard-coded for now since the device is always in landscape.
+        # If we ever support different aspect ratios, derive from the frame.
+        cx, cy = self.landscape_w // 2, int(self.landscape_h * 0.55)
         dx = (action.x or cx) - cx
         dy = (action.y or cy) - cy
         mag = max((dx * dx + dy * dy) ** 0.5, 1e-6)

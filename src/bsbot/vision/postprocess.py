@@ -101,6 +101,13 @@ def parse_brawler_detections(
     # also be 100-140px. 150px threshold filters those out while still
     # keeping actual brawlers in landscape view (typically 200-400px).
     MIN_BRAWLER_SIZE_PX = 150
+    # The camera centers on the player, so any detection within this radius
+    # of my_pos is actually US (Brock) — exclude as a self-target.
+    SELF_EXCLUSION_RADIUS_PX = 220
+
+    my_pos: tuple[int, int] | None = None
+    if frame_width > 0 and frame_height > 0:
+        my_pos = (frame_width // 2, int(frame_height * 0.55))
 
     enemies: list[Enemy] = []
     for cls, boxes in raw.items():
@@ -108,11 +115,13 @@ def parse_brawler_detections(
             b = BBox.from_xyxy(xyxy)
             if min(b.w, b.h) < MIN_BRAWLER_SIZE_PX:
                 continue
+            if my_pos is not None:
+                dx = b.cx - my_pos[0]
+                dy = b.cy - my_pos[1]
+                if (dx * dx + dy * dy) < (SELF_EXCLUSION_RADIUS_PX ** 2):
+                    continue  # Skip self.
             enemies.append(Enemy(bbox=b, brawler_class=cls, confidence=1.0))
 
-    my_pos: tuple[int, int] | None = None
-    if frame_width > 0 and frame_height > 0:
-        my_pos = (frame_width // 2, int(frame_height * 0.55))
     return my_pos, enemies
 
 

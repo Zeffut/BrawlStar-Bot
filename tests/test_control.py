@@ -149,21 +149,36 @@ class TestControlWorker:
             w.join(timeout=1.0)
 
     def test_aimed_attack_drags_in_direction(self, adb):
+        """Target to the RIGHT of landscape center → drag right; target to
+        LEFT of center → drag left."""
         bus = ControlBus()
         stop = threading.Event()
         w = self._start(bus, adb, stop)
         try:
-            # Target to the right of screen center → drag from attack button to the right.
-            bus.put(Action.aimed_attack(target_x=1000, target_y=1200))  # screen center is 540,1200
+            # Landscape center = (1170, 594). Target far right.
+            bus.put(Action.aimed_attack(target_x=2200, target_y=600))
             self._wait_for_command_count(adb, 1)
-            assert len(adb.device.commands) == 1
             cmd = adb.device.commands[0]
             assert cmd.startswith("input swipe")
             parts = cmd.split()
             x1, y1, x2, y2 = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
-            # x1=1700 (attack button), x2 should be to the right of x1 (~1900).
-            assert x1 == 1700
-            assert x2 > x1
+            assert x1 == 1700  # attack button x
+            assert x2 > x1, f"target on right → drag right, got x1={x1} x2={x2}"
+        finally:
+            stop.set()
+            w.join(timeout=1.0)
+
+    def test_aimed_attack_drags_left(self, adb):
+        bus = ControlBus()
+        stop = threading.Event()
+        w = self._start(bus, adb, stop)
+        try:
+            # Target far LEFT of landscape center.
+            bus.put(Action.aimed_attack(target_x=200, target_y=600))
+            self._wait_for_command_count(adb, 1)
+            parts = adb.device.commands[0].split()
+            x1, x2 = int(parts[2]), int(parts[4])
+            assert x2 < x1, f"target on left → drag left, got x1={x1} x2={x2}"
         finally:
             stop.set()
             w.join(timeout=1.0)
