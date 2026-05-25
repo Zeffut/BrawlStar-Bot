@@ -72,6 +72,7 @@ from account_detect import detect_player_tag, fetch_owned_brawlers, fetch_accoun
 import db  # noqa: E402
 from worker_pool import POOL, BotWorker  # noqa: E402
 import alerts  # noqa: E402
+import cloud_sync  # noqa: E402
 from push_max import PushMaxStrategy  # noqa: E402
 from logging_setup import setup_logging  # noqa: E402
 
@@ -357,6 +358,10 @@ class BotRunner:
                                    end_trophies=end_trophies)
                 except Exception:
                     pass
+                try:
+                    cloud_sync.session_end(self._session_id, "stopped", end_trophies)
+                except Exception:
+                    log.exception("cloud session_end push failed")
                 self._session_id = None
             self.main_instance = None
             log.info("Bot run ended")
@@ -466,6 +471,13 @@ class BotRunner:
             log.info("DB session opened: id=%d account=%d brawler=%s target=%d start_trophies=%s",
                      self._session_id, self._account_id, brawler, target,
                      self._initial_trophies)
+            try:
+                acc = db.get_account(self._account_id)
+                if acc:
+                    cloud_sync.session_start(acc["tag"], brawler, target,
+                                             self._initial_trophies, self._session_id)
+            except Exception:
+                log.exception("cloud session_start push failed")
         else:
             log.warning("No account_id bound; matches won't be persisted to DB")
 
@@ -492,6 +504,15 @@ class BotRunner:
                                  account_trophies_after=runner._account_trophies)
                 except Exception as exc:
                     log.warning("db.log_match failed: %s", exc)
+                # Push to cloud panel (fire-and-forget).
+                try:
+                    acc = db.get_account(runner._account_id)
+                    if acc:
+                        cloud_sync.match(acc["tag"], runner._session_id,
+                                         current_brawler, game_result,
+                                         before, after, runner._account_trophies)
+                except Exception:
+                    log.exception("cloud match push failed")
             runner._match_count += 1
             if game_result == "victory":
                 runner._win_count += 1
@@ -899,6 +920,7 @@ def _bootstrap_account(bot: "TelegramBot") -> None:
             device_serial="emulator-5554",
             telegram_chat_id=bot.chat_id,
         )
+        cloud_sync.account(tag, profile.get("name"))
         bot.runner._account_id = account_id
         bot._account = {"tag": tag, "name": profile.get("name"), "brawlers": brawlers}
         POOL.register(account_id, BotWorker(
@@ -946,6 +968,12 @@ def main() -> int:
     from panel import app as panel_module
     panel_module.set_shared_runner(bot.runner)
     _start_panel_thread()
+    # Cloud sync — pushes events to the central VPS panel if cfg/cloud.toml is enabled.
+    if cloud_sync.is_enabled():
+        cloud_sync.start_heartbeat_loop()
+        log.info("cloud sync enabled, heartbeat thread armed")
+    else:
+        log.info("cloud sync disabled (no cfg/cloud.toml or enabled=false)")
     # Best-effort: detect the connected account at startup so the panel
     # has something to show before the user runs /start. Silently skips
     # if the game isn't on the lobby screen.
