@@ -62,12 +62,20 @@ class StateMatch:
 
 
 class StateFinder:
-    """Load templates from a directory and detect the most likely state."""
+    """Load templates from a directory and detect the most likely state.
 
-    def __init__(self, templates_dir: str | Path, threshold: float = 0.85):
+    For speed, both the input frame and the templates are downsampled to
+    `scale` (default 0.5 = half size) before running matchTemplate. This
+    is ~4x faster on full-HD frames with no measurable accuracy loss on
+    distinctive UI elements.
+    """
+
+    def __init__(self, templates_dir: str | Path, threshold: float = 0.85,
+                 scale: float = 0.5):
         self.templates_dir = Path(templates_dir)
         self.threshold = threshold
-        # {state: [(name, template_gray_np), ...]}
+        self.scale = scale
+        # {state: [(name, template_gray_np_at_scale), ...]}
         self._templates: dict[str, list[tuple[str, np.ndarray]]] = {}
         self.reload()
 
@@ -87,6 +95,11 @@ class StateFinder:
                 if img is None:
                     logger.warning("Could not read template %s", img_path)
                     continue
+                if self.scale != 1.0:
+                    h, w = img.shape[:2]
+                    new_w = max(1, int(w * self.scale))
+                    new_h = max(1, int(h * self.scale))
+                    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
                 entries.append((img_path.name, img))
             if entries:
                 self._templates[state] = entries
@@ -113,6 +126,13 @@ class StateFinder:
         else:
             gray = frame
 
+        # Downsample the frame to match the template scale.
+        if self.scale != 1.0:
+            h, w = gray.shape[:2]
+            gray = cv2.resize(gray, (max(1, int(w * self.scale)), max(1, int(h * self.scale))),
+                              interpolation=cv2.INTER_AREA)
+        inv_scale = 1.0 / self.scale if self.scale else 1.0
+
         best: StateMatch | None = None
         for state in KNOWN_STATES:
             for name, template in self._templates.get(state, []):
@@ -123,7 +143,9 @@ class StateFinder:
                 result = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
                 _min_val, max_val, _min_loc, max_loc = cv2.minMaxLoc(result)
                 if max_val >= self.threshold and (best is None or max_val > best.score):
-                    best = StateMatch(state=state, template_name=name, score=float(max_val), location=max_loc)
+                    # Map location back to full-resolution frame coords.
+                    loc = (int(max_loc[0] * inv_scale), int(max_loc[1] * inv_scale))
+                    best = StateMatch(state=state, template_name=name, score=float(max_val), location=loc)
         return best
 
     def detect_state_name(self, frame: np.ndarray) -> str:

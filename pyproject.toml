@@ -15,7 +15,12 @@ include = ["bsbot*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --color=yes"
+# Default run skips bench markers (run `pytest -m bench` to include).
+addopts = "-q --color=yes -m 'not bench'"
+markers = [
+    "slow: tests that load ONNX models or run worker threads (~5s each)",
+    "bench: performance benchmark (off by default, run with `-m bench`)",
+]
 filterwarnings = [
     "ignore::DeprecationWarning",
 ]
