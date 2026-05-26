@@ -136,14 +136,27 @@ def event(type_: str, payload: dict | None = None, tag: str | None = None) -> No
 
 
 def start_heartbeat_loop(interval_s: float = 30.0) -> None:
-    """Spawn a daemon thread that pings the cloud every interval_s."""
+    """Spawn a daemon thread that pings the cloud every interval_s.
+
+    Also re-pushes every known local account every cycle so the cloud
+    DB recovers automatically after Dokploy redeploys (which wipe the
+    SQLite volume).
+    """
     global _heartbeat_thread
     if _heartbeat_thread is not None or not is_enabled():
         return
     def loop():
+        # local import to avoid circular at module load
+        import db as _db
         while True:
             try:
                 heartbeat()
+                # Re-sync all known accounts so the cloud always sees them.
+                for acc in _db.list_accounts():
+                    try:
+                        account(acc["tag"], acc.get("name"))
+                    except Exception:
+                        pass
             except Exception:
                 log.exception("heartbeat tick failed")
             time.sleep(interval_s)
