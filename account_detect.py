@@ -318,18 +318,31 @@ _NAME_RE = re.compile(
 )
 
 
-def fetch_account_profile(tag: str, timeout: float = 8.0) -> dict:
+def fetch_account_profile(tag: str, timeout: float = 30.0) -> dict:
     """Return {"name": "zeffut2.0", "brawlers": [...]} for the account.
 
-    `brawlers` is a list of {"name", "power", "trophies"}. Empty list /
-    None on failure.
+    Goes through the cloud panel `/api/util/brawler_profile/{tag}` which
+    proxies brawlace through flaresolverr (bypasses Cloudflare).
+    Falls back to direct brawlace (likely 403) if cloud unreachable.
     """
     tag = tag.lstrip("#").upper()
+    cloud_url = _cloud_url()
+    if cloud_url:
+        url = f"{cloud_url.rstrip('/')}/api/util/brawler_profile/{tag}"
+        log.info("fetching brawler profile via cloud: %s", url)
+        try:
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code == 200:
+                j = resp.json()
+                return {"name": j.get("name"), "brawlers": j.get("brawlers", [])}
+            log.warning("cloud profile endpoint HTTP %d: %s", resp.status_code, resp.text[:200])
+        except Exception as exc:
+            log.warning("cloud profile request failed: %s", exc)
+    # Fallback: direct (will probably 403 due to Cloudflare).
     url = f"https://brawlace.com/players/{tag}"
-    log.info("fetching brawlace profile: %s", url)
+    log.info("fallback: direct brawlace %s", url)
     try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"},
-                            timeout=timeout)
+        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
     except requests.RequestException as exc:
         log.warning("brawlace request failed: %s", exc)
         return {"name": None, "brawlers": []}
@@ -347,6 +360,17 @@ def fetch_account_profile(tag: str, timeout: float = 8.0) -> dict:
         })
     log.info("brawlace profile parsed: name=%r brawlers=%d", name, len(brawlers))
     return {"name": name, "brawlers": brawlers}
+
+
+def _cloud_url() -> str | None:
+    try:
+        import tomllib
+        from pathlib import Path
+        p = Path(__file__).resolve().parent / "cfg" / "cloud.toml"
+        with p.open("rb") as f:
+            return tomllib.load(f).get("url")
+    except Exception:
+        return None
 
 
 def fetch_owned_brawlers(tag: str, timeout: float = 8.0) -> List[dict]:
