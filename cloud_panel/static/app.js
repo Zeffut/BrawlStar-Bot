@@ -166,6 +166,7 @@ async function refreshDetail() {
     ]);
   } catch (e) { return; }
   refreshSessionState();
+  gcRefreshAll();
 
   document.getElementById("acc-name").textContent = acc.name || acc.tag;
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
@@ -467,6 +468,107 @@ document.getElementById("btn-stop").addEventListener("click", async () => {
   } finally {
     btn.disabled = false; btn.textContent = "⏹ Stop";
     refreshSessionState();
+  }
+});
+
+// ----------------- Game Control -----------------
+
+async function gcCall(method, path, body) {
+  const r = await fetch(`/api/accounts/${selectedAccountId}/game${path}`, {
+    method, headers: {"Content-Type": "application/json"},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return r.json();
+}
+
+function gcSetResult(text, kind) {
+  const el = document.getElementById("gc-result");
+  el.textContent = text;
+  el.className = "gc-result " + (kind || "");
+}
+
+async function gcRefreshAll() {
+  if (!selectedAccountId) return;
+  const [stateRes, brawlerRes, trophyRes, shotRes] = await Promise.all([
+    gcCall("GET", "/state").catch(() => null),
+    gcCall("GET", "/current_brawler").catch(() => null),
+    gcCall("GET", "/trophies").catch(() => null),
+    gcCall("GET", "/screenshot").catch(() => null),
+  ]);
+  if (stateRes?.ok && stateRes.data?.state) {
+    document.getElementById("gc-state").textContent = "state: " + stateRes.data.state;
+  } else {
+    document.getElementById("gc-state").textContent = "state: offline";
+  }
+  if (brawlerRes?.ok && brawlerRes.data?.brawler) {
+    document.getElementById("gc-current-brawler").textContent = brawlerRes.data.brawler;
+  }
+  if (trophyRes?.ok && trophyRes.data?.trophies != null) {
+    document.getElementById("gc-trophies").textContent = trophyRes.data.trophies + " 🏆";
+  }
+  if (shotRes?.ok && shotRes.data?.b64) {
+    document.getElementById("gc-screenshot").src = `data:${shotRes.data.mime};base64,${shotRes.data.b64}`;
+    document.getElementById("gc-screen-meta").textContent =
+      `${shotRes.data.w}×${shotRes.data.h}`;
+  }
+}
+
+async function gcRefreshBrawlers() {
+  if (!selectedAccountId) return;
+  const btn = document.getElementById("gc-refresh-brawlers");
+  btn.disabled = true; btn.textContent = "↻ scanning…";
+  gcSetResult("Opening brawler menu and scanning… (~30 s)", "run");
+  try {
+    const r = await gcCall("GET", "/brawlers?force=true");
+    if (r?.ok && r.data?.brawlers) {
+      const sel = document.getElementById("gc-brawler-select");
+      sel.innerHTML = '<option value="">— current —</option>';
+      for (const b of r.data.brawlers) {
+        const o = document.createElement("option");
+        o.value = b.name; o.textContent = b.name;
+        sel.appendChild(o);
+      }
+      gcSetResult(`Found ${r.data.brawlers.length} brawlers`, "ok");
+    } else {
+      gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = "↻ scan";
+  }
+}
+
+document.getElementById("gc-refresh-state").addEventListener("click", gcRefreshAll);
+document.getElementById("gc-refresh-brawlers").addEventListener("click", gcRefreshBrawlers);
+
+document.getElementById("gc-goto-lobby").addEventListener("click", async () => {
+  if (!selectedAccountId) return;
+  gcSetResult("Returning to lobby…", "run");
+  const r = await gcCall("POST", "/goto_lobby");
+  gcSetResult(r?.ok ? "Lobby ✓" : "Failed: " + (r?.error || "unknown"),
+              r?.ok ? "ok" : "err");
+  gcRefreshAll();
+});
+
+document.getElementById("gc-play-one").addEventListener("click", async () => {
+  if (!selectedAccountId) return;
+  if (!confirm("Play one match now?")) return;
+  const btn = document.getElementById("gc-play-one");
+  const brawler = document.getElementById("gc-brawler-select").value || null;
+  btn.disabled = true; btn.textContent = "▶ Playing…";
+  gcSetResult("Match in progress (this can take 3-5 min)…", "run");
+  try {
+    const r = await gcCall("POST", "/play_one_match", {brawler, timeout_s: 420});
+    if (r?.ok && r.data?.ok) {
+      const d = r.data;
+      gcSetResult(`Match done · brawler=${d.brawler} · W:${d.wins} L:${d.losses} D:${d.draws} · ${d.duration_s}s`, "ok");
+    } else {
+      gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
+    }
+  } catch (e) {
+    gcSetResult("Error: " + e.message, "err");
+  } finally {
+    btn.disabled = false; btn.textContent = "▶ Play 1 match";
+    gcRefreshAll();
   }
 });
 

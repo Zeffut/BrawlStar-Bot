@@ -342,6 +342,74 @@ async def api_account_brawlers(account_id: int) -> dict:
     return await _cmd_for_account(account_id, "list_brawlers", {}, timeout_s=8)
 
 
+# -------- Game API proxies (per-account, fine-grained) ---------
+
+
+@app.get("/api/accounts/{account_id}/game/state")
+async def api_account_game_state(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "game_state", {}, timeout_s=8)
+
+
+@app.get("/api/accounts/{account_id}/game/screenshot")
+async def api_account_game_screenshot(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "game_screenshot", {}, timeout_s=10)
+
+
+@app.get("/api/accounts/{account_id}/game/trophies")
+async def api_account_game_trophies(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "game_trophies", {}, timeout_s=10)
+
+
+@app.get("/api/accounts/{account_id}/game/current_brawler")
+async def api_account_game_current_brawler(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "game_current_brawler", {}, timeout_s=10)
+
+
+@app.get("/api/accounts/{account_id}/game/brawlers")
+async def api_account_game_brawlers(account_id: int, force: bool = False) -> dict:
+    return await _cmd_for_account(account_id, "game_brawlers", {"force": force}, timeout_s=180)
+
+
+class GameTapPayload(BaseModel):
+    x_ratio: float
+    y_ratio: float
+
+
+@app.post("/api/accounts/{account_id}/game/tap")
+async def api_account_game_tap(account_id: int, payload: GameTapPayload) -> dict:
+    return await _cmd_for_account(account_id, "game_tap",
+                                   {"x_ratio": payload.x_ratio, "y_ratio": payload.y_ratio},
+                                   timeout_s=8)
+
+
+class GameSelectBrawlerPayload(BaseModel):
+    name: str
+
+
+@app.post("/api/accounts/{account_id}/game/select_brawler")
+async def api_account_game_select(account_id: int, payload: GameSelectBrawlerPayload) -> dict:
+    return await _cmd_for_account(account_id, "game_select_brawler",
+                                   {"name": payload.name}, timeout_s=60)
+
+
+@app.post("/api/accounts/{account_id}/game/goto_lobby")
+async def api_account_game_goto_lobby(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "game_goto_lobby", {}, timeout_s=30)
+
+
+class GamePlayOneMatchPayload(BaseModel):
+    brawler: str | None = None
+    timeout_s: float = 420
+
+
+@app.post("/api/accounts/{account_id}/game/play_one_match")
+async def api_account_game_play_one_match(account_id: int, payload: GamePlayOneMatchPayload) -> dict:
+    # WS timeout = match timeout + 30s slack
+    return await _cmd_for_account(account_id, "game_play_one_match",
+                                   {"brawler": payload.brawler, "timeout_s": payload.timeout_s},
+                                   timeout_s=payload.timeout_s + 30)
+
+
 @app.get("/api/instances/{instance_db_id}/health")
 def api_instance_health(instance_db_id: int) -> dict:
     inst_id = _resolve_instance(instance_db_id)

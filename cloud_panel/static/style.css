@@ -454,6 +454,104 @@ main {
 }
 .session-banner strong { color: var(--running); font-weight: 700; }
 
+/* -------- Game Control panel -------- */
+.game-control {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  margin-bottom: 24px;
+}
+.gc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.gc-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  display: flex; align-items: center; gap: 8px;
+}
+.gc-header h3::before {
+  content: ""; width: 3px; height: 14px; background: var(--cyan); border-radius: 999px;
+}
+.gc-state {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg-2);
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.gc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 16px;
+}
+@media (max-width: 900px) { .gc-grid { grid-template-columns: 1fr; } }
+.gc-screen img {
+  width: 100%;
+  border-radius: var(--radius);
+  background: #000;
+  display: block;
+  min-height: 100px;
+}
+.gc-meta { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
+.gc-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gc-row {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.gc-row label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.gc-value { font-size: 14px; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+.gc-inline { display: flex; gap: 6px; align-items: center; }
+.gc-inline select {
+  flex: 1;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+}
+.gc-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.gc-result {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  min-height: 28px;
+  white-space: pre-wrap;
+}
+.gc-result.ok    { color: var(--green); border-color: rgba(34,197,94,.3); }
+.gc-result.err   { color: var(--red); border-color: rgba(239,68,68,.3); }
+.gc-result.run   { color: var(--running); border-color: rgba(96,165,250,.3); }
+
 /* ----- KPI cards */
 
 .cards {

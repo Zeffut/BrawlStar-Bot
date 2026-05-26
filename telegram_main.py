@@ -95,6 +95,11 @@ log = logging.getLogger("telegram_main")
 # ----------------------------------------------------------- bot lifecycle
 
 
+# Shared singletons created at startup (after host_bootstrap).
+# Main reuses these to avoid double-initializing scrcpy/ADB.
+_SHARED_RUNTIME: dict = {}
+
+
 class BotRunner:
     """Manages the bot worker in a background thread."""
 
@@ -115,6 +120,7 @@ class BotRunner:
         self._loss_count: int = 0
         self._draw_count: int = 0
         self._target_trophies: int = 0
+        self._max_matches: int | None = None
         self._account_id: int | None = None
         self._session_id: int | None = None
         # When non-None we're in "push max" mode and this controls
@@ -130,7 +136,8 @@ class BotRunner:
 
     def start(self, brawler: str, trophies: int, wins: int,
               mode: str = "single",
-              owned_brawlers: list[dict] | None = None) -> tuple[bool, str]:
+              owned_brawlers: list[dict] | None = None,
+              max_matches: int | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
         mode = "single"   → push one brawler to a fixed target (current behaviour)
@@ -169,6 +176,7 @@ class BotRunner:
                 "push_until": trophies,
             }]
             self._target_trophies = trophies
+            self._max_matches = max_matches
             try:
                 save_brawler_data(data)
             except Exception as exc:
@@ -247,10 +255,10 @@ class BotRunner:
         # so /stop and /status can reach into it.
         class Main:
             def __init__(_self):
-                _self.window_controller = WindowController()
+                _self.window_controller = _SHARED_RUNTIME.get("wc") or WindowController()
                 _self.Play = Play(*_self.load_models(), _self.window_controller)
                 _self.Time_management = TimeManagement()
-                _self.lobby_automator = LobbyAutomation(_self.window_controller)
+                _self.lobby_automator = _SHARED_RUNTIME.get("la") or LobbyAutomation(_self.window_controller)
                 _self.Stage_manager = StageManager(data, _self.lobby_automator, _self.window_controller)
                 _self.states_requiring_data = ["lobby"]
                 if data[0]['automatically_pick']:
@@ -532,6 +540,11 @@ class BotRunner:
                 runner._loss_count += 1
             elif game_result == "draw":
                 runner._draw_count += 1
+
+            # max_matches cap: stop the runner cleanly after N matches.
+            if runner._max_matches is not None and runner._match_count >= runner._max_matches:
+                log.info("max_matches=%d reached — stopping bot", runner._max_matches)
+                main_instance.time_to_stop = True
 
             # push_max: record match, swap brawler if current one is exhausted.
             if runner._push_max is not None:
@@ -1011,6 +1024,21 @@ def main() -> int:
                         "and rely on the user to fix manually")
     except Exception:
         log.exception("host_bootstrap raised")
+    # Eager-init the GameAPI: creates the shared WindowController + LobbyAutomation
+    # so the cloud panel can drive game primitives (state, screenshot, brawler list,
+    # play match) even before a session is started by the user.
+    try:
+        import game_api
+        from window_controller import WindowController
+        from lobby_automation import LobbyAutomation
+        _shared_wc = WindowController()
+        _shared_la = LobbyAutomation(_shared_wc)
+        _SHARED_RUNTIME["wc"] = _shared_wc
+        _SHARED_RUNTIME["la"] = _shared_la
+        game_api.init(_shared_wc, _shared_la).set_runner(bot.runner)
+        log.info("GameAPI ready — game primitives available remotely")
+    except Exception:
+        log.exception("GameAPI bootstrap failed — remote game control will be degraded")
     # Cloud sync — pushes events to the central VPS panel if cfg/cloud.toml is enabled.
     # WebSocket link to cloud panel (for device management commands +
     # log/health/screenshot streams). Silent no-op when cloud disabled.

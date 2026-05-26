@@ -294,3 +294,84 @@ def api_fleet() -> dict:
         "total_accounts": len(db.list_accounts()),
         "running_workers": sum(1 for w in workers if w.get("running")),
     }
+
+
+# ============================================================
+# Game API — low-level primitives over the running Brawl Stars
+# ============================================================
+
+import asyncio
+import game_api as game_api_mod
+
+
+def _game():
+    api = game_api_mod.get()
+    if api is None:
+        raise HTTPException(503, "game API not initialized (bot still booting)")
+    return api
+
+
+@app.get("/api/game/state")
+async def game_state() -> dict:
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: {"state": _game().state()})
+
+
+@app.get("/api/game/screenshot")
+async def game_screenshot() -> dict:
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: _game().screenshot_jpeg())
+
+
+@app.get("/api/game/trophies")
+async def game_trophies() -> dict:
+    val = await asyncio.get_event_loop().run_in_executor(None, lambda: _game().read_trophies())
+    return {"trophies": val}
+
+
+@app.get("/api/game/current_brawler")
+async def game_current_brawler() -> dict:
+    val = await asyncio.get_event_loop().run_in_executor(None, lambda: _game().read_current_brawler())
+    return {"brawler": val}
+
+
+@app.get("/api/game/brawlers")
+async def game_brawlers(force: bool = False) -> dict:
+    val = await asyncio.get_event_loop().run_in_executor(None, lambda: _game().list_brawlers(force_refresh=force))
+    return {"brawlers": val}
+
+
+class SelectBrawlerPayload(BaseModel):
+    name: str
+
+
+@app.post("/api/game/select_brawler")
+async def game_select_brawler(payload: SelectBrawlerPayload) -> dict:
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _game().select_brawler(payload.name))
+
+
+class TapPayload(BaseModel):
+    x_ratio: float
+    y_ratio: float
+
+
+@app.post("/api/game/tap")
+async def game_tap(payload: TapPayload) -> dict:
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _game().tap(payload.x_ratio, payload.y_ratio))
+
+
+@app.post("/api/game/goto_lobby")
+async def game_goto_lobby() -> dict:
+    ok = await asyncio.get_event_loop().run_in_executor(None, lambda: _game().goto_lobby())
+    return {"ok": ok}
+
+
+class PlayMatchPayload(BaseModel):
+    brawler: str | None = None
+    timeout_s: float = 420
+
+
+@app.post("/api/game/play_one_match")
+async def game_play_one_match(payload: PlayMatchPayload) -> dict:
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _game().play_one_match(brawler=payload.brawler, timeout_s=payload.timeout_s))

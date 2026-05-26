@@ -291,6 +291,51 @@ def _cmd_list_brawlers(args: dict) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+# ---- game API proxies (low-level primitives) ----------------------
+
+def _cmd_game_state(args: dict) -> dict:
+    return _local_get("/api/game/state")
+
+
+def _cmd_game_screenshot(args: dict) -> dict:
+    return _local_get("/api/game/screenshot")
+
+
+def _cmd_game_trophies(args: dict) -> dict:
+    return _local_get("/api/game/trophies")
+
+
+def _cmd_game_current_brawler(args: dict) -> dict:
+    return _local_get("/api/game/current_brawler")
+
+
+def _cmd_game_brawlers(args: dict) -> dict:
+    force = "?force=true" if args.get("force") else ""
+    return _local_get(f"/api/game/brawlers{force}")
+
+
+def _cmd_game_select_brawler(args: dict) -> dict:
+    return _local_post("/api/game/select_brawler", {"name": args.get("name", "")})
+
+
+def _cmd_game_tap(args: dict) -> dict:
+    return _local_post("/api/game/tap", {
+        "x_ratio": float(args.get("x_ratio", 0.5)),
+        "y_ratio": float(args.get("y_ratio", 0.5)),
+    })
+
+
+def _cmd_game_goto_lobby(args: dict) -> dict:
+    return _local_post("/api/game/goto_lobby")
+
+
+def _cmd_game_play_one_match(args: dict) -> dict:
+    return _local_post("/api/game/play_one_match", {
+        "brawler": args.get("brawler"),
+        "timeout_s": float(args.get("timeout_s", 420)),
+    })
+
+
 # ---- dispatch table ----------------------------------------------
 
 COMMANDS: dict[str, Callable[[dict], dict]] = {
@@ -308,6 +353,16 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "session_stop":       _cmd_session_stop,
     "session_state":      _cmd_session_state,
     "list_brawlers":      _cmd_list_brawlers,
+    # game API primitives (low-level)
+    "game_state":            _cmd_game_state,
+    "game_screenshot":       _cmd_game_screenshot,
+    "game_trophies":         _cmd_game_trophies,
+    "game_current_brawler":  _cmd_game_current_brawler,
+    "game_brawlers":         _cmd_game_brawlers,
+    "game_select_brawler":   _cmd_game_select_brawler,
+    "game_tap":              _cmd_game_tap,
+    "game_goto_lobby":       _cmd_game_goto_lobby,
+    "game_play_one_match":   _cmd_game_play_one_match,
 }
 
 

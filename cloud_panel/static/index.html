@@ -53,6 +53,42 @@
         </div>
       </header>
       <div id="session-banner" class="session-banner" hidden></div>
+
+      <section class="game-control">
+        <div class="gc-header">
+          <h3>🎮 Game Control</h3>
+          <span class="gc-state" id="gc-state">state: —</span>
+        </div>
+        <div class="gc-grid">
+          <div class="gc-screen">
+            <img id="gc-screenshot" alt="live game" />
+            <div class="gc-meta" id="gc-screen-meta">—</div>
+          </div>
+          <div class="gc-controls">
+            <div class="gc-row">
+              <label>Current brawler</label>
+              <div class="gc-value" id="gc-current-brawler">—</div>
+            </div>
+            <div class="gc-row">
+              <label>Trophies (read)</label>
+              <div class="gc-value" id="gc-trophies">—</div>
+            </div>
+            <div class="gc-row">
+              <label>Brawler</label>
+              <div class="gc-inline">
+                <select id="gc-brawler-select"><option value="">— current —</option></select>
+                <button class="ctl" id="gc-refresh-brawlers" title="Open menu and scan all brawlers (~30 s)">↻ scan</button>
+              </div>
+            </div>
+            <div class="gc-actions">
+              <button class="header-btn" id="gc-refresh-state">↻ refresh state</button>
+              <button class="header-btn" id="gc-goto-lobby">🏠 goto lobby</button>
+              <button class="header-btn primary" id="gc-play-one">▶ Play 1 match</button>
+            </div>
+            <div class="gc-result muted" id="gc-result"></div>
+          </div>
+        </div>
+      </section>
       <section class="cards">
         <div class="card"><label>Sessions</label><div id="kpi-sessions">—</div></div>
         <div class="card"><label>Total matches</label><div id="kpi-matches">—</div></div>
