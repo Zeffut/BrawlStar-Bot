@@ -33,7 +33,10 @@ from pathlib import Path
 
 import requests
 import tomllib
-import tkinter as tk
+try:
+    import tkinter as tk
+except ImportError:
+    tk = None  # tkinter is optional — only needed on macOS for legacy patch
 
 # Same prelude as main.py — silence noisy 3rd-party stdout. Our own
 # logging is reconfigured via logging_setup below.
@@ -51,13 +54,14 @@ except Exception:
 # Patch Tk to avoid background-thread destruction errors (some legacy
 # helpers still touch Tk at import time; we don't show any GUI but keep
 # the lib happy).
-def _safe_tk_del(self):
-    try:
-        if self._tk.getboolean(self._tk.call("info", "exists", self._name)):
-            self._tk.globalgetvar(self._name)
-    except Exception:
-        pass
-tk.Variable.__del__ = _safe_tk_del
+if tk is not None:
+    def _safe_tk_del(self):
+        try:
+            if self._tk.getboolean(self._tk.call("info", "exists", self._name)):
+                self._tk.globalgetvar(self._name)
+        except Exception:
+            pass
+    tk.Variable.__del__ = _safe_tk_del
 
 # Make project importable regardless of CWD.
 BASE = Path(__file__).resolve().parent
