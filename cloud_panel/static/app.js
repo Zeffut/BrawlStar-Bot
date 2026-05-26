@@ -353,7 +353,7 @@ async function refreshDevicePanel() {
 
 async function sendDeviceCmd(cmd, confirmMsg) {
   if (!selectedInstanceForDevice) return;
-  if (confirmMsg && !confirm(confirmMsg)) return;
+  if (confirmMsg && !(await showConfirm({title: "Confirmer", body: confirmMsg, kind: "danger"}))) return;
   const btns = document.querySelectorAll('.control-grid button');
   btns.forEach(b => b.disabled = true);
   const status = document.getElementById("cmd-status");
@@ -464,10 +464,61 @@ document.getElementById("btn-push-max").addEventListener("click", () =>
 document.getElementById("btn-stop").addEventListener("click", () =>
   withLoader("btn-stop", async () => {
     if (!selectedAccountId) return;
-    if (!confirm("Stop the current session?")) return;
+    if (!(await showConfirm({
+      title: "Arrêter la session ?",
+      body: "Le bot va terminer le match en cours puis s'arrêter.",
+      confirmText: "Arrêter", kind: "danger",
+    }))) return;
     await postSession("/stop", {force: false});
     refreshSessionState();
   }));
+
+// ----------------- Custom confirm modal -----------------
+
+/**
+ * Promise-based confirm() replacement. Resolves true/false.
+ * Options: {title, body, confirmText, cancelText, kind: 'primary'|'danger'}
+ */
+function showConfirm(opts) {
+  if (typeof opts === "string") opts = {body: opts};
+  const {
+    title = "Confirmer",
+    body = "",
+    confirmText = "Confirmer",
+    cancelText = "Annuler",
+    kind = "primary",
+  } = opts;
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "confirm-overlay";
+    overlay.innerHTML = `
+      <div class="confirm-dialog">
+        <h3 class="confirm-title"></h3>
+        <p class="confirm-body"></p>
+        <div class="confirm-actions">
+          <button class="confirm-btn" data-act="cancel"></button>
+          <button class="confirm-btn ${kind}" data-act="ok"></button>
+        </div>
+      </div>`;
+    overlay.querySelector(".confirm-title").textContent = title;
+    overlay.querySelector(".confirm-body").textContent = body;
+    overlay.querySelector('[data-act="cancel"]').textContent = cancelText;
+    overlay.querySelector('[data-act="ok"]').textContent = confirmText;
+    const close = (val) => { overlay.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
+    const onKey = (e) => {
+      if (e.key === "Escape") close(false);
+      if (e.key === "Enter") close(true);
+    };
+    overlay.addEventListener("click", e => {
+      if (e.target === overlay) close(false);
+      else if (e.target.dataset.act === "cancel") close(false);
+      else if (e.target.dataset.act === "ok") close(true);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    overlay.querySelector('[data-act="ok"]').focus();
+  });
+}
 
 // ----------------- Loading spinner helper -----------------
 
@@ -650,7 +701,11 @@ document.getElementById("gc-goto-lobby").addEventListener("click", () =>
 document.getElementById("gc-play-one").addEventListener("click", () =>
   withLoader("gc-play-one", async () => {
     if (!selectedAccountId) return;
-    if (!confirm("Play one match now?")) return;
+    if (!(await showConfirm({
+      title: "Lancer une partie ?",
+      body: "Le bot va sélectionner le brawler choisi, lancer un match et jouer jusqu'à la fin.",
+      confirmText: "▶ Lancer",
+    }))) return;
     const brawler = document.getElementById("gc-brawler-select").value || null;
     gcSetResult("Match in progress (this can take 3-5 min)…", "run");
     try {

@@ -7,10 +7,15 @@ import os
 from PIL import Image
 from typing import List
 
+import numpy as np
 import scrcpy
 from adbutils import AdbClient
 # Added resource_path to find the bundled jar
 from utils import resource_path
+
+
+def np_from_pil(pil_img):
+    return np.array(pil_img)
 
 # --- Configuration ---
 brawl_stars_width, brawl_stars_height = 1920, 1080
@@ -114,21 +119,37 @@ class WindowController:
             print("cannot restart: No ADB device connected, manual restart is required")
 
     def screenshot(self, array=False):
-        deadline = time.time() + 10
-        while self.last_frame is None:
-            if time.time() > deadline: raise ConnectionError("Frame capture timeout.")
-            time.sleep(0.1)
-
+        # scrcpy frame stream is unreliable with PyAV>=10 on py3.12 (frames
+        # freeze after the first one). Fall back to adb exec-out screencap
+        # — slower (~400-600ms) but always returns the real-time frame.
+        # If scrcpy IS giving us a fresh frame (<2s old) we use it instead.
+        frame = None
         with self.frame_lock:
-            frame = self.last_frame.copy()
-        
+            if self.last_frame is not None and (time.time() - self.last_frame_time) < 2.0:
+                frame = self.last_frame.copy()
+        if frame is None:
+            import subprocess, io as _io
+            import device as _device
+            try:
+                out = subprocess.run(
+                    ["adb", "-s", _device.adb_serial(), "exec-out", "screencap", "-p"],
+                    capture_output=True, timeout=8, check=True,
+                )
+                pil = Image.open(_io.BytesIO(out.stdout)).convert("RGB")
+                frame_rgb = cv2.cvtColor(np_from_pil(pil), cv2.COLOR_RGB2BGR)
+                self.last_frame = frame_rgb
+                self.last_frame_time = time.time()
+                frame = frame_rgb
+            except Exception as exc:
+                raise ConnectionError(f"adb screencap failed: {exc}")
+
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
+
         if not self.width or not self.height:
             self.width, self.height = frame.shape[1], frame.shape[0]
             self.width_ratio = self.width / brawl_stars_width
             self.height_ratio = self.height / brawl_stars_height
-            self.scale_factor = self.width_ratio 
+            self.scale_factor = self.width_ratio
             self.joystick_x, self.joystick_y = 220 * self.width_ratio, 870 * self.height_ratio
 
         return frame_rgb if array else Image.fromarray(frame_rgb)
