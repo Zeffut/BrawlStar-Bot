@@ -214,6 +214,68 @@ header {
 .empty-card a { color: var(--primary-2); text-decoration: none; border-bottom: 1px dotted; }
 .empty-card a:hover { border-bottom-style: solid; }
 
+/* -------- Activity feed (sidebar) -------- */
+.activity-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: -4px;
+  padding: 4px;
+}
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  background: var(--surface);
+  border-left: 2px solid var(--border-2);
+}
+.activity-row.victory { border-left-color: var(--green); }
+.activity-row.defeat  { border-left-color: var(--red); }
+.activity-row.draw    { border-left-color: var(--yellow); }
+.activity-row .res {
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+}
+.activity-row.victory .res { color: var(--green); }
+.activity-row.defeat .res  { color: var(--red); }
+.activity-row.draw .res    { color: var(--yellow); }
+.activity-row .who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.activity-row .who .b {
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.activity-row .who .a {
+  color: var(--muted);
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.activity-row .delta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.activity-row .delta.pos { color: var(--green); }
+.activity-row .delta.neg { color: var(--red); }
+.activity-row .when {
+  font-size: 10px;
+  color: var(--muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
 /* ----------------------------------------------------------- layout */
 
 main {

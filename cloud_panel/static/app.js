@@ -828,6 +828,8 @@ function startSSE() {
       // Reload brawlers list if the refreshed account is selected.
       const acc = _lastAccounts.find(a => a.id === m.account_id);
       if (acc && acc.id === selectedAccountId) gcLoadBrawlers();
+    } else if (m.type === "match") {
+      _prependActivity(m);
     }
   });
   _sse.addEventListener("error", () => {
@@ -857,3 +859,56 @@ function onSnapshot(snap) {
 let _lastAccounts = [];
 
 startSSE();
+
+// ----------------- Activity feed -----------------
+
+function _activityRowHtml(m) {
+  const resChar = m.result === "victory" ? "W" : m.result === "defeat" ? "L" : "D";
+  const delta = m.delta;
+  const deltaTxt = delta == null ? "" : (delta >= 0 ? "+" : "") + delta;
+  const deltaCls = delta == null ? "" : delta > 0 ? "pos" : delta < 0 ? "neg" : "";
+  const accLabel = m.account_name || m.tag;
+  return `
+    <div class="activity-row ${m.result}">
+      <span class="res">${resChar}</span>
+      <div class="who">
+        <span class="b">${m.brawler}</span>
+        <span class="a">${accLabel}</span>
+      </div>
+      <span class="delta ${deltaCls}">${deltaTxt}</span>
+      <span class="when">${ago(m.timestamp)}</span>
+    </div>`;
+}
+
+async function loadActivity() {
+  try {
+    const rows = await api("/api/activity/recent?limit=30", {silent: true});
+    const feed = document.getElementById("activity-feed");
+    if (!rows || !rows.length) {
+      feed.innerHTML = `<div class="empty-card" style="padding:14px">
+        <span class="icon">🎮</span>
+        <div style="font-size:11px">No matches yet</div>
+      </div>`;
+      document.getElementById("activity-count").textContent = "0";
+      return;
+    }
+    feed.innerHTML = rows.map(_activityRowHtml).join("");
+    document.getElementById("activity-count").textContent = rows.length;
+  } catch (e) {}
+}
+
+function _prependActivity(m) {
+  const feed = document.getElementById("activity-feed");
+  if (!feed) return;
+  // Remove the empty-state card if present.
+  if (feed.querySelector(".empty-card")) feed.innerHTML = "";
+  const tmp = document.createElement("div");
+  tmp.innerHTML = _activityRowHtml(m).trim();
+  feed.insertBefore(tmp.firstChild, feed.firstChild);
+  // Cap at 30 rows.
+  while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+  const countEl = document.getElementById("activity-count");
+  if (countEl) countEl.textContent = feed.children.length;
+}
+
+loadActivity();

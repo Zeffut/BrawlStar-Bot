@@ -130,6 +130,19 @@ def sync_match(payload: MatchPayload, authorization: str | None = Header(None)) 
     mid = db.log_match(acc, payload.session_id, payload.brawler, payload.result,
                        payload.trophies_before, payload.trophies_after,
                        payload.account_trophies_after, payload.timestamp)
+    # Broadcast to SSE subscribers (live activity feed).
+    delta = None
+    if payload.trophies_before is not None and payload.trophies_after is not None:
+        delta = payload.trophies_after - payload.trophies_before
+    BUS.publish({
+        "type": "match",
+        "instance_id": payload.instance_id,
+        "tag": payload.tag,
+        "brawler": payload.brawler,
+        "result": payload.result,
+        "delta": delta,
+        "timestamp": payload.timestamp or time.time(),
+    })
     return {"ok": True, "match_id": mid}
 
 
@@ -247,6 +260,29 @@ def api_account_matches(account_id: int, limit: int = 200) -> list[dict]:
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "ts": time.time(), "sse_subscribers": BUS.count}
+
+
+@app.get("/api/activity/recent")
+def activity_recent(limit: int = 30) -> list[dict]:
+    """Recent match events across all accounts (newest first)."""
+    rows = db.conn().execute(
+        "SELECT m.brawler, m.result, m.trophies_before, m.trophies_after, "
+        "       m.timestamp, a.tag, a.name AS account_name, i.instance_id "
+        "FROM matches m "
+        "JOIN accounts a ON m.account_id = a.id "
+        "JOIN instances i ON a.instance_id = i.id "
+        "ORDER BY m.timestamp DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d["trophies_before"] is not None and d["trophies_after"] is not None:
+            d["delta"] = d["trophies_after"] - d["trophies_before"]
+        else:
+            d["delta"] = None
+        out.append(d)
+    return out
 
 
 @app.get("/api/fleet/overview")
