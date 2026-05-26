@@ -552,6 +552,55 @@ main {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* -------- Toast notifications (floating, bottom-right) -------- */
+#toast-stack {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  pointer-events: none;
+  max-width: 360px;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-2);
+  border-left: 3px solid var(--muted);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  font-size: 12.5px;
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  animation: toastIn 220ms var(--ease);
+}
+@keyframes toastIn {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.toast.fading {
+  animation: toastOut 300ms ease forwards;
+}
+@keyframes toastOut {
+  to { transform: translateX(40px); opacity: 0; }
+}
+.toast.ok  { border-left-color: var(--green); }
+.toast.err { border-left-color: var(--red); }
+.toast.run { border-left-color: var(--running); }
+.toast-icon { font-size: 14px; flex-shrink: 0; line-height: 1.3; }
+.toast-text { flex: 1; word-break: break-word; line-height: 1.4; }
+.toast-close {
+  background: transparent; border: none; color: var(--muted);
+  cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1;
+}
+.toast-close:hover { color: var(--text); }
 .gc-controls {
   display: flex;
   flex-direction: column;
@@ -589,18 +638,7 @@ main {
   gap: 8px;
   flex-wrap: wrap;
 }
-.gc-result {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  padding: 8px 10px;
-  background: var(--bg-2);
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  white-space: pre-wrap;
-}
-.gc-result:empty { display: none; }
-.gc-result { transition: opacity 300ms ease; }
-.gc-result.fading { opacity: 0; }
+/* (.gc-result removed — status messages now use floating toasts) */
 
 /* -------- Custom confirm modal -------- */
 .confirm-overlay {
@@ -665,9 +703,6 @@ main {
   border-color: rgba(239,68,68,.4);
 }
 .confirm-btn.danger:hover { background: var(--red); color: #fff; }
-.gc-result.ok    { color: var(--green); border-color: rgba(34,197,94,.3); }
-.gc-result.err   { color: var(--red); border-color: rgba(239,68,68,.3); }
-.gc-result.run   { color: var(--running); border-color: rgba(96,165,250,.3); }
 
 /* -------- Loading spinner -------- */
 .spinner {

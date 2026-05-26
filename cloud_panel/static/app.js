@@ -553,22 +553,34 @@ async function gcCall(method, path, body) {
   return r.json();
 }
 
-let _gcResultTimer = null;
-function gcSetResult(text, kind) {
-  const el = document.getElementById("gc-result");
-  el.textContent = text;
-  el.className = "gc-result " + (kind || "");
-  if (_gcResultTimer) { clearTimeout(_gcResultTimer); _gcResultTimer = null; }
-  // Auto-clear: ok/run after 4s, errors after 10s so the user has time to read.
+// Floating toast notifications (bottom-right). Stack newest at the bottom.
+function showToast(text, kind) {
   if (!text) return;
-  const delay = kind === "err" ? 10000 : 4000;
-  _gcResultTimer = setTimeout(() => {
-    el.classList.add("fading");
-    setTimeout(() => {
-      el.textContent = "";
-      el.className = "gc-result";
-    }, 350);
-  }, delay);
+  const stack = document.getElementById("toast-stack");
+  if (!stack) return;
+  const toast = document.createElement("div");
+  toast.className = "toast " + (kind || "");
+  const icons = { ok: "✓", err: "✗", run: "⟳" };
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[kind] || "•"}</span>
+    <span class="toast-text"></span>
+    <button class="toast-close" title="dismiss">×</button>`;
+  toast.querySelector(".toast-text").textContent = text;
+  stack.appendChild(toast);
+  const dismiss = () => {
+    if (!toast.parentNode) return;
+    toast.classList.add("fading");
+    setTimeout(() => toast.remove(), 320);
+  };
+  toast.querySelector(".toast-close").addEventListener("click", dismiss);
+  const delay = kind === "err" ? 10000 : kind === "run" ? 8000 : 4000;
+  setTimeout(dismiss, delay);
+  return toast;
+}
+
+// Backwards-compat alias: existing call sites still use gcSetResult().
+function gcSetResult(text, kind) {
+  return showToast(text, kind);
 }
 
 // Tracks which accounts have already had their one-shot preview fetched
