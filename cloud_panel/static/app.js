@@ -174,5 +174,117 @@ function renderWinRate(data) {
   winrateChart.update("none");
 }
 
+// ----------------- device management -----------------
+
+let selectedInstanceForDevice = null;
+let deviceTimer = null;
+
+async function refreshDevicePanel() {
+  if (!selectedAccountId) return;
+  // The device panel is keyed by the instance that owns the selected account.
+  let acc;
+  try { acc = await api(`/api/accounts/${selectedAccountId}`); } catch (e) { return; }
+  // Need the instance DB id — accounts response gives instance_id (uid) and instance_name.
+  // We look it up via /api/instances.
+  let instances;
+  try { instances = await api("/api/instances"); } catch (e) { return; }
+  const inst = instances.find(i => i.instance_id === acc.instance_uid);
+  if (!inst) { document.getElementById("device-panel").hidden = true; return; }
+  selectedInstanceForDevice = inst.id;
+  document.getElementById("device-panel").hidden = false;
+
+  // Fetch health, screenshot, logs in parallel
+  const [healthRes, shotRes, logsRes] = await Promise.all([
+    api(`/api/instances/${inst.id}/health`).catch(() => ({connected:false})),
+    api(`/api/instances/${inst.id}/screenshot`).catch(() => ({available:false})),
+    api(`/api/instances/${inst.id}/logs?limit=120`).catch(() => []),
+  ]);
+
+  // WS status indicator
+  const wsEl = document.getElementById("ws-status");
+  if (healthRes.connected) {
+    wsEl.textContent = "● online";
+    wsEl.className = "ws-status connected";
+  } else {
+    wsEl.textContent = "● offline (worker WS not connected)";
+    wsEl.className = "ws-status offline";
+  }
+
+  // Screen
+  const screenEl = document.getElementById("device-screen");
+  const ageEl = document.getElementById("screen-age");
+  if (shotRes.available) {
+    screenEl.src = "data:image/png;base64," + shotRes.png_b64;
+    ageEl.textContent = `last frame ${shotRes.age_s.toFixed(1)} s ago`;
+  } else {
+    ageEl.textContent = "no screenshot yet";
+  }
+
+  // Health
+  const hEl = document.getElementById("device-health");
+  hEl.innerHTML = "";
+  const fields = [
+    ["Model", healthRes.model],
+    ["Android", healthRes.android],
+    ["Battery", healthRes.battery != null ? healthRes.battery + "%" : null],
+    ["Temp", healthRes.battery_temp_c != null ? healthRes.battery_temp_c + "°C" : null],
+    ["RAM free", healthRes.ram_free_mb != null ? healthRes.ram_free_mb + " MB" : null],
+    ["Storage free", healthRes.storage_free_mb != null ? Math.round(healthRes.storage_free_mb/1024) + " GB" : null],
+    ["Brawl Stars", healthRes.brawlstars_pid ? "running ✓" : "off"],
+    ["Uptime", healthRes.uptime_s != null ? Math.floor(healthRes.uptime_s/60) + " min" : null],
+  ];
+  for (const [label, value] of fields) {
+    if (value == null) continue;
+    const item = document.createElement("div");
+    item.className = "h-item";
+    item.innerHTML = `<label>${label}</label><div>${value}</div>`;
+    hEl.appendChild(item);
+  }
+
+  // Logs
+  const logsEl = document.getElementById("device-logs");
+  const logsCount = document.getElementById("logs-count");
+  logsCount.textContent = `(${logsRes.length} lines)`;
+  // Only scroll-to-bottom if user is already at the bottom (avoid yanking while reading)
+  const atBottom = logsEl.scrollTop + logsEl.clientHeight + 10 >= logsEl.scrollHeight;
+  logsEl.textContent = logsRes.map(e => e.line).join("\n");
+  if (atBottom) logsEl.scrollTop = logsEl.scrollHeight;
+}
+
+async function sendDeviceCmd(cmd, confirmMsg) {
+  if (!selectedInstanceForDevice) return;
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  const btns = document.querySelectorAll('.control-grid button');
+  btns.forEach(b => b.disabled = true);
+  const status = document.getElementById("cmd-status");
+  status.textContent = `Running ${cmd}…`;
+  try {
+    const r = await fetch(`/api/instances/${selectedInstanceForDevice}/cmd`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: cmd}),
+    });
+    const j = await r.json();
+    if (r.ok && j.ok) {
+      status.textContent = `✓ ${cmd} OK`;
+    } else {
+      status.textContent = `✗ ${j.error || r.statusText}`;
+    }
+  } catch (e) {
+    status.textContent = "✗ " + e.message;
+  } finally {
+    btns.forEach(b => b.disabled = false);
+    setTimeout(() => status.textContent = "", 3000);
+    refreshDevicePanel();
+  }
+}
+
+document.querySelectorAll('.control-grid button').forEach(btn => {
+  btn.addEventListener("click", () =>
+    sendDeviceCmd(btn.dataset.cmd, btn.dataset.confirm || null));
+});
+
+if (deviceTimer) clearInterval(deviceTimer);
+deviceTimer = setInterval(refreshDevicePanel, 5000);
+
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();

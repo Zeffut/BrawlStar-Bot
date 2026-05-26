@@ -12,12 +12,13 @@ import os
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
+from ws import HUB, worker_ws_endpoint
 
 STATIC_DIR = Path(__file__).parent / "static"
 AUTH_TOKEN = os.environ.get("CLOUD_AUTH_TOKEN", "change-me")
@@ -187,3 +188,86 @@ def api_account_matches(account_id: int, limit: int = 200) -> list[dict]:
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "ts": time.time()}
+
+
+# ============================================================
+# Device management — WebSocket + commands + streams
+# ============================================================
+
+
+@app.websocket("/ws/worker")
+async def ws_worker(ws: WebSocket, token: str = "", instance_id: str = "") -> None:
+    """Persistent WS endpoint a worker connects to at startup."""
+    await worker_ws_endpoint(ws, token=token, instance_id=instance_id)
+
+
+def _resolve_instance(instance_id_or_db_id: int | str):
+    """Allow both DB id (int) and instance_id (str) in URL paths."""
+    if isinstance(instance_id_or_db_id, int) or (
+        isinstance(instance_id_or_db_id, str) and instance_id_or_db_id.isdigit()
+    ):
+        inst = next((i for i in db.list_instances() if i["id"] == int(instance_id_or_db_id)), None)
+        return inst["instance_id"] if inst else None
+    return instance_id_or_db_id
+
+
+class CommandPayload(BaseModel):
+    name: str
+    args: dict | None = None
+    timeout_s: float = 15.0
+
+
+@app.post("/api/instances/{instance_db_id}/cmd")
+async def api_instance_cmd(instance_db_id: int, payload: CommandPayload) -> dict:
+    """Send a command to the worker connected for this instance."""
+    inst_id = _resolve_instance(instance_db_id)
+    if not inst_id:
+        raise HTTPException(404, "instance not found")
+    try:
+        data = await HUB.send_command(inst_id, payload.name, payload.args,
+                                       timeout_s=payload.timeout_s)
+        return {"ok": True, "data": data}
+    except TimeoutError as exc:
+        return {"ok": False, "error": str(exc)}
+    except ConnectionError as exc:
+        raise HTTPException(503, str(exc))
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/instances/{instance_db_id}/screenshot")
+def api_instance_screenshot(instance_db_id: int) -> dict:
+    """Return the last screenshot pushed by the worker (base64 PNG)."""
+    inst_id = _resolve_instance(instance_db_id)
+    conn = HUB.get(inst_id) if inst_id else None
+    if conn is None or not conn.last_screenshot_b64:
+        return {"available": False}
+    return {
+        "available": True,
+        "png_b64": conn.last_screenshot_b64,
+        "age_s": time.time() - conn.last_screenshot_at,
+    }
+
+
+@app.get("/api/instances/{instance_db_id}/logs")
+def api_instance_logs(instance_db_id: int, limit: int = 100) -> list[dict]:
+    inst_id = _resolve_instance(instance_db_id)
+    conn = HUB.get(inst_id) if inst_id else None
+    if conn is None:
+        return []
+    items = list(conn.logs)[-limit:]
+    return items
+
+
+@app.get("/api/instances/{instance_db_id}/health")
+def api_instance_health(instance_db_id: int) -> dict:
+    inst_id = _resolve_instance(instance_db_id)
+    conn = HUB.get(inst_id) if inst_id else None
+    if conn is None:
+        return {"connected": False}
+    return {
+        "connected": True,
+        "connected_at": conn.connected_at,
+        "uptime_s": time.time() - conn.connected_at,
+        **conn.health,
+    }

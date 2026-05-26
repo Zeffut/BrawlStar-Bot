@@ -47,6 +47,37 @@
           <canvas id="chart-winrate"></canvas>
         </div>
       </section>
+      <section class="device-panel" id="device-panel" hidden>
+        <h3>Device management <span class="ws-status" id="ws-status">●</span></h3>
+        <div class="device-grid">
+          <div class="device-card screen-card">
+            <h4>Live screen</h4>
+            <img id="device-screen" alt="device screen" />
+            <div class="muted" id="screen-age"></div>
+          </div>
+          <div class="device-card health-card">
+            <h4>Health</h4>
+            <div class="health-grid" id="device-health"></div>
+          </div>
+          <div class="device-card controls-card">
+            <h4>Controls</h4>
+            <div class="control-grid">
+              <button class="ctl" data-cmd="brawlstars_start">▶ Start Brawl Stars</button>
+              <button class="ctl" data-cmd="brawlstars_stop">⏹ Stop Brawl Stars</button>
+              <button class="ctl" data-cmd="brawlstars_restart">⟳ Restart Brawl Stars</button>
+              <button class="ctl" data-cmd="adb_reconnect">🔌 Reconnect ADB</button>
+              <button class="ctl danger" data-cmd="phone_reboot" data-confirm="Reboot the phone?">📱 Reboot phone</button>
+              <button class="ctl danger" data-cmd="bot_restart" data-confirm="Restart the bot?">🤖 Restart bot</button>
+            </div>
+            <div class="cmd-status muted" id="cmd-status"></div>
+          </div>
+          <div class="device-card logs-card">
+            <h4>Logs <span class="muted" id="logs-count"></span></h4>
+            <pre id="device-logs"></pre>
+          </div>
+        </div>
+      </section>
+
       <section class="lists">
         <div class="list-card">
           <h3>Recent matches</h3>

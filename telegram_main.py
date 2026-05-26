@@ -991,6 +991,13 @@ def main() -> int:
     except Exception:
         log.exception("host_bootstrap raised")
     # Cloud sync — pushes events to the central VPS panel if cfg/cloud.toml is enabled.
+    # WebSocket link to cloud panel (for device management commands +
+    # log/health/screenshot streams). Silent no-op when cloud disabled.
+    try:
+        import worker_link
+        worker_link.start()
+    except Exception:
+        log.exception("worker_link failed to start")
     if cloud_sync.is_enabled():
         cloud_sync.start_heartbeat_loop()
         # Push every known local account on startup so the cloud panel

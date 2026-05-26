@@ -277,8 +277,79 @@ tr:last-child td { border-bottom: none; }
 .modal-actions button.primary:hover { background: #5b96f5; }
 .modal-actions button.primary:disabled { background: #2c3645; cursor: not-allowed; }
 
+/* ----------------- device management ----------------- */
+.device-panel {
+  background: #161a22;
+  border: 1px solid #222831;
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+.device-panel h3 {
+  margin: 0 0 14px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #c0c8d4;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.ws-status { font-size: 11px; color: #6b7686; }
+.ws-status.connected { color: #4ade80; text-shadow: 0 0 6px #4ade80; }
+.ws-status.offline   { color: #ef4444; }
+.device-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 12px;
+}
+.device-card {
+  background: #1a1f29;
+  border: 1px solid #222831;
+  padding: 12px 14px;
+  border-radius: 6px;
+}
+.device-card h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  color: #8b95a5;
+  letter-spacing: 0.5px;
+}
+.screen-card { grid-column: 1; grid-row: 1 / span 2; display: flex; flex-direction: column; }
+.screen-card img {
+  width: 100%; height: auto; border-radius: 4px;
+  background: #0f1115; max-height: 360px; object-fit: contain;
+}
+.health-card { grid-column: 2; grid-row: 1; }
+.health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.health-grid .h-item label {
+  display: block; color: #6b7686; font-size: 10px;
+  text-transform: uppercase; margin-bottom: 2px;
+}
+.health-grid .h-item div { color: #e2e6ec; font-size: 14px; font-weight: 500; }
+.controls-card { grid-column: 2; grid-row: 2; }
+.control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.control-grid button {
+  background: #1f2735; border: 1px solid #2c3645; color: #c0c8d4;
+  padding: 7px 8px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; text-align: left;
+}
+.control-grid button:hover { background: #2c3645; }
+.control-grid button.danger { border-color: #4a2333; color: #ef4444; }
+.control-grid button.danger:hover { background: #401820; }
+.control-grid button:disabled { opacity: 0.5; cursor: wait; }
+.cmd-status { font-size: 11px; margin-top: 6px; min-height: 14px; }
+.logs-card { grid-column: 1 / -1; }
+.logs-card pre {
+  background: #0f1115; border: 1px solid #222831; padding: 8px 10px;
+  margin: 0; border-radius: 4px;
+  font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.45;
+  color: #c0c8d4; max-height: 280px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+
 @media (max-width: 900px) {
   main { grid-template-columns: 1fr; }
   aside { display: none; }
-  .charts, .lists { grid-template-columns: 1fr; }
+  .charts, .lists, .device-grid { grid-template-columns: 1fr; }
 }

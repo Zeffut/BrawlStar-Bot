@@ -27,6 +27,7 @@ aiohttp>=3.10
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.10
+websockets>=13
 
 # Misc
 packaging>=24
