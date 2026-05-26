@@ -311,19 +311,9 @@ def api_instance_snapshot(instance_db_id: int) -> dict:
 # ====================================================================
 
 
-import re as _re  # noqa: E402
-
-_BRAWLACE_ROW_RE = _re.compile(
-    r'/brawlers/([A-Za-z0-9_\-\.]+)\.png[^>]*>\s*([A-Z0-9 \.\-&!]+?)</td>'
-    r'<td[^>]*>(\d+)</td>'
-    r'<td[^>]*>.*?/tiers/\d+\.png.*?</td>'
-    r'<td[^>]*>(\d+)</td>',
-    _re.DOTALL,
-)
-_BRAWLACE_NAME_RE = _re.compile(
-    r'<meta name="description" content="([^"]+?) Brawl Stars Stats',
-    _re.IGNORECASE,
-)
+from brawlace_parse import BRAWLACE_ROW_RE as _BRAWLACE_ROW_RE
+from brawlace_parse import BRAWLACE_NAME_RE as _BRAWLACE_NAME_RE
+from brawlace_parse import parse_profile as _parse_brawlace_profile
 _FLARESOLVERR_URL = os.environ.get("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
 
 def _fetch_profile_from_brawlace(tag: str) -> dict:
