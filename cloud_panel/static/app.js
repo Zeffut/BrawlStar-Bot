@@ -1,10 +1,15 @@
 // Cloud panel — aggregates multiple bot instances.
 
-const REFRESH_MS = 5000;
+const REFRESH_MS = 15000;  // structural refresh only; live data comes via SSE
 let selectedAccountId = null;
 let selectedInstanceId = null;  // null = all
 let progressionChart = null;
 let winrateChart = null;
+
+// Latest snapshot per instance, kept in sync by SSE.
+const SNAPSHOTS = {};
+// Map account_tag -> instance_id for fast lookup.
+const TAG_TO_INSTANCE = {};
 
 async function api(path) {
   const r = await fetch(path);
@@ -37,6 +42,7 @@ async function refreshAll() {
     instances.forEach((i, idx) => { healths[i.id] = hs[idx]; });
   } catch (e) { return; }
 
+  _lastAccounts = accounts;
   const available = instances.filter(i => i.status === "available" || i.status === "running").length;
   const running = instances.filter(i => i.status === "running").length;
   const totalAccounts = accounts.length;
@@ -499,24 +505,22 @@ function gcSetResult(text, kind) {
 }
 
 async function gcRefreshAll() {
-  // No automatic screenshot: capture only fires when the user clicks 📷.
-  // Reading state/trophies is cheap (no scrcpy frame copy on the bot side).
+  // State + trophies arrive automatically via SSE snapshots every 10s.
+  // We only need to populate from cached snapshot when an account is
+  // first selected, and fetch the brawler name (not in the snapshot).
   if (!selectedAccountId) return;
-  const [stateRes, brawlerRes, trophyRes] = await Promise.all([
-    gcCall("GET", "/state").catch(() => null),
-    gcCall("GET", "/current_brawler").catch(() => null),
-    gcCall("GET", "/trophies").catch(() => null),
-  ]);
-  if (stateRes?.ok && stateRes.data?.state) {
-    document.getElementById("gc-state").textContent = "state: " + stateRes.data.state;
+  const acc = _lastAccounts.find(a => a.id === selectedAccountId);
+  const snap = acc ? SNAPSHOTS[acc.instance_uid] : null;
+  if (snap) {
+    if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state;
+    if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
   } else {
-    document.getElementById("gc-state").textContent = "state: offline";
+    document.getElementById("gc-state").textContent = "state: —";
   }
+  // Brawler name still needs an explicit call (heavier OCR, not in snapshot).
+  const brawlerRes = await gcCall("GET", "/current_brawler").catch(() => null);
   if (brawlerRes?.ok && brawlerRes.data?.brawler) {
     document.getElementById("gc-current-brawler").textContent = brawlerRes.data.brawler;
-  }
-  if (trophyRes?.ok && trophyRes.data?.trophies != null) {
-    document.getElementById("gc-trophies").textContent = trophyRes.data.trophies + " 🏆";
   }
 }
 
@@ -592,3 +596,45 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
 
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();
+
+// ----------------- SSE live stream -----------------
+//
+// Single long-lived EventSource. Every worker snapshot lands here and
+// updates the relevant DOM bits without any polling.
+
+let _sse = null;
+function startSSE() {
+  try { if (_sse) _sse.close(); } catch (e) {}
+  _sse = new EventSource("/api/events");
+  _sse.addEventListener("message", (ev) => {
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.type === "snapshot") onSnapshot(m);
+  });
+  _sse.addEventListener("error", () => {
+    // EventSource auto-reconnects by itself, just log.
+    console.warn("SSE disconnected, reconnecting…");
+  });
+}
+
+function onSnapshot(snap) {
+  SNAPSHOTS[snap.instance_id] = snap;
+  if (snap.account_tag) TAG_TO_INSTANCE[snap.account_tag] = snap.instance_id;
+
+  // Update Game Control panel if the currently selected account belongs
+  // to this instance.
+  const acc = _lastAccounts.find(a => a.id === selectedAccountId);
+  if (acc && acc.instance_uid === snap.instance_id) {
+    if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state;
+    if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
+  }
+
+  // Update sidebar pills (running/available transitions) — cheap.
+  const dotOrPill = document.querySelector(`[data-instance="${snap.instance_id}"] .inst-dot`);
+  // (Sidebar full redraw happens via refreshAll; this is just live state hints.)
+}
+
+// Cache last accounts list (set by refreshAll) so SSE handler can correlate.
+let _lastAccounts = [];
+
+startSSE();

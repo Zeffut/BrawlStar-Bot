@@ -56,9 +56,45 @@ class WorkerConnection:
     last_screenshot_b64: str | None = None
     last_screenshot_mime: str = "image/jpeg"
     last_screenshot_at: float = 0.0
+    # last game snapshot {state, trophies, account_tag, ts}
+    last_snapshot: dict = field(default_factory=dict)
     # ring buffer of recent log lines
     logs: collections.deque = field(default_factory=lambda: collections.deque(maxlen=LOG_BUFFER))
     connected_at: float = field(default_factory=time.time)
+
+
+# ---- SSE broadcaster ----------------------------------------------
+
+class EventBus:
+    """Fan-out events to all connected browser SSE clients."""
+
+    def __init__(self) -> None:
+        self._subs: set[asyncio.Queue] = set()
+
+    async def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._subs.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        self._subs.discard(q)
+
+    def publish(self, event: dict) -> None:
+        dead = []
+        for q in self._subs:
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                dead.append(q)
+        for q in dead:
+            self._subs.discard(q)
+
+    @property
+    def count(self) -> int:
+        return len(self._subs)
+
+
+BUS = EventBus()
 
 
 class WorkerHub:
@@ -167,6 +203,15 @@ async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = 
                 conn.last_screenshot_b64 = b64
                 conn.last_screenshot_mime = mime
                 conn.last_screenshot_at = time.time()
+            elif mtype == "snapshot":
+                data = msg.get("data") or {}
+                conn.last_snapshot = {**data, "_pushed_at": time.time()}
+                # Broadcast to SSE subscribers (browsers).
+                BUS.publish({
+                    "type": "snapshot",
+                    "instance_id": instance_id,
+                    **data,
+                })
             elif mtype == "hello":
                 # informational; worker can resend on reconnect
                 pass

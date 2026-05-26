@@ -316,6 +316,11 @@ async def game_state() -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, lambda: {"state": _game().state()})
 
 
+@app.get("/api/game/snapshot")
+async def game_snapshot() -> dict:
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: _game().snapshot())
+
+
 @app.get("/api/game/screenshot")
 async def game_screenshot() -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, lambda: _game().screenshot_jpeg())

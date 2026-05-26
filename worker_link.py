@@ -336,6 +336,21 @@ def _cmd_game_play_one_match(args: dict) -> dict:
     })
 
 
+def _local_snapshot() -> dict | None:
+    """Fetch a lightweight snapshot (state + trophies + tag + session)."""
+    try:
+        snap = _local_get("/api/game/snapshot")
+    except Exception:
+        return None
+    # Add account tag + session active if any session running.
+    try:
+        accs = _local_get("/api/accounts")
+        snap["account_tag"] = accs[0]["tag"] if accs else None
+    except Exception:
+        snap["account_tag"] = None
+    return snap
+
+
 # ---- dispatch table ----------------------------------------------
 
 COMMANDS: dict[str, Callable[[dict], dict]] = {
@@ -392,6 +407,7 @@ async def _run_ws_client():
     last_log_offset = 0
     last_screenshot_at = 0.0
     last_health_at = 0.0
+    last_snapshot_at = 0.0
 
     while True:  # outer reconnect loop
         try:
@@ -402,7 +418,7 @@ async def _run_ws_client():
                 await ws.send(json.dumps({"type": "hello", "instance_id": instance_id}))
 
                 async def sender_loop():
-                    nonlocal last_log_offset, last_screenshot_at, last_health_at
+                    nonlocal last_log_offset, last_screenshot_at, last_health_at, last_snapshot_at
                     log_path = Path(__file__).resolve().parent / "logs" / "bot.log"
                     while True:
                         await asyncio.sleep(2.0)
@@ -439,6 +455,18 @@ async def _run_ws_client():
                                 return
                             except Exception:
                                 log.debug("health push failed")
+                        # game snapshot every 10s (state + trophies, no image)
+                        if now - last_snapshot_at >= 10:
+                            try:
+                                snap = await asyncio.get_running_loop().run_in_executor(
+                                    None, _local_snapshot)
+                                if snap:
+                                    await ws.send(json.dumps({"type": "snapshot", "data": snap}))
+                                last_snapshot_at = now
+                            except websockets.exceptions.ConnectionClosed:
+                                return
+                            except Exception:
+                                log.debug("snapshot push failed")
 
                 sender_task = asyncio.create_task(sender_loop())
 

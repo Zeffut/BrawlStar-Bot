@@ -18,7 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
-from ws import HUB, worker_ws_endpoint
+from ws import HUB, BUS, worker_ws_endpoint
+from fastapi.responses import StreamingResponse
+import asyncio as _asyncio
+import json as _json
 
 STATIC_DIR = Path(__file__).parent / "static"
 AUTH_TOKEN = os.environ.get("CLOUD_AUTH_TOKEN", "change-me")
@@ -195,7 +198,54 @@ def api_account_matches(account_id: int, limit: int = 200) -> list[dict]:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "ts": time.time()}
+    return {"ok": True, "ts": time.time(), "sse_subscribers": BUS.count}
+
+
+# ============================================================
+# Server-Sent Events — continuous push from workers to browsers
+# ============================================================
+
+
+@app.get("/api/events")
+async def events_stream() -> StreamingResponse:
+    """SSE stream — every worker snapshot is forwarded to all subscribers.
+
+    Format: `data: {json}\n\n` per event. Browser uses EventSource.
+    """
+    q = await BUS.subscribe()
+
+    async def gen():
+        # Initial state: send last known snapshot for each connected instance.
+        for conn in HUB.list():
+            if conn.last_snapshot:
+                yield "data: " + _json.dumps({
+                    "type": "snapshot",
+                    "instance_id": conn.instance_id,
+                    **{k: v for k, v in conn.last_snapshot.items() if k != "_pushed_at"},
+                }) + "\n\n"
+        yield "data: " + _json.dumps({"type": "ready"}) + "\n\n"
+        try:
+            while True:
+                try:
+                    ev = await _asyncio.wait_for(q.get(), timeout=25)
+                    yield "data: " + _json.dumps(ev) + "\n\n"
+                except _asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            BUS.unsubscribe(q)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/instances/{instance_db_id}/snapshot")
+def api_instance_snapshot(instance_db_id: int) -> dict:
+    """Return the last cached snapshot (state, trophies, account_tag, ts)."""
+    inst_id = _resolve_instance(instance_db_id)
+    conn = HUB.get(inst_id) if inst_id else None
+    if conn is None or not conn.last_snapshot:
+        return {"available": False}
+    return {"available": True, **conn.last_snapshot}
 
 
 # ====================================================================

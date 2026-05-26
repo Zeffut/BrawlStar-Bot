@@ -115,6 +115,35 @@ class GameAPI:
             log.warning("read_trophies(): %s", exc)
         return None
 
+    def snapshot(self) -> dict:
+        """Return a lightweight observation snapshot (no screenshot)."""
+        try:
+            img = self._grab()
+            st = get_state(img)
+        except Exception:
+            st = "unknown"
+        # Re-use the already-captured frame for OCR (avoid double adb).
+        trophies = None
+        try:
+            import numpy as _np
+            arr = _np.array(img) if st != "unknown" else None
+            if arr is not None:
+                h, w = arr.shape[:2]
+                crop = arr[int(h * 0.02):int(h * 0.09), int(w * 0.60):int(w * 0.85)]
+                text = extract_text_and_positions(crop)
+                for key in text.keys():
+                    cleaned = "".join(c for c in key if c.isdigit())
+                    if cleaned and 100 <= int(cleaned) <= 200000:
+                        trophies = int(cleaned)
+                        break
+        except Exception:
+            pass
+        return {
+            "state": st,
+            "trophies": trophies,
+            "ts": round(time.time(), 2),
+        }
+
     def read_current_brawler(self) -> str | None:
         """OCR the brawler name shown above the play button in lobby."""
         try:
