@@ -158,8 +158,16 @@ def index() -> FileResponse:
 def api_instances() -> list[dict]:
     out = []
     for i in db.list_instances():
-        i["accounts_count"] = len(db.list_accounts(i["id"]))
+        accs = db.list_accounts(i["id"])
+        i["accounts_count"] = len(accs)
         i["fresh"] = (time.time() - i["last_seen_at"]) < 120
+        running = any(db.current_session(a["id"]) for a in accs)
+        if running:
+            i["status"] = "running"
+        elif i["fresh"]:
+            i["status"] = "available"
+        else:
+            i["status"] = "offline"
         out.append(i)
     return out
 

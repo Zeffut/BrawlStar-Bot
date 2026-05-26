@@ -37,12 +37,13 @@ async function refreshAll() {
     instances.forEach((i, idx) => { healths[i.id] = hs[idx]; });
   } catch (e) { return; }
 
-  const online = instances.filter(i => i.fresh).length;
+  const available = instances.filter(i => i.status === "available" || i.status === "running").length;
+  const running = instances.filter(i => i.status === "running").length;
   const totalAccounts = accounts.length;
   document.getElementById("fleet-summary").textContent =
-    `${online}/${instances.length} online · ${totalAccounts} accounts`;
+    `${available}/${instances.length} available · ${running} running · ${totalAccounts} accounts`;
   document.getElementById("sidebar-meta").textContent =
-    `${online}/${instances.length}`;
+    `${available}/${instances.length}`;
 
   // Build a tree: instances → accounts
   const accountsByInstance = {};
@@ -73,14 +74,17 @@ async function refreshAll() {
     // Head
     const head = document.createElement("div");
     head.className = "instance-head";
+    const statusLabel = inst.status === "running" ? "running"
+                      : inst.status === "available" ? "available"
+                      : "offline";
     head.innerHTML = `
-      <span class="inst-dot ${inst.fresh ? 'online' : ''}"></span>
+      <span class="inst-dot ${inst.status}"></span>
       <div class="inst-main">
         <div class="inst-name">${inst.name || inst.instance_id}</div>
         <div class="inst-id">${inst.instance_id} · ${ago(inst.last_seen_at)}</div>
       </div>
-      <span class="inst-status-pill ${inst.fresh ? 'online' : ''}">
-        ${inst.fresh ? 'online' : 'offline'}
+      <span class="inst-status-pill ${inst.status}">
+        ${statusLabel}
       </span>
     `;
     card.appendChild(head);
