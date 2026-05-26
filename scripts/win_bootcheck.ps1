@@ -69,9 +69,17 @@ Log "adb devices output: $devices"
 $pkgs = (& $ADB -s $ADB_HOST shell pm list packages) -join "`n"
 $pkgPattern = [regex]::Escape($BS_PACKAGE)
 if ($pkgs -notmatch $pkgPattern) {
-    Log "Brawl Stars not installed"
-    TelegramAlert "Brawl Stars not installed - VNC needed for APK install"
-    exit 2
+    Log "Brawl Stars not installed - launching auto-installer"
+    TelegramAlert "Auto-installing Brawl Stars (downloads ~1.6 GB)"
+    $installScript = "$REPO\scripts\win_install_brawlstars.ps1"
+    & powershell -ExecutionPolicy Bypass -File $installScript 2>&1 | Tee-Object -Append $LOG
+    if ($LASTEXITCODE -ne 0) {
+        Log "Auto-install failed (exit=$LASTEXITCODE)"
+        TelegramAlert "Brawl Stars auto-install FAILED - VNC required"
+        exit 2
+    }
+    Log "Auto-install OK"
+    TelegramAlert "Brawl Stars installed automatically"
 }
 Log "Brawl Stars installed"
 
