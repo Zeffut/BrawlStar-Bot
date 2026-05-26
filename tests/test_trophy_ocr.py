@@ -36,9 +36,20 @@ def test_lobby_resolution(lobby_arr):
 
 
 def test_trophies_read_from_top_left(lobby_arr):
-    """The fixture is from an account at 616 trophies."""
+    """The fixture is from an account at ~630 trophies."""
     val = game_api._ocr_trophies(lobby_arr)
-    assert val == 616, f"expected 616, got {val}"
+    assert val == 630, f"expected 630, got {val}"
+
+
+def test_trophies_not_picking_wrong_value(lobby_arr):
+    """Regression: the OCR must NOT return season counter (647), coins (3007),
+    gems (10) or the equipped brawler trophies (369) — only the top-left
+    trophy pill next to the avatar (~630)."""
+    val = game_api._ocr_trophies(lobby_arr)
+    assert val is not None
+    forbidden = {3007, 10, 647, 369}
+    assert val not in forbidden, f"OCR picked wrong number {val} from forbidden set"
+    assert 100 < val < 10000, f"unrealistic trophy value: {val}"
 
 
 def test_trophies_returns_none_on_unrelated_image():
