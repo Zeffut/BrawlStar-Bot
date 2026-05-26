@@ -321,6 +321,20 @@ async def game_snapshot() -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, lambda: _game().snapshot())
 
 
+@app.get("/api/game/diag")
+def game_diag() -> dict:
+    """Diagnostic: shows whether scrcpy is feeding fresh frames."""
+    import time as _t
+    g = _game()
+    wc = g.wc
+    age = round(_t.time() - getattr(wc, "last_frame_time", 0), 2) if getattr(wc, "last_frame_time", 0) else None
+    return {
+        "scrcpy_frame_age_s": age,
+        "scrcpy_alive": age is not None and age < 5,
+        "resolution": [wc.width, wc.height] if wc.width else None,
+    }
+
+
 @app.get("/api/game/screenshot")
 async def game_screenshot() -> dict:
     return await asyncio.get_event_loop().run_in_executor(None, lambda: _game().screenshot_jpeg())
