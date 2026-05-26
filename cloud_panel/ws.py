@@ -52,8 +52,9 @@ class WorkerConnection:
     pending: dict[str, asyncio.Future] = field(default_factory=dict)
     # last health snapshot pushed by the worker
     health: dict = field(default_factory=dict)
-    # last screenshot — base64 PNG + epoch
+    # last screenshot — base64 image + mime type + epoch
     last_screenshot_b64: str | None = None
+    last_screenshot_mime: str = "image/jpeg"
     last_screenshot_at: float = 0.0
     # ring buffer of recent log lines
     logs: collections.deque = field(default_factory=lambda: collections.deque(maxlen=LOG_BUFFER))
@@ -160,7 +161,11 @@ async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = 
                 conn.health = msg.get("data") or {}
                 conn.health["_pushed_at"] = time.time()
             elif mtype == "screenshot":
-                conn.last_screenshot_b64 = msg.get("png_b64")
+                # Accept either jpeg_b64 (new, smaller) or png_b64 (legacy).
+                b64 = msg.get("jpeg_b64") or msg.get("png_b64")
+                mime = "image/jpeg" if msg.get("jpeg_b64") else "image/png"
+                conn.last_screenshot_b64 = b64
+                conn.last_screenshot_mime = mime
                 conn.last_screenshot_at = time.time()
             elif mtype == "hello":
                 # informational; worker can resend on reconnect

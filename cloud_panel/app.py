@@ -236,15 +236,36 @@ async def api_instance_cmd(instance_db_id: int, payload: CommandPayload) -> dict
 
 
 @app.get("/api/instances/{instance_db_id}/screenshot")
-def api_instance_screenshot(instance_db_id: int) -> dict:
-    """Return the last screenshot pushed by the worker (base64 PNG)."""
+async def api_instance_screenshot(instance_db_id: int, refresh: bool = False) -> dict:
+    """Return the last screenshot pushed by the worker.
+
+    When `refresh=true`, ask the worker to capture a NEW frame on
+    demand (latency ~300-800 ms instead of waiting up to 15 s for the
+    next periodic push).
+    """
     inst_id = _resolve_instance(instance_db_id)
     conn = HUB.get(inst_id) if inst_id else None
-    if conn is None or not conn.last_screenshot_b64:
+    if conn is None:
+        return {"available": False}
+    if refresh:
+        try:
+            data = await HUB.send_command(inst_id, "screenshot", {}, timeout_s=8)
+            if data and data.get("jpeg_b64"):
+                return {
+                    "available": True,
+                    "mime": "image/jpeg",
+                    "b64": data["jpeg_b64"],
+                    "w": data.get("w"), "h": data.get("h"),
+                    "age_s": 0.0,
+                }
+        except Exception:
+            pass  # fall through to cached
+    if not conn.last_screenshot_b64:
         return {"available": False}
     return {
         "available": True,
-        "png_b64": conn.last_screenshot_b64,
+        "mime": conn.last_screenshot_mime,
+        "b64": conn.last_screenshot_b64,
         "age_s": time.time() - conn.last_screenshot_at,
     }
 

@@ -430,7 +430,18 @@ tr:last-child td { border-bottom: none; }
   text-transform: uppercase;
   color: #8b95a5;
   letter-spacing: 0.5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
+.refresh-btn {
+  background: #1f2735; border: 1px solid #2c3645;
+  color: #c0c8d4; padding: 3px 8px; border-radius: 4px;
+  cursor: pointer; font-size: 10px; text-transform: none;
+  letter-spacing: 0; font-weight: 400;
+}
+.refresh-btn:hover { background: #2c3645; }
+.refresh-btn:disabled { opacity: 0.5; cursor: wait; }
 .screen-card { grid-column: 1; grid-row: 1 / span 2; display: flex; flex-direction: column; }
 .screen-card img {
   width: 100%; height: auto; border-radius: 4px;

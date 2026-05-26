@@ -281,8 +281,11 @@ async function refreshDevicePanel() {
   const screenEl = document.getElementById("device-screen");
   const ageEl = document.getElementById("screen-age");
   if (shotRes.available) {
-    screenEl.src = "data:image/png;base64," + shotRes.png_b64;
-    ageEl.textContent = `last frame ${shotRes.age_s.toFixed(1)} s ago`;
+    const mime = shotRes.mime || "image/png";
+    const b64 = shotRes.b64 || shotRes.png_b64;  // backward compat
+    screenEl.src = `data:${mime};base64,${b64}`;
+    const age = shotRes.age_s ?? 0;
+    ageEl.textContent = `last frame ${age.toFixed(1)} s ago — auto every 15s`;
   } else {
     ageEl.textContent = "no screenshot yet";
   }
@@ -348,6 +351,26 @@ async function sendDeviceCmd(cmd, confirmMsg) {
 document.querySelectorAll('.control-grid button').forEach(btn => {
   btn.addEventListener("click", () =>
     sendDeviceCmd(btn.dataset.cmd, btn.dataset.confirm || null));
+});
+
+// Manual screenshot refresh — triggers an on-demand capture.
+document.getElementById("refresh-screen-btn").addEventListener("click", async () => {
+  if (!selectedInstanceForDevice) return;
+  const btn = document.getElementById("refresh-screen-btn");
+  btn.disabled = true; btn.textContent = "↻ capturing…";
+  try {
+    const r = await api(`/api/instances/${selectedInstanceForDevice}/screenshot?refresh=true`);
+    if (r.available) {
+      const mime = r.mime || "image/png";
+      const b64 = r.b64 || r.png_b64;
+      document.getElementById("device-screen").src = `data:${mime};base64,${b64}`;
+      document.getElementById("screen-age").textContent = "last frame just now";
+    }
+  } catch (e) {
+    document.getElementById("screen-age").textContent = "refresh failed: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "↻ refresh now";
+  }
 });
 
 if (deviceTimer) clearInterval(deviceTimer);

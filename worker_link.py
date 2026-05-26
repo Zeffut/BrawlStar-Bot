@@ -68,13 +68,33 @@ def _adb(*args, timeout: float = 10.0) -> tuple[int, str]:
 # ---- screenshot --------------------------------------------------
 
 def _cmd_screenshot(args: dict) -> dict:
-    """Capture phone screen and return base64 PNG."""
+    """Capture phone screen, downscale + JPEG-compress to keep frames
+    small and fast over the WebSocket.
+
+    Args (optional):
+      max_width : int   target width in px (default 960, original aspect ratio)
+      quality   : int   JPEG quality 1-95 (default 70)
+    """
     serial = _adb_serial()
     raw = subprocess.check_output(
         ["adb", "-s", serial, "exec-out", "screencap", "-p"],
         timeout=8,
     )
-    return {"png_b64": base64.b64encode(raw).decode("ascii")}
+    # Convert raw PNG → downscaled JPEG
+    from PIL import Image
+    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    max_w = int(args.get("max_width", 960))
+    if img.width > max_w:
+        new_h = int(img.height * max_w / img.width)
+        img = img.resize((max_w, new_h), Image.LANCZOS)
+    quality = int(args.get("quality", 70))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return {
+        "jpeg_b64": base64.b64encode(buf.getvalue()).decode("ascii"),
+        "w": img.width, "h": img.height,
+        "bytes": buf.tell(),
+    }
 
 
 # ---- Brawl Stars control -----------------------------------------
@@ -246,13 +266,19 @@ async def _run_ws_client():
                                         await ws.send(json.dumps({"type": "log", "lines": new_lines}))
                         except Exception:
                             log.exception("log tail failed")
-                        # screenshot every 5s
+                        # screenshot every 15s (small JPEG, fast over WS).
+                        # The UI can also request an on-demand fresh frame
+                        # via the `screenshot` command.
                         now = time.time()
-                        if now - last_screenshot_at >= 5:
+                        if now - last_screenshot_at >= 15:
                             try:
                                 res = await asyncio.get_running_loop().run_in_executor(
                                     None, _cmd_screenshot, {})
-                                await ws.send(json.dumps({"type": "screenshot", "png_b64": res["png_b64"]}))
+                                await ws.send(json.dumps({
+                                    "type": "screenshot",
+                                    "jpeg_b64": res["jpeg_b64"],
+                                    "w": res["w"], "h": res["h"],
+                                }))
                                 last_screenshot_at = now
                             except Exception as e:
                                 log.debug("screenshot push failed: %s", e)
