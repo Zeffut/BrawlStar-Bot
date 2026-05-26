@@ -131,6 +131,32 @@ def _cmd_adb_reconnect(args: dict) -> dict:
     return {"ok": code == 0, "output": out.strip()[:500]}
 
 
+def _check_and_self_update() -> None:
+    """If local HEAD is behind origin/main, trigger an update.
+
+    Called on every WS (re)connect so the worker recovers even when a
+    GitHub push landed during a cloud panel redeploy and missed the
+    broadcast.
+    """
+    bot_dir = str(Path(__file__).resolve().parent)
+    try:
+        # Fetch quietly so we know origin's HEAD without touching working tree.
+        f = subprocess.run(["git", "fetch", "--quiet", "origin", "main"],
+                            cwd=bot_dir, capture_output=True, text=True, timeout=20)
+        if f.returncode != 0:
+            return
+        local = subprocess.run(["git", "rev-parse", "HEAD"],
+                                cwd=bot_dir, capture_output=True, text=True, timeout=5).stdout.strip()
+        remote = subprocess.run(["git", "rev-parse", "origin/main"],
+                                 cwd=bot_dir, capture_output=True, text=True, timeout=5).stdout.strip()
+        if local and remote and local != remote:
+            log.info("self-update: behind origin (%s -> %s), pulling+restarting",
+                     local[:7], remote[:7])
+            _cmd_git_update({"sha": remote[:7], "msg": "self-heal on WS reconnect"})
+    except Exception:
+        log.debug("self-update check raised", exc_info=True)
+
+
 def _cmd_git_update(args: dict) -> dict:
     """Pull latest from origin/main and restart the bot service.
 
@@ -455,6 +481,13 @@ async def _run_ws_client():
                                           max_size=10 * 1024 * 1024) as ws:
                 log.info("worker_link: connected")
                 await ws.send(json.dumps({"type": "hello", "instance_id": instance_id}))
+                # Self-heal: check if we're behind origin/main and self-update.
+                # This catches the case where the cloud panel was redeploying
+                # while a GitHub push happened so the broadcast was missed.
+                try:
+                    await asyncio.get_running_loop().run_in_executor(None, _check_and_self_update)
+                except Exception:
+                    log.debug("self-update check failed", exc_info=True)
 
                 async def sender_loop():
                     nonlocal last_log_offset, last_screenshot_at, last_health_at, last_snapshot_at
