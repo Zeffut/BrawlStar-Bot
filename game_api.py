@@ -375,13 +375,22 @@ class GameAPI:
         Tries multiple dismissal strategies per attempt: tap likely
         CONTINUE buttons (center-bottom, bottom-right), long-press for
         star drops, BACK key, OK button. Loops until lobby or max_attempts.
+        Also auto-refuses team invitations.
         """
         last_state = None
         same_state_count = 0
         for i in range(max_attempts):
             st = self.state()
             if st == "lobby":
+                # Even on the lobby, an invite popup can be sitting on top.
+                if self._dismiss_team_invite():
+                    time.sleep(1.0)
+                    continue
                 return True
+            # Check for known overlay popups (team invite, friend request).
+            if self._dismiss_team_invite():
+                time.sleep(1.0)
+                continue
             # Track how long we've been stuck on the same screen.
             if st == last_state:
                 same_state_count += 1
@@ -411,6 +420,44 @@ class GameAPI:
                     self._long_press(0.5, 0.5, 4000)
             time.sleep(1.2)
         return self.state() == "lobby"
+
+    def _dismiss_team_invite(self) -> bool:
+        """Detect 'INVITATION D'ÉQUIPE' popup and tap REFUSER.
+
+        Returns True if an invite popup was found and dismissed.
+        """
+        try:
+            img = self._grab()
+            arr = np.array(img)
+            text = extract_text_and_positions(arr)
+            keys_lower = {k.lower() for k in text.keys()}
+            # Detection heuristic: either the title or the REFUSER button.
+            has_invite = any(
+                ("invitation" in k and ("equipe" in k or "team" in k or "equip" in k))
+                or "invitation dequipe" in k
+                for k in keys_lower
+            )
+            refuser_pos = None
+            for k, v in text.items():
+                kl = k.lower()
+                if "refuser" in kl or "decline" in kl or "refus" == kl:
+                    refuser_pos = v.get("center")
+                    break
+            if has_invite and refuser_pos:
+                h, w = arr.shape[:2]
+                cx, cy = refuser_pos
+                log.info("team invite detected -> tapping REFUSER at (%d,%d)", cx, cy)
+                self.tap(cx / w, cy / h)
+                return True
+            # Fallback: invite-shaped layout but OCR missed REFUSER text;
+            # tap the canonical position (left button of pair).
+            if has_invite:
+                log.info("team invite detected (REFUSER text missed) -> tapping (0.42, 0.63)")
+                self.tap(0.42, 0.63)
+                return True
+        except Exception:
+            log.debug("_dismiss_team_invite failed", exc_info=True)
+        return False
 
     def _long_press(self, x_ratio: float, y_ratio: float, duration_ms: int) -> None:
         if not self.wc.width or not self.wc.height:
