@@ -40,6 +40,13 @@ import tkinter as tk
 os.environ.setdefault("ORT_LOGGING_LEVEL", "3")
 os.environ.setdefault("ONNXRUNTIME_LOGGING_LEVEL", "3")
 warnings.filterwarnings("ignore")
+# Force UTF-8 stdout/stderr on Windows so progress bars from third-party
+# libs (EasyOCR uses U+2588 block chars) don't crash with cp1252 errors.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # Patch Tk to avoid background-thread destruction errors (some legacy
 # helpers still touch Tk at import time; we don't show any GUI but keep
