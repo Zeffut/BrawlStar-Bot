@@ -299,6 +299,22 @@ def _bootstrap_linux() -> bool:
     if code != 0:
         log.warning("am start non-zero, continuing anyway")
 
+    # 4. Dismiss every popup until the lobby is visible.
+    # Brawl Stars boot sequence: Supercell logo → loading → maybe news
+    # popup → maybe season pass / battle pass → maybe daily reward →
+    # maybe quest → lobby. Be patient (90 s total).
+    log.info("dismissing popups, waiting for lobby (≤ 90 s)…")
+    try:
+        from account_detect import ensure_lobby
+        if ensure_lobby(serial, max_attempts=30):
+            log.info("LOBBY REACHED")
+            _alert("Bot ready — game in lobby")
+        else:
+            log.warning("could not reach lobby — manual intervention may be needed")
+            _alert("Bot started but game not in lobby after 90s — check the phone screen")
+    except Exception:
+        log.exception("ensure_lobby failed")
+
     _report("bootstrap_ready", "Linux bootstrap OK")
     return True
 
