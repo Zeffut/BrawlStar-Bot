@@ -12,10 +12,11 @@ onnxruntime>=1.18,<2
 ultralytics>=8.3,<9
 
 # Device control
-# av: pin to a version with Windows py312 wheels (scrcpy-client otherwise
-# pulls a too-old av that needs Cython + VC build tools).
-av>=12.0
-scrcpy-client>=0.4
+# scrcpy-client + av must be installed manually due to dependency
+# conflicts (scrcpy-client pins an old `av` that needs Cython on Windows
+# py312). Install them with:
+#   pip install av adbutils
+#   pip install scrcpy-client --no-deps
 adbutils
 
 # Networking + APIs
