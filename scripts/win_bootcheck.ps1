@@ -13,10 +13,19 @@ $LOG        = "$LOG_DIR\bootcheck.log"
 
 New-Item -ItemType Directory -Force -Path $LOG_DIR | Out-Null
 
+# Single-instance mutex: if another bootcheck is running, exit silently.
+$lockName = "Global\BrawlBotBootcheck"
+$mutex = New-Object System.Threading.Mutex($false, $lockName)
+if (-not $mutex.WaitOne(0)) {
+    Write-Host "Another bootcheck instance is running — exiting"
+    exit 0
+}
+
 function Log($m) {
     $line = (Get-Date -Format 'HH:mm:ss') + " $m"
     Write-Host $line
-    Add-Content -Path $LOG -Value $line
+    # Open file with shared access so concurrent reads (e.g. tail) work
+    [System.IO.File]::AppendAllText($LOG, $line + "`r`n")
 }
 
 function TelegramAlert($text) {
