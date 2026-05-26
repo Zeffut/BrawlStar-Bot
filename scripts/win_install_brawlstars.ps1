@@ -23,7 +23,11 @@ Write-Host ("  done ({0:N0} bytes)" -f (Get-Item $XAPK).Length)
 
 Write-Host "[2/4] Extracting splits..."
 if (Test-Path $EXTRACT) { Remove-Item -Recurse -Force $EXTRACT }
-Expand-Archive -Path $XAPK -DestinationPath $EXTRACT -Force
+New-Item -ItemType Directory -Force -Path $EXTRACT | Out-Null
+# .xapk == zip; use .NET ZipFile directly (Expand-Archive rejects the
+# .xapk extension even though the file IS a zip).
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($XAPK, $EXTRACT)
 
 $splits = Get-ChildItem -Path $EXTRACT -Filter "*.apk"
 Write-Host "  found $($splits.Count) split APKs"
