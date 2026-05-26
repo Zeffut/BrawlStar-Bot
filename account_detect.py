@@ -284,7 +284,7 @@ def detect_player_tag(serial: str | None = None) -> Optional[str]:
         if i > 0:
             time.sleep(0.2)
         try:
-            profile = fetch_account_profile(c, timeout=30)
+            profile = fetch_account_profile(c, timeout=60)
             if profile.get("brawlers"):
                 log.info("VALIDATED tag via cloud/flaresolverr: #%s (%s, %d brawlers)",
                          c, profile.get("name"), len(profile["brawlers"]))
