@@ -198,6 +198,74 @@ def health() -> dict:
     return {"ok": True, "ts": time.time()}
 
 
+# ====================================================================
+# Public scraping helpers — used by workers to fetch external data
+# (brawlace.com is Cloudflare-protected; we proxy through flaresolverr).
+# ====================================================================
+
+
+import re as _re  # noqa: E402
+
+_BRAWLACE_ROW_RE = _re.compile(
+    r"/brawlers/([A-Za-z0-9_\-\.]+)\.png[^>]*/>\s*([A-Z0-9 \.\-&!]+?)</td>"
+    r"<td>(\d+)</td>"
+    r"<td[^>]*>.*?/tiers/\d+\.png.*?</td>"
+    r"<td>(\d+)</td>",
+    _re.DOTALL,
+)
+_BRAWLACE_NAME_RE = _re.compile(
+    r'<meta name="description" content="([^"]+?) Brawl Stars Stats',
+    _re.IGNORECASE,
+)
+_FLARESOLVERR_URL = os.environ.get("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
+
+_PROFILE_CACHE: dict[str, tuple[float, dict]] = {}
+_PROFILE_TTL = 600  # 10 min
+
+
+@app.get("/api/util/brawler_profile/{tag}")
+def util_brawler_profile(tag: str) -> dict:
+    """Return {name, brawlers:[{name,power,trophies}]} for the given tag.
+
+    Goes through flaresolverr to bypass Cloudflare. Cached 10 min.
+    """
+    import urllib.request, json as _json
+    tag = tag.lstrip("#").upper()
+    cached = _PROFILE_CACHE.get(tag)
+    if cached and (time.time() - cached[0]) < _PROFILE_TTL:
+        return {"ok": True, "cached": True, **cached[1]}
+    payload = _json.dumps({
+        "cmd": "request.get",
+        "url": f"https://brawlace.com/players/{tag}",
+        "maxTimeout": 60000,
+    }).encode()
+    req = urllib.request.Request(
+        _FLARESOLVERR_URL, data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=75) as resp:
+            data = _json.loads(resp.read())
+    except Exception as exc:
+        raise HTTPException(502, f"flaresolverr error: {exc}")
+    sol = data.get("solution", {})
+    if data.get("status") != "ok" or sol.get("status") != 200:
+        raise HTTPException(502, f"upstream status: {data.get('status')} / {sol.get('status')}")
+    html = sol.get("response", "")
+    name_match = _BRAWLACE_NAME_RE.search(html)
+    name = name_match.group(1).strip() if name_match else None
+    brawlers: list[dict] = []
+    for _img, display, power, trophies in _BRAWLACE_ROW_RE.findall(html):
+        brawlers.append({
+            "name": display.strip().lower(),
+            "power": int(power),
+            "trophies": int(trophies),
+        })
+    result = {"name": name, "brawlers": brawlers}
+    _PROFILE_CACHE[tag] = (time.time(), result)
+    return {"ok": True, "cached": False, **result}
+
+
 # ============================================================
 # Device management — WebSocket + commands + streams
 # ============================================================

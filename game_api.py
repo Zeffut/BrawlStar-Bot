@@ -169,50 +169,58 @@ class GameAPI:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def list_brawlers(self, force_refresh: bool = False) -> list[dict]:
-        """Open the brawler menu, OCR all brawlers, return list.
+    def list_brawlers(self, force_refresh: bool = False, tag: str | None = None) -> list[dict]:
+        """Return owned brawlers.
 
-        Cached for 5 min — re-runs only on force_refresh.
+        Source priority:
+          1. Cloud panel `/api/util/brawler_profile/<tag>` (proxies brawlace
+             through flaresolverr) — fast (~3-5 s first hit, instant on cache).
+          2. Local DB tag if `tag` not provided.
         """
         if not force_refresh and self._brawler_cache and (time.time() - self._brawler_cache_at) < 300:
             return self._brawler_cache
-        result: list[dict] = []
+        # Resolve account tag from local DB if not given.
+        if tag is None:
+            try:
+                import db as _db
+                accs = _db.list_accounts()
+                if accs:
+                    tag = accs[0]["tag"]
+            except Exception:
+                pass
+        if not tag:
+            log.warning("list_brawlers: no tag available; returning empty")
+            return []
+        # Pull cloud config to know where to ask.
+        cloud_url = self._cloud_url()
+        if not cloud_url:
+            log.warning("list_brawlers: cloud panel URL not configured")
+            return []
         try:
-            self.goto_lobby()
-            from stage_manager import load_image
-            from utils import find_template_center
-            tpl = load_image(
-                "state_finder/images_to_detect/brawler_menu_btn.png",
-                self.wc.scale_factor,
-            )
-            coords = find_template_center(self.wc.screenshot(), tpl, 0.7)
-            if not coords:
-                return result
-            self.wc.click(*coords)
-            time.sleep(1.2)
-            wr = self.wc.width_ratio
-            hr = self.wc.height_ratio
-            seen: set[str] = set()
-            for i in range(50):
-                shot = self.wc.screenshot()
-                small = shot.resize((int(shot.width * 0.65), int(shot.height * 0.65)))
-                results = extract_text_and_positions(np.array(small))
-                for key, val in results.items():
-                    name = "".join(c for c in key.lower() if c.isalpha())
-                    if 3 <= len(name) <= 16 and name not in seen:
-                        seen.add(name)
-                        result.append({"name": name})
-                self.wc.swipe(int(1700 * wr), int(900 * hr),
-                              int(1700 * wr), int(250 * hr), duration=0.6)
-                time.sleep(0.4)
-            self._tap_back()
-            time.sleep(0.6)
+            import requests as _r
+            resp = _r.get(f"{cloud_url.rstrip('/')}/api/util/brawler_profile/{tag}",
+                          timeout=80)
+            resp.raise_for_status()
+            j = resp.json()
+            brawlers = j.get("brawlers", [])
+            if brawlers:
+                self._brawler_cache = brawlers
+                self._brawler_cache_at = time.time()
+            return brawlers
+        except Exception as exc:
+            log.warning("list_brawlers via cloud failed: %s", exc)
+            return []
+
+    @staticmethod
+    def _cloud_url() -> str | None:
+        try:
+            import tomllib
+            from pathlib import Path
+            p = Path(__file__).resolve().parent / "cfg" / "cloud.toml"
+            with p.open("rb") as f:
+                return tomllib.load(f).get("url")
         except Exception:
-            log.exception("list_brawlers failed")
-        if result:
-            self._brawler_cache = result
-            self._brawler_cache_at = time.time()
-        return result
+            return None
 
     # ---- raw input ------------------------------------------------
 
