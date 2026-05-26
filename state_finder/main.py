@@ -130,7 +130,33 @@ def is_in_offer_popup(image) -> bool:
     return is_template_in_region(image, os.path.join('state_finder', 'images_to_detect', 'close_popup.png'), region_data["close_popup"])
 
 def is_in_lobby(image) -> bool:
-    return is_template_in_region(image, os.path.join('state_finder', 'images_to_detect', 'lobby_menu.png'), region_data["lobby_menu"])
+    """Detect lobby via the top-right hamburger menu icon.
+
+    Some Brawl Stars versions / aspect ratios place the icon a bit
+    outside the calibrated 1920×1080 region (e.g. Mi 9T at 2340×1080).
+    Fall back to a full-image match scoped to the top-right quadrant.
+    """
+    if is_template_in_region(
+        image,
+        os.path.join('state_finder', 'images_to_detect', 'lobby_menu.png'),
+        region_data["lobby_menu"],
+    ):
+        return True
+    # Fallback: search the top-right quadrant globally.
+    try:
+        h, w = image.shape[:2]
+        tr = image[: h // 3, w // 2:]
+        tpl = load_template(
+            os.path.join('state_finder', 'images_to_detect', 'lobby_menu.png'),
+            w, h,
+        )
+        if tpl is None:
+            return False
+        res = cv2.matchTemplate(tr, tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        return max_val > 0.7
+    except Exception:
+        return False
 
 def is_in_end_of_a_match(image):
     return find_game_result(image)
