@@ -37,6 +37,24 @@ _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
 
+def _is_brawlball_label(s: str) -> bool:
+    """Fuzzy match for the BRAWL BALL tile label.
+
+    EasyOCR commonly mis-reads it as 'brawibal', 'brawhball', 'brawll ball',
+    etc. We accept anything starting with 'braw' and ending with 'bal'/'ball'
+    (the second L is often dropped).
+    """
+    k = s.lower().replace(" ", "").replace("-", "").replace("_", "")
+    if not k.startswith("braw"):
+        return False
+    # Must contain 'bal' somewhere after 'braw' to disambiguate from 'brawler'.
+    rest = k[4:]
+    if "bal" not in rest:
+        return False
+    # Length sanity: BRAWL BALL is 9 chars normally; allow OCR fuzz.
+    return 7 <= len(k) <= 12
+
+
 def _ocr_trophies(arr) -> int | None:
     """Extract account trophy count from a lobby screenshot.
 
@@ -152,42 +170,47 @@ class GameAPI:
         """Open the mode selection menu and pick Brawl Ball.
 
         From lobby:
-          1. Tap the mode banner at bottom-center -> opens mode picker
-          2. OCR for 'BRAWL BALL' / 'BRAWLBALL' tile and tap it
-          3. Back to lobby. Verify by re-reading current mode.
+          1. Tap the mode banner (HORS-JEU/etc) at ~(0.67, 0.93) → opens picker
+          2. OCR for the Brawl Ball tile (tolerates 'brawibal' / 'brawllball'
+             OCR variants) and tap it
+          3. Verify mode is now brawlball.
         """
         for attempt in range(max_attempts):
             log.info("switch_to_brawlball attempt %d/%d", attempt + 1, max_attempts)
             # 1. Ensure we're on lobby first.
             self.goto_lobby(max_attempts=5)
-            # 2. Tap the mode banner (centered, just above PLAY button).
-            self.tap(0.55, 0.92)
-            time.sleep(1.5)
+            # 2. Tap the mode banner (right-of-center, just above PLAY).
+            self.tap(0.67, 0.93)
+            time.sleep(1.8)
             # 3. We should be on the mode picker. OCR for Brawl Ball tile.
             try:
                 img = self._grab()
                 arr = np.array(img)
                 text = extract_text_and_positions(arr)
                 target = None
+                target_key = None
                 for key, val in text.items():
-                    k = key.lower().replace(" ", "").replace("-", "")
-                    if k in ("brawlball", "brawllball"):
+                    if _is_brawlball_label(key):
                         target = val.get("center")
+                        target_key = key
                         break
                 if target:
                     h, w = arr.shape[:2]
                     cx, cy = target
-                    log.info("found BRAWL BALL tile at (%d,%d)", cx, cy)
+                    log.info("found Brawl Ball tile via OCR=%r at (%d,%d)",
+                             target_key, cx, cy)
                     self.tap(cx / w, cy / h)
                     time.sleep(1.5)
-                    # 4. Check we landed somewhere sensible; back to lobby.
+                    # 4. The tile click may open a map sub-picker; tap a
+                    #    'JOUER' / 'PLAY' button or just BACK to return to lobby.
                     self.goto_lobby(max_attempts=8)
                     mode = self.read_current_mode()
                     if mode == "brawlball":
                         return True
                     log.warning("post-switch mode is %r, retrying", mode)
                 else:
-                    log.warning("BRAWL BALL tile not found in mode picker OCR")
+                    log.warning("BRAWL BALL tile not found in mode picker OCR "
+                                "(keys=%s)", list(text.keys())[:15])
                     self._tap_back()
                     time.sleep(0.8)
             except Exception as exc:
