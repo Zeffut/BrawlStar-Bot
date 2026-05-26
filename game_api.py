@@ -9,6 +9,10 @@ in worker_link.py.
 
 All methods are *blocking* — caller should run them in a thread or
 async executor when latency matters.
+
+Screenshots are taken via `adb exec-out screencap -p` for reliability.
+The scrcpy stream that WindowController also exposes is incompatible
+with modern PyAV (>=10) on Python 3.12, so we don't depend on it here.
 """
 from __future__ import annotations
 
@@ -33,6 +37,20 @@ _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
 
+def _adb_screencap() -> Image.Image:
+    """Capture a screenshot via `adb exec-out screencap -p`.
+
+    Returns a PIL RGB image. ~300-500 ms on USB.
+    """
+    serial = device.adb_serial()
+    out = subprocess.run(
+        ["adb", "-s", serial, "exec-out", "screencap", "-p"],
+        capture_output=True, timeout=10, check=True,
+    )
+    img = Image.open(io.BytesIO(out.stdout)).convert("RGB")
+    return img
+
+
 class GameAPI:
     """All game-level primitives. Single instance per worker process."""
 
@@ -51,18 +69,22 @@ class GameAPI:
 
     # ---- observation ---------------------------------------------
 
+    def _grab(self) -> Image.Image:
+        """Return a fresh PIL screenshot via adb (always real-time)."""
+        return _adb_screencap()
+
     def state(self) -> str:
         try:
-            img = self.wc.screenshot()
+            img = self._grab()
             return get_state(img)
         except Exception as exc:
             log.warning("state(): %s", exc)
             return "unknown"
 
     def screenshot_jpeg(self, max_width: int = 960, quality: int = 75) -> dict:
-        img = self.wc.screenshot()  # PIL.Image
-        # Age of the scrcpy frame at capture time (debugging staleness).
-        frame_age = round(time.time() - getattr(self.wc, "last_frame_time", time.time()), 2)
+        t0 = time.time()
+        img = self._grab()
+        capture_ms = round((time.time() - t0) * 1000, 1)
         if img.width > max_width:
             ratio = max_width / img.width
             img = img.resize((max_width, int(img.height * ratio)))
@@ -72,14 +94,14 @@ class GameAPI:
             "b64": base64.b64encode(buf.getvalue()).decode(),
             "mime": "image/jpeg",
             "w": img.width, "h": img.height,
-            "frame_age_s": frame_age,
+            "capture_ms": capture_ms,
             "captured_at": round(time.time(), 2),
         }
 
     def read_trophies(self) -> int | None:
         """OCR the top-right trophy counter from the lobby screen."""
         try:
-            img = self.wc.screenshot()
+            img = self._grab()
             arr = np.array(img)
             h, w = arr.shape[:2]
             # Top-right region where the trophy count sits.
@@ -96,7 +118,7 @@ class GameAPI:
     def read_current_brawler(self) -> str | None:
         """OCR the brawler name shown above the play button in lobby."""
         try:
-            img = self.wc.screenshot()
+            img = self._grab()
             arr = np.array(img)
             h, w = arr.shape[:2]
             # The current brawler name is shown center-bottom under the avatar.
