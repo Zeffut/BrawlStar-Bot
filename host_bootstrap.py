@@ -252,12 +252,65 @@ def _launch_brawlstars(bs_path: str, adb: str) -> bool:
 # --------------------------------------------------------------- public
 
 
+def _bootstrap_linux() -> bool:
+    """Linux host (Android phone over USB)."""
+    import device  # local to avoid circular import
+    adb = shutil.which("adb")
+    if not adb:
+        log.error("adb not found in PATH")
+        return False
+
+    # 1. Wait for at least one authorized device
+    log.info("waiting for an authorized ADB device…")
+    serial = None
+    for i in range(30):
+        out = subprocess.check_output([adb, "devices"], text=True, errors="replace")
+        for line in out.splitlines()[1:]:
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == "device":
+                serial = parts[0]
+                break
+        if serial:
+            break
+        if "unauthorized" in out:
+            log.warning("device shown as 'unauthorized' — accept the popup on the phone")
+        time.sleep(2)
+    if not serial:
+        log.error("no authorized ADB device found")
+        _alert("No authorized ADB device on the HP — phone unplugged or popup not accepted")
+        return False
+    log.info("using device serial=%s", serial)
+
+    # 2. Brawl Stars installed?
+    out = subprocess.check_output(
+        [adb, "-s", serial, "shell", "pm", "list", "packages"],
+        text=True, errors="replace", timeout=10,
+    )
+    if BS_PACKAGE not in out:
+        log.error("Brawl Stars not installed on the connected device")
+        _alert("Brawl Stars not installed on this phone — install it manually via Play Store")
+        return False
+
+    # 3. Launch Brawl Stars via `am start`
+    log.info("launching Brawl Stars")
+    code, output = _adb(adb, "-s", serial, "shell", "am", "start",
+                        "-n", f"{BS_PACKAGE}/.GameApp", timeout=15)
+    log.info("am start → %s", output.strip())
+    if code != 0:
+        log.warning("am start non-zero, continuing anyway")
+
+    _report("bootstrap_ready", "Linux bootstrap OK")
+    return True
+
+
 def bootstrap_host() -> bool:
     """Run all host-side checks; return True if the host is ready for the
     bot to start playing."""
     system = platform.system()
+    if system == "Linux":
+        return _bootstrap_linux()
     if system != "Windows":
-        log.info("host_bootstrap: %s detected — skipping Windows-only checks", system)
+        log.info("host_bootstrap: %s detected — skipping platform checks", system)
         return True
 
     bs = _find_bluestacks()
