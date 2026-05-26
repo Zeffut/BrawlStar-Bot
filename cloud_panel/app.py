@@ -207,10 +207,10 @@ def health() -> dict:
 import re as _re  # noqa: E402
 
 _BRAWLACE_ROW_RE = _re.compile(
-    r"/brawlers/([A-Za-z0-9_\-\.]+)\.png[^>]*/>\s*([A-Z0-9 \.\-&!]+?)</td>"
-    r"<td>(\d+)</td>"
-    r"<td[^>]*>.*?/tiers/\d+\.png.*?</td>"
-    r"<td>(\d+)</td>",
+    r'/brawlers/([A-Za-z0-9_\-\.]+)\.png[^>]*>\s*([A-Z0-9 \.\-&!]+?)</td>'
+    r'<td[^>]*>(\d+)</td>'
+    r'<td[^>]*>.*?/tiers/\d+\.png.*?</td>'
+    r'<td[^>]*>(\d+)</td>',
     _re.DOTALL,
 )
 _BRAWLACE_NAME_RE = _re.compile(
