@@ -195,13 +195,26 @@ def index() -> FileResponse:
 @app.get("/api/instances")
 def api_instances() -> list[dict]:
     out = []
+    now = time.time()
     for i in db.list_instances():
         accs = db.list_accounts(i["id"])
         i["accounts_count"] = len(accs)
-        i["fresh"] = (time.time() - i["last_seen_at"]) < 120
+        i["fresh"] = (now - i["last_seen_at"]) < 120
+        # Snapshot freshness — flags hung bots that are still heartbeating
+        # but whose game-state push has died (Play loop crashed, etc).
+        conn = HUB.get(i["instance_id"])
+        snap_age = None
+        if conn and conn.last_snapshot:
+            pushed = conn.last_snapshot.get("_pushed_at", 0)
+            if pushed:
+                snap_age = round(now - pushed, 1)
+        i["snapshot_age_s"] = snap_age
+        i["snapshot_stale"] = snap_age is not None and snap_age > 120
         running = any(db.current_session(a["id"]) for a in accs)
         if running:
             i["status"] = "running"
+        elif i["snapshot_stale"]:
+            i["status"] = "stale"
         elif i["fresh"]:
             i["status"] = "available"
         else:

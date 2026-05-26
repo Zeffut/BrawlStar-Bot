@@ -233,6 +233,10 @@ main {
   background: var(--running);
   box-shadow: 0 0 12px rgba(96,165,250,.7);
 }
+.inst-dot.stale {
+  background: var(--yellow);
+  box-shadow: 0 0 10px rgba(245,158,11,.6);
+}
 .inst-dot.running::after {
   content: ""; position: absolute; inset: -4px;
   border-radius: 50%;
@@ -282,6 +286,11 @@ main {
   background: rgba(96,165,250,.15);
   color: var(--running);
   border-color: rgba(96,165,250,.35);
+}
+.inst-status-pill.stale {
+  background: rgba(245,158,11,.12);
+  color: var(--yellow);
+  border-color: rgba(245,158,11,.35);
 }
 
 /* ----- instance activity */
