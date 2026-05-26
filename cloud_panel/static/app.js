@@ -73,12 +73,27 @@ async function refreshAll() {
 
   _lastAccounts = accounts;
   const available = instances.filter(i => i.status === "available" || i.status === "running").length;
-  const running = instances.filter(i => i.status === "running").length;
-  const totalAccounts = accounts.length;
-  document.getElementById("fleet-summary").textContent =
-    `${available}/${instances.length} available · ${running} running · ${totalAccounts} accounts`;
   document.getElementById("sidebar-meta").textContent =
     `${available}/${instances.length}`;
+  // Fleet overview KPIs (one-shot aggregated endpoint).
+  api("/api/fleet/overview", {silent: true}).then(o => {
+    if (!o) return;
+    const b = o.instances_by_status || {};
+    document.getElementById("fkpi-inst").textContent =
+      `${o.instances_total} (${b.running||0}▶ ${b.available||0}✓ ${b.stale||0}⚠ ${b.offline||0}○)`;
+    document.getElementById("fkpi-sess").textContent = o.active_sessions ?? "0";
+    document.getElementById("fkpi-troph").textContent = (o.total_trophies ?? 0).toLocaleString();
+    const t = o.today || {};
+    document.getElementById("fkpi-wld").textContent =
+      `${t.victory||0}/${t.defeat||0}/${t.draw||0}`;
+    const wrEl = document.getElementById("fkpi-wr");
+    if (t.win_rate_pct != null) {
+      wrEl.textContent = t.win_rate_pct + "%";
+      wrEl.className = "fkpi-v " + (t.win_rate_pct >= 50 ? "green" : "red");
+    } else {
+      wrEl.textContent = "—"; wrEl.className = "fkpi-v muted";
+    }
+  }).catch(() => {});
 
   // Build a tree: instances → accounts
   const accountsByInstance = {};

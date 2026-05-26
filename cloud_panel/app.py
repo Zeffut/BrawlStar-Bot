@@ -249,6 +249,45 @@ def health() -> dict:
     return {"ok": True, "ts": time.time(), "sse_subscribers": BUS.count}
 
 
+@app.get("/api/fleet/overview")
+def fleet_overview() -> dict:
+    """One-shot dashboard data: instances breakdown + today's activity."""
+    now = time.time()
+    today_start = now - (now % 86400)
+    insts = api_instances()  # reuses status logic
+    breakdown = {"running": 0, "available": 0, "stale": 0, "offline": 0}
+    for i in insts:
+        breakdown[i["status"]] = breakdown.get(i["status"], 0) + 1
+    accs = db.list_accounts()
+    total_trophies = 0
+    for a in accs:
+        brawlers, _ = db.get_account_brawlers(a["id"])
+        total_trophies += sum(b.get("trophies", 0) for b in brawlers)
+    # Today's matches across all accounts.
+    today_matches = db.conn().execute(
+        "SELECT result, COUNT(*) AS n FROM matches WHERE timestamp >= ? GROUP BY result",
+        (today_start,),
+    ).fetchall()
+    today = {"victory": 0, "defeat": 0, "draw": 0}
+    for r in today_matches:
+        today[r["result"]] = r["n"]
+    total_today = sum(today.values())
+    wr_today = round(today["victory"] / total_today * 100) if total_today else None
+    # Active sessions count.
+    active_sessions = db.conn().execute(
+        "SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL",
+    ).fetchone()["n"]
+    return {
+        "instances_total": len(insts),
+        "instances_by_status": breakdown,
+        "accounts_total": len(accs),
+        "total_trophies": total_trophies,
+        "active_sessions": active_sessions,
+        "today": {**today, "total": total_today, "win_rate_pct": wr_today},
+        "ts": now,
+    }
+
+
 # ============================================================
 # GitHub webhook — auto-deploy workers on push to main
 # ============================================================
