@@ -66,10 +66,20 @@ class WorkerConnection:
 # ---- SSE broadcaster ----------------------------------------------
 
 class EventBus:
-    """Fan-out events to all connected browser SSE clients."""
+    """Fan-out events to all connected browser SSE clients.
+
+    Each published event gets a monotonically-increasing id. The bus
+    keeps the last N events so reconnecting browsers (via the
+    Last-Event-ID header) can resume without missing anything that
+    happened during the disconnect window.
+    """
+
+    BACKLOG = 200  # ring-buffer size — last 200 events kept
 
     def __init__(self) -> None:
         self._subs: set[asyncio.Queue] = set()
+        self._next_id = 1
+        self._backlog: collections.deque = collections.deque(maxlen=self.BACKLOG)
 
     async def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue(maxsize=100)
@@ -80,14 +90,23 @@ class EventBus:
         self._subs.discard(q)
 
     def publish(self, event: dict) -> None:
+        # Tag with id; clients use it to resume after disconnects.
+        eid = self._next_id
+        self._next_id += 1
+        tagged = {"_id": eid, **event}
+        self._backlog.append(tagged)
         dead = []
         for q in self._subs:
             try:
-                q.put_nowait(event)
+                q.put_nowait(tagged)
             except asyncio.QueueFull:
                 dead.append(q)
         for q in dead:
             self._subs.discard(q)
+
+    def replay_since(self, last_id: int) -> list[dict]:
+        """Return events newer than last_id (in order)."""
+        return [e for e in self._backlog if e.get("_id", 0) > last_id]
 
     @property
     def count(self) -> int:

@@ -296,15 +296,27 @@ async def github_webhook(request: Request) -> dict:
 
 
 @app.get("/api/events")
-async def events_stream() -> StreamingResponse:
+async def events_stream(request: Request) -> StreamingResponse:
     """SSE stream — every worker snapshot is forwarded to all subscribers.
 
-    Format: `data: {json}\n\n` per event. Browser uses EventSource.
+    Resumable: send `Last-Event-ID` header to pick up where the previous
+    connection left off (events buffered for ~200 most recent).
+    Format: `id: <n>\ndata: {json}\n\n`. Keepalive comment every 25s.
     """
+    # Parse Last-Event-ID for resume.
+    try:
+        last_id = int(request.headers.get("Last-Event-ID", "0"))
+    except ValueError:
+        last_id = 0
+
     q = await BUS.subscribe()
 
     async def gen():
-        # Initial state: send last known snapshot for each connected instance.
+        # 1. Replay any missed events since client's last seen id.
+        if last_id > 0:
+            for ev in BUS.replay_since(last_id):
+                yield f"id: {ev['_id']}\ndata: " + _json.dumps(ev) + "\n\n"
+        # 2. Initial snapshot per instance (idempotent for new clients).
         for conn in HUB.list():
             if conn.last_snapshot:
                 yield "data: " + _json.dumps({
@@ -313,11 +325,14 @@ async def events_stream() -> StreamingResponse:
                     **{k: v for k, v in conn.last_snapshot.items() if k != "_pushed_at"},
                 }) + "\n\n"
         yield "data: " + _json.dumps({"type": "ready"}) + "\n\n"
+        # 3. Live stream.
         try:
             while True:
                 try:
                     ev = await _asyncio.wait_for(q.get(), timeout=25)
-                    yield "data: " + _json.dumps(ev) + "\n\n"
+                    eid = ev.get("_id", "")
+                    line = (f"id: {eid}\n" if eid else "") + "data: " + _json.dumps(ev) + "\n\n"
+                    yield line
                 except _asyncio.TimeoutError:
                     yield ": keepalive\n\n"
         finally:
