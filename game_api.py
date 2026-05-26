@@ -48,7 +48,7 @@ def _ocr_trophies(arr) -> int | None:
         h, w = arr.shape[:2]
         # Tight crop: trophy icon sits roughly at x = 0.62-0.72 of width
         # and y = 0.02-0.10 in landscape orientation.
-        crop = arr[int(h * 0.02):int(h * 0.10), int(w * 0.60):int(w * 0.72)]
+        crop = arr[int(h * 0.02):int(h * 0.10), int(w * 0.55):int(w * 0.78)]
         text = extract_text_and_positions(crop)
         best = None  # (x_pos, value)
         for key, val in text.items():

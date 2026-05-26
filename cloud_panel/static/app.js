@@ -588,11 +588,12 @@ async function gcRefreshAll() {
   } else {
     document.getElementById("gc-state").textContent = "state: —";
   }
-  // Brawler name still needs an explicit call (heavier OCR, not in snapshot).
-  const brawlerRes = await gcCall("GET", "/current_brawler").catch(() => null);
-  if (brawlerRes?.ok && brawlerRes.data?.brawler) {
-    document.getElementById("gc-current-brawler").textContent = brawlerRes.data.brawler;
-  }
+  // Current brawler is not reliably extractable via OCR from the lobby
+  // (the name isn't rendered as text). We display the last brawler
+  // chosen in the dropdown instead.
+  const dropdownVal = document.getElementById("gc-brawler-select")?.value;
+  const el = document.getElementById("gc-current-brawler");
+  if (el) el.textContent = dropdownVal || "— (use dropdown)";
   // One-shot screenshot preview per account, only the first time it's selected.
   if (!_previewFetched.has(selectedAccountId)) {
     _previewFetched.add(selectedAccountId);

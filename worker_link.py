@@ -481,6 +481,15 @@ async def _run_ws_client():
                                           max_size=10 * 1024 * 1024) as ws:
                 log.info("worker_link: connected")
                 await ws.send(json.dumps({"type": "hello", "instance_id": instance_id}))
+                # Immediate snapshot so the UI populates without waiting for
+                # the periodic 10s tick.
+                try:
+                    snap = await asyncio.get_running_loop().run_in_executor(None, _local_snapshot)
+                    if snap:
+                        await ws.send(json.dumps({"type": "snapshot", "data": snap}))
+                        last_snapshot_at = time.time()
+                except Exception:
+                    pass
                 # Self-heal: check if we're behind origin/main and self-update.
                 # This catches the case where the cloud panel was redeploying
                 # while a GitHub push happened so the broadcast was missed.
