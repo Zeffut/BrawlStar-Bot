@@ -31,6 +31,9 @@
           <div class="tag" id="acc-tag"></div>
           <div class="muted" id="acc-instance"></div>
         </div>
+        <button class="header-btn" id="open-device-console" title="Diagnostics & manual control">
+          🔧 Device console
+        </button>
       </header>
       <section class="cards">
         <div class="card"><label>Sessions</label><div id="kpi-sessions">—</div></div>
@@ -49,7 +52,10 @@
         </div>
       </section>
       <section class="device-panel" id="device-panel" hidden>
-        <h3>Device management <span class="ws-status" id="ws-status">●</span></h3>
+        <div class="device-panel-header">
+          <h3>Device console <span class="ws-status" id="ws-status">●</span></h3>
+          <button class="modal-close" onclick="closeDeviceConsole()">✕</button>
+        </div>
         <div class="device-grid">
           <div class="device-card screen-card">
             <h4>Live screen <button class="refresh-btn" id="refresh-screen-btn">↻ refresh now</button></h4>

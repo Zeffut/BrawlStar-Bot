@@ -241,13 +241,27 @@ function renderWinRate(data) {
   winrateChart.update("none");
 }
 
-// ----------------- device management -----------------
+// ----------------- device console (opt-in) -----------------
 
 let selectedInstanceForDevice = null;
 let deviceTimer = null;
+let deviceConsoleOpen = false;
+
+function openDeviceConsole() {
+  document.getElementById("device-panel").hidden = false;
+  deviceConsoleOpen = true;
+  refreshDevicePanel();           // load immediately on open
+  if (deviceTimer) clearInterval(deviceTimer);
+  deviceTimer = setInterval(refreshDevicePanel, 5000);
+}
+function closeDeviceConsole() {
+  document.getElementById("device-panel").hidden = true;
+  deviceConsoleOpen = false;
+  if (deviceTimer) { clearInterval(deviceTimer); deviceTimer = null; }
+}
 
 async function refreshDevicePanel() {
-  if (!selectedAccountId) return;
+  if (!selectedAccountId || !deviceConsoleOpen) return;
   // The device panel is keyed by the instance that owns the selected account.
   let acc;
   try { acc = await api(`/api/accounts/${selectedAccountId}`); } catch (e) { return; }
@@ -373,8 +387,10 @@ document.getElementById("refresh-screen-btn").addEventListener("click", async ()
   }
 });
 
-if (deviceTimer) clearInterval(deviceTimer);
-deviceTimer = setInterval(refreshDevicePanel, 5000);
+// Hook the device console open button (created in detail-header).
+document.addEventListener("click", e => {
+  if (e.target && e.target.id === "open-device-console") openDeviceConsole();
+});
 
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();
