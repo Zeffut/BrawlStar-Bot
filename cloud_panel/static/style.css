@@ -568,9 +568,9 @@ main {
   background: var(--bg-2);
   border-radius: 6px;
   border: 1px solid var(--border);
-  min-height: 28px;
   white-space: pre-wrap;
 }
+.gc-result:empty { display: none; }
 .gc-result.ok    { color: var(--green); border-color: rgba(34,197,94,.3); }
 .gc-result.err   { color: var(--red); border-color: rgba(239,68,68,.3); }
 .gc-result.run   { color: var(--running); border-color: rgba(96,165,250,.3); }

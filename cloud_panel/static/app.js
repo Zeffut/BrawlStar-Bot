@@ -505,6 +505,10 @@ function gcSetResult(text, kind) {
   el.className = "gc-result " + (kind || "");
 }
 
+// Tracks which accounts have already had their one-shot preview fetched
+// in this page session (cleared on full reload).
+const _previewFetched = new Set();
+
 async function gcRefreshAll() {
   // State + trophies arrive automatically via SSE snapshots every 10s.
   // We only need to populate from cached snapshot when an account is
@@ -522,6 +526,11 @@ async function gcRefreshAll() {
   const brawlerRes = await gcCall("GET", "/current_brawler").catch(() => null);
   if (brawlerRes?.ok && brawlerRes.data?.brawler) {
     document.getElementById("gc-current-brawler").textContent = brawlerRes.data.brawler;
+  }
+  // One-shot screenshot preview per account, only the first time it's selected.
+  if (!_previewFetched.has(selectedAccountId)) {
+    _previewFetched.add(selectedAccountId);
+    gcCaptureScreenshot();  // fire-and-forget, runs under the existing loader
   }
 }
 
