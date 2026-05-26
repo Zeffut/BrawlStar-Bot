@@ -111,22 +111,36 @@ class GameAPI:
     def _grab(self) -> Image.Image:
         """Return a fresh PIL screenshot.
 
-        Priority: piggyback on the bot's shared `wc.last_frame` if it's
-        recent (<3s old) to avoid ADB contention while the bot is playing.
-        Otherwise spawn our own adb screencap.
+        Priority order (avoids ADB contention while the bot is playing):
+        1. wc.last_frame if recent (<3s) → instant
+        2. spawn adb screencap → ~600ms
+        3. wc.last_frame at any age → last resort (rather than fail)
         """
+        wc = self.wc
+        # 1. Fresh shared frame.
         try:
-            wc = self.wc
             if wc is not None and getattr(wc, "last_frame", None) is not None:
                 age = time.time() - getattr(wc, "last_frame_time", 0)
                 if age < 3.0:
                     import cv2
-                    # last_frame is BGR np.ndarray (from scrcpy/adb path).
                     rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
                     return Image.fromarray(rgb)
         except Exception:
-            pass
-        return _adb_screencap()
+            log.debug("piggyback failed", exc_info=True)
+        # 2. Own adb call (5s timeout instead of 10 so we fail faster).
+        try:
+            return _adb_screencap()
+        except Exception as exc:
+            log.warning("adb screencap failed: %s", exc)
+        # 3. Last resort: stale wc.last_frame (better than no image).
+        if wc is not None and getattr(wc, "last_frame", None) is not None:
+            try:
+                import cv2
+                rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
+                return Image.fromarray(rgb)
+            except Exception:
+                pass
+        raise RuntimeError("no screenshot available (wc.last_frame=None and adb failed)")
 
     def state(self) -> str:
         try:
@@ -501,10 +515,21 @@ def get() -> GameAPI | None:
 
 
 def init(window_controller, lobby_automation) -> GameAPI:
-    """Initialize the global GameAPI (called once at bot startup)."""
+    """Initialize the global GameAPI (called once at bot startup).
+
+    Triggers a first screenshot to populate `wc.last_frame` so that the
+    cloud panel can serve captures immediately, without waiting for the
+    bot's main loop to do its first frame.
+    """
     global _API
     with _LOCK:
         if _API is None:
             _API = GameAPI(window_controller, lobby_automation)
-            log.info("GameAPI initialized")
+            # Warm up the shared frame buffer.
+            try:
+                _adb_screencap()  # not assigned; the wc capture happens via wc
+                window_controller.screenshot()  # populates wc.last_frame
+                log.info("GameAPI initialized (wc.last_frame warmed)")
+            except Exception:
+                log.info("GameAPI initialized (warm-up failed, will fetch on demand)")
     return _API
