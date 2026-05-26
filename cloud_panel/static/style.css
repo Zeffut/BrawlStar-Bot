@@ -139,6 +139,35 @@ header {
   letter-spacing: 0.02em;
 }
 
+.conn-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 4px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace;
+  margin-right: 8px;
+}
+.conn-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted);
+}
+.conn-status.live { color: var(--green); border-color: rgba(34,197,94,.3); }
+.conn-status.live .conn-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(34,197,94,.6);
+}
+.conn-status.connecting .conn-dot { animation: pulse 1.4s ease-in-out infinite; }
+.conn-status.offline { color: var(--red); border-color: rgba(239,68,68,.3); }
+.conn-status.offline .conn-dot { background: var(--red); }
+
 .fleet-overview {
   display: flex;
   gap: 8px;

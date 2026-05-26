@@ -74,6 +74,21 @@ def sync_account(payload: AccountPayload, authorization: str | None = Header(Non
     _require_auth(authorization)
     inst = db.upsert_instance(payload.instance_id)
     acc = db.upsert_account(inst, payload.tag, payload.name)
+    # If we have no brawlers cached for this account, kick off an immediate
+    # fetch (don't wait the 60s for the next refresher tick).
+    brawlers, _ = db.get_account_brawlers(acc)
+    if not brawlers:
+        try:
+            profile = _fetch_profile_from_brawlace(payload.tag)
+            if profile.get("brawlers"):
+                db.set_account_brawlers(acc, profile["brawlers"])
+                BUS.publish({
+                    "type": "brawlers_refreshed",
+                    "account_id": acc, "tag": payload.tag,
+                    "count": len(profile["brawlers"]),
+                })
+        except Exception:
+            log.exception("eager brawler fetch failed for %s", payload.tag)
     return {"ok": True, "account_id": acc}
 
 

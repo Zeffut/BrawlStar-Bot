@@ -817,15 +817,23 @@ refreshAll();
 // updates the relevant DOM bits without any polling.
 
 let _sse = null;
+function _setConnStatus(state, text) {
+  const el = document.getElementById("conn-status");
+  if (!el) return;
+  el.className = "conn-status " + state;
+  el.querySelector(".conn-text").textContent = text;
+}
 function startSSE() {
   try { if (_sse) _sse.close(); } catch (e) {}
+  _setConnStatus("connecting", "connecting");
   _sse = new EventSource("/api/events");
+  _sse.addEventListener("open", () => _setConnStatus("live", "live"));
   _sse.addEventListener("message", (ev) => {
     let m;
     try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.type === "snapshot") onSnapshot(m);
+    else if (m.type === "ready") _setConnStatus("live", "live");
     else if (m.type === "brawlers_refreshed") {
-      // Reload brawlers list if the refreshed account is selected.
       const acc = _lastAccounts.find(a => a.id === m.account_id);
       if (acc && acc.id === selectedAccountId) gcLoadBrawlers();
     } else if (m.type === "match") {
@@ -833,7 +841,7 @@ function startSSE() {
     }
   });
   _sse.addEventListener("error", () => {
-    // EventSource auto-reconnects by itself, just log.
+    _setConnStatus("offline", "reconnecting");
     console.warn("SSE disconnected, reconnecting…");
   });
 }
