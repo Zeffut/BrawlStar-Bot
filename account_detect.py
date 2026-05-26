@@ -279,18 +279,19 @@ def detect_player_tag(serial: str | None = None) -> Optional[str]:
     # 5. Validate against brawlace.com — first candidate that returns
     #    >0 brawlers is the real tag. Delay between requests to avoid
     #    rate-limit (brawlace returns 403 if hit too fast).
-    for i, c in enumerate(candidates):
+    # Limit candidates: flaresolverr ~5-12s per call, cap to first 12.
+    for i, c in enumerate(candidates[:12]):
         if i > 0:
-            time.sleep(0.4)
+            time.sleep(0.2)
         try:
-            profile = fetch_account_profile(c, timeout=5)
+            profile = fetch_account_profile(c, timeout=30)
             if profile.get("brawlers"):
-                log.info("VALIDATED tag via brawlace: #%s (%s, %d brawlers)",
+                log.info("VALIDATED tag via cloud/flaresolverr: #%s (%s, %d brawlers)",
                          c, profile.get("name"), len(profile["brawlers"]))
                 return c
         except Exception:
             continue
-    log.warning("no OCR candidate validated via brawlace (tried %d)", len(candidates))
+    log.warning("no OCR candidate validated via cloud (tried %d)", min(12, len(candidates)))
     return None
 
 
