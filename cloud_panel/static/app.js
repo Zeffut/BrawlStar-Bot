@@ -11,10 +11,39 @@ const SNAPSHOTS = {};
 // Map account_tag -> instance_id for fast lookup.
 const TAG_TO_INSTANCE = {};
 
-async function api(path) {
-  const r = await fetch(path);
-  if (!r.ok) throw new Error(`${path}: ${r.status}`);
-  return await r.json();
+// Track last failure per endpoint so silent background polls don't spam toasts.
+const _failedRecently = new Set();
+
+async function api(path, opts = {}) {
+  const {silent = false, method = "GET", body = null} = opts;
+  try {
+    const init = {method};
+    if (body !== null) {
+      init.headers = {"Content-Type": "application/json"};
+      init.body = JSON.stringify(body);
+    }
+    const r = await fetch(path, init);
+    if (!r.ok) {
+      const detail = await r.text().catch(() => "");
+      const msg = `${method} ${path} → HTTP ${r.status}${detail ? ': ' + detail.slice(0, 120) : ''}`;
+      if (!silent && !_failedRecently.has(path)) {
+        _failedRecently.add(path);
+        setTimeout(() => _failedRecently.delete(path), 5000);
+        showToast(msg, "err");
+      }
+      throw new Error(msg);
+    }
+    _failedRecently.delete(path);
+    return await r.json();
+  } catch (e) {
+    if (!silent && e.name === "TypeError" && !_failedRecently.has(path)) {
+      // Network error (cloud down). Show once.
+      _failedRecently.add(path);
+      setTimeout(() => _failedRecently.delete(path), 5000);
+      showToast("Cloud unreachable — retrying…", "err");
+    }
+    throw e;
+  }
 }
 
 const fmtTime = ts => new Date(ts * 1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
@@ -32,12 +61,12 @@ async function refreshAll() {
   let instances = [], accounts = [], healths = {};
   try {
     [instances, accounts] = await Promise.all([
-      api("/api/instances"),
-      api("/api/accounts"),
+      api("/api/instances", {silent: true}),
+      api("/api/accounts", {silent: true}),
     ]);
     // Fetch live health/worker info for each instance (parallel)
     const hs = await Promise.all(instances.map(i =>
-      api(`/api/instances/${i.id}/health`).catch(() => ({connected: false}))
+      api(`/api/instances/${i.id}/health`, {silent: true}).catch(() => ({connected: false}))
     ));
     instances.forEach((i, idx) => { healths[i.id] = hs[idx]; });
   } catch (e) { return; }
@@ -673,7 +702,7 @@ async function gcLoadBrawlers() {
     }
   } catch (e) {}
   try {
-    const r = await api(`/api/accounts/${selectedAccountId}/brawlers`);
+    const r = await api(`/api/accounts/${selectedAccountId}/brawlers`, {silent: true});
     if (r?.brawlers?.length) {
       _renderBrawlers(r.brawlers, r.refreshed_at);
       if (r.total_trophies != null) _renderAuthoritativeTrophies(r.total_trophies);
