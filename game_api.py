@@ -116,30 +116,44 @@ class GameAPI:
         """Return a fresh PIL screenshot.
 
         Priority order (avoids ADB contention while the bot is playing):
-        1. wc.last_frame if recent (<3s) → instant
-        2. spawn adb screencap → ~600ms
-        3. wc.last_frame at any age → last resort (rather than fail)
+        1. wc.last_frame if recent (<15s, since snapshot loop refreshes it)
+        2. spawn adb screencap (also writes back to wc.last_frame so the
+           next call hits the cache)
+        3. wc.last_frame at any age → last resort
         """
+        import cv2
         wc = self.wc
         # 1. Fresh shared frame.
         try:
             if wc is not None and getattr(wc, "last_frame", None) is not None:
                 age = time.time() - getattr(wc, "last_frame_time", 0)
-                if age < 3.0:
-                    import cv2
+                if age < 15.0:
                     rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
                     return Image.fromarray(rgb)
         except Exception:
             log.debug("piggyback failed", exc_info=True)
-        # 2. Own adb call (5s timeout instead of 10 so we fail faster).
+        # 2. Own adb call — also writes back into wc.last_frame so the
+        #    snapshot loop AND subsequent capture clicks read from cache.
         try:
-            return _adb_screencap()
+            img = _adb_screencap()
+            if wc is not None:
+                try:
+                    bgr = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+                    if hasattr(wc, "frame_lock"):
+                        with wc.frame_lock:
+                            wc.last_frame = bgr
+                            wc.last_frame_time = time.time()
+                    else:
+                        wc.last_frame = bgr
+                        wc.last_frame_time = time.time()
+                except Exception:
+                    pass
+            return img
         except Exception as exc:
             log.warning("adb screencap failed: %s", exc)
-        # 3. Last resort: stale wc.last_frame (better than no image).
+        # 3. Last resort: stale wc.last_frame.
         if wc is not None and getattr(wc, "last_frame", None) is not None:
             try:
-                import cv2
                 rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
                 return Image.fromarray(rgb)
             except Exception:
