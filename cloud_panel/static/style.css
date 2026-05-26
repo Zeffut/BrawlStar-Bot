@@ -1218,7 +1218,39 @@ tr:hover td { background: rgba(255,255,255,.015); }
   .charts { grid-template-columns: 1fr; }
   .lists  { grid-template-columns: 1fr; }
 }
+.sidebar-toggle {
+  display: none;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border-2);
+  width: 38px; height: 38px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 18px;
+  margin-right: 8px;
+}
+.sidebar-toggle:hover { background: var(--surface-3); color: var(--text); }
+
 @media (max-width: 800px) {
   main { grid-template-columns: 1fr; }
-  #account-list { display: none; }
+  .sidebar-toggle { display: inline-block; }
+  #account-list {
+    position: fixed;
+    top: 73px; left: 0; bottom: 0;
+    width: min(90vw, 340px);
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 240ms var(--ease);
+    box-shadow: 12px 0 32px -8px rgba(0,0,0,.6);
+    display: block;
+  }
+  #account-list.open { transform: translateX(0); }
+  #account-detail { padding: 20px 16px 80px; }
+}
+@media (max-width: 600px) {
+  header { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
+  .brand-text h1 { font-size: 16px; }
+  .brand-sub { display: none; }
+  .gc-grid { grid-template-columns: 1fr !important; }
+  .header-actions { width: 100%; flex-wrap: wrap; }
 }

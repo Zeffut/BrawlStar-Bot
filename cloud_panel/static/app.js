@@ -912,3 +912,31 @@ function _prependActivity(m) {
 }
 
 loadActivity();
+
+// ----------------- Mobile sidebar toggle + keyboard shortcuts -----------------
+
+document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
+  document.getElementById("account-list").classList.toggle("open");
+});
+// Close sidebar after picking an account on mobile.
+document.addEventListener("click", e => {
+  if (window.innerWidth > 800) return;
+  if (e.target.closest(".account-row")) {
+    document.getElementById("account-list")?.classList.remove("open");
+  }
+});
+
+// Esc dismisses toast stack and closes the device console / sidebar.
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") {
+    // Dismiss all toasts
+    document.querySelectorAll(".toast").forEach(t => t.remove());
+    // Close mobile sidebar
+    document.getElementById("account-list")?.classList.remove("open");
+    // Close device console
+    if (typeof closeDeviceConsole === "function" &&
+        !document.getElementById("device-panel").hidden) {
+      closeDeviceConsole();
+    }
+  }
+});
