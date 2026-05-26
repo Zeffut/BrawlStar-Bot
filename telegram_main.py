@@ -968,10 +968,28 @@ def main() -> int:
     from panel import app as panel_module
     panel_module.set_shared_runner(bot.runner)
     _start_panel_thread()
+    # Host bootstrap — ensures BlueStacks + ADB + game package are ready
+    # before the bot starts playing. Runs once at startup, non-blocking
+    # on Mac/Linux. Errors surface via cloud_sync + Telegram automatically.
+    try:
+        import host_bootstrap
+        if not host_bootstrap.bootstrap_host():
+            log.warning("host_bootstrap reported a problem — bot will start anyway "
+                        "and rely on the user to fix manually")
+    except Exception:
+        log.exception("host_bootstrap raised")
     # Cloud sync — pushes events to the central VPS panel if cfg/cloud.toml is enabled.
     if cloud_sync.is_enabled():
         cloud_sync.start_heartbeat_loop()
-        log.info("cloud sync enabled, heartbeat thread armed")
+        # Push every known local account on startup so the cloud panel
+        # reflects them even if ADB-based redetection fails right now.
+        for acc in db.list_accounts():
+            try:
+                cloud_sync.account(acc["tag"], acc.get("name"))
+            except Exception:
+                log.exception("cloud account push failed for %s", acc.get("tag"))
+        log.info("cloud sync enabled, heartbeat thread armed, %d accounts pushed",
+                 len(db.list_accounts()))
     else:
         log.info("cloud sync disabled (no cfg/cloud.toml or enabled=false)")
     # Best-effort: detect the connected account at startup so the panel
