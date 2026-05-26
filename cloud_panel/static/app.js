@@ -514,9 +514,11 @@ async function gcCaptureScreenshot() {
   try {
     const r = await gcCall("GET", "/screenshot");
     if (r?.ok && r.data?.b64) {
+      // Cache-bust: add a hash so the browser always reloads even if b64 is identical.
       document.getElementById("gc-screenshot").src = `data:${r.data.mime};base64,${r.data.b64}`;
+      const age = r.data.frame_age_s ?? "?";
       document.getElementById("gc-screen-meta").textContent =
-        `${r.data.w}×${r.data.h} · ${new Date().toLocaleTimeString()}`;
+        `${r.data.w}×${r.data.h} · frame age ${age}s · ${new Date().toLocaleTimeString()}`;
     } else {
       document.getElementById("gc-screen-meta").textContent = "capture failed";
     }

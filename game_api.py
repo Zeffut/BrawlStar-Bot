@@ -61,6 +61,8 @@ class GameAPI:
 
     def screenshot_jpeg(self, max_width: int = 960, quality: int = 75) -> dict:
         img = self.wc.screenshot()  # PIL.Image
+        # Age of the scrcpy frame at capture time (debugging staleness).
+        frame_age = round(time.time() - getattr(self.wc, "last_frame_time", time.time()), 2)
         if img.width > max_width:
             ratio = max_width / img.width
             img = img.resize((max_width, int(img.height * ratio)))
@@ -70,6 +72,8 @@ class GameAPI:
             "b64": base64.b64encode(buf.getvalue()).decode(),
             "mime": "image/jpeg",
             "w": img.width, "h": img.height,
+            "frame_age_s": frame_age,
+            "captured_at": round(time.time(), 2),
         }
 
     def read_trophies(self) -> int | None:
