@@ -575,6 +575,38 @@ main {
 .gc-result.err   { color: var(--red); border-color: rgba(239,68,68,.3); }
 .gc-result.run   { color: var(--running); border-color: rgba(96,165,250,.3); }
 
+/* -------- Loading spinner -------- */
+.spinner {
+  display: inline-block;
+  width: 12px; height: 12px;
+  border: 2px solid currentColor;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -2px;
+  margin-right: 6px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.btn-loading {
+  position: relative;
+  pointer-events: none;
+}
+.btn-loading > .btn-label { opacity: 0.5; }
+.btn-loading::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px; height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid currentColor;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+.btn-loading > .btn-label { visibility: hidden; }
+
 /* ----- KPI cards */
 
 .cards {

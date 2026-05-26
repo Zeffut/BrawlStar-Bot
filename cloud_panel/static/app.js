@@ -441,33 +441,46 @@ async function postSession(path, body) {
   return r.json();
 }
 
-document.getElementById("btn-push-max").addEventListener("click", async () => {
-  if (!selectedAccountId) return;
-  const btn = document.getElementById("btn-push-max");
-  btn.disabled = true; btn.textContent = "▶ Starting…";
-  try {
+document.getElementById("btn-push-max").addEventListener("click", () =>
+  withLoader("btn-push-max", async () => {
+    if (!selectedAccountId) return;
     const r = await postSession("/push_max");
     if (!r.ok || (r.data && !r.data.ok)) {
       alert("Push Max failed: " + (r.data?.error || r.error || "unknown"));
     }
-  } finally {
-    btn.disabled = false; btn.textContent = "▶ Push Max";
     refreshSessionState();
-  }
-});
+  }));
 
-document.getElementById("btn-stop").addEventListener("click", async () => {
-  if (!selectedAccountId) return;
-  if (!confirm("Stop the current session?")) return;
-  const btn = document.getElementById("btn-stop");
-  btn.disabled = true; btn.textContent = "⏹ Stopping…";
-  try {
+document.getElementById("btn-stop").addEventListener("click", () =>
+  withLoader("btn-stop", async () => {
+    if (!selectedAccountId) return;
+    if (!confirm("Stop the current session?")) return;
     await postSession("/stop", {force: false});
-  } finally {
-    btn.disabled = false; btn.textContent = "⏹ Stop";
     refreshSessionState();
+  }));
+
+// ----------------- Loading spinner helper -----------------
+
+/**
+ * Wrap a button as "loading" while an async action runs.
+ * Preserves the original label (wraps it in a span on first call).
+ */
+async function withLoader(btn, fn) {
+  if (typeof btn === "string") btn = document.getElementById(btn);
+  if (!btn) return await fn();
+  // Ensure label is wrapped so the spinner overlay hides text but keeps width.
+  if (!btn.querySelector(".btn-label")) {
+    btn.innerHTML = `<span class="btn-label">${btn.innerHTML}</span>`;
   }
-});
+  btn.classList.add("btn-loading");
+  btn.disabled = true;
+  try {
+    return await fn();
+  } finally {
+    btn.classList.remove("btn-loading");
+    btn.disabled = false;
+  }
+}
 
 // ----------------- Game Control -----------------
 
@@ -509,12 +522,9 @@ async function gcRefreshAll() {
 
 async function gcCaptureScreenshot() {
   if (!selectedAccountId) return;
-  const btn = document.getElementById("gc-capture");
-  btn.disabled = true; btn.textContent = "📷 capturing…";
-  try {
+  await withLoader("gc-capture", async () => {
     const r = await gcCall("GET", "/screenshot");
     if (r?.ok && r.data?.b64) {
-      // Cache-bust: add a hash so the browser always reloads even if b64 is identical.
       document.getElementById("gc-screenshot").src = `data:${r.data.mime};base64,${r.data.b64}`;
       const cap = r.data.capture_ms ?? "?";
       document.getElementById("gc-screen-meta").textContent =
@@ -522,17 +532,13 @@ async function gcCaptureScreenshot() {
     } else {
       document.getElementById("gc-screen-meta").textContent = "capture failed";
     }
-  } finally {
-    btn.disabled = false; btn.textContent = "📷 capture";
-  }
+  });
 }
 
 async function gcRefreshBrawlers() {
   if (!selectedAccountId) return;
-  const btn = document.getElementById("gc-refresh-brawlers");
-  btn.disabled = true; btn.textContent = "↻ scanning…";
-  gcSetResult("Opening brawler menu and scanning… (~30 s)", "run");
-  try {
+  await withLoader("gc-refresh-brawlers", async () => {
+    gcSetResult("Opening brawler menu and scanning… (~30 s)", "run");
     const r = await gcCall("GET", "/brawlers?force=true");
     if (r?.ok && r.data?.brawlers) {
       const sel = document.getElementById("gc-brawler-select");
@@ -546,46 +552,43 @@ async function gcRefreshBrawlers() {
     } else {
       gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
     }
-  } finally {
-    btn.disabled = false; btn.textContent = "↻ scan";
-  }
+  });
 }
 
-document.getElementById("gc-refresh-state").addEventListener("click", gcRefreshAll);
+document.getElementById("gc-refresh-state").addEventListener("click", () =>
+  withLoader("gc-refresh-state", gcRefreshAll));
 document.getElementById("gc-refresh-brawlers").addEventListener("click", gcRefreshBrawlers);
 document.getElementById("gc-capture").addEventListener("click", gcCaptureScreenshot);
 
-document.getElementById("gc-goto-lobby").addEventListener("click", async () => {
-  if (!selectedAccountId) return;
-  gcSetResult("Returning to lobby…", "run");
-  const r = await gcCall("POST", "/goto_lobby");
-  gcSetResult(r?.ok ? "Lobby ✓" : "Failed: " + (r?.error || "unknown"),
-              r?.ok ? "ok" : "err");
-  gcRefreshAll();
-});
-
-document.getElementById("gc-play-one").addEventListener("click", async () => {
-  if (!selectedAccountId) return;
-  if (!confirm("Play one match now?")) return;
-  const btn = document.getElementById("gc-play-one");
-  const brawler = document.getElementById("gc-brawler-select").value || null;
-  btn.disabled = true; btn.textContent = "▶ Playing…";
-  gcSetResult("Match in progress (this can take 3-5 min)…", "run");
-  try {
-    const r = await gcCall("POST", "/play_one_match", {brawler, timeout_s: 420});
-    if (r?.ok && r.data?.ok) {
-      const d = r.data;
-      gcSetResult(`Match done · brawler=${d.brawler} · W:${d.wins} L:${d.losses} D:${d.draws} · ${d.duration_s}s`, "ok");
-    } else {
-      gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
-    }
-  } catch (e) {
-    gcSetResult("Error: " + e.message, "err");
-  } finally {
-    btn.disabled = false; btn.textContent = "▶ Play 1 match";
+document.getElementById("gc-goto-lobby").addEventListener("click", () =>
+  withLoader("gc-goto-lobby", async () => {
+    if (!selectedAccountId) return;
+    gcSetResult("Returning to lobby…", "run");
+    const r = await gcCall("POST", "/goto_lobby");
+    gcSetResult(r?.ok ? "Lobby ✓" : "Failed: " + (r?.error || "unknown"),
+                r?.ok ? "ok" : "err");
     gcRefreshAll();
-  }
-});
+  }));
+
+document.getElementById("gc-play-one").addEventListener("click", () =>
+  withLoader("gc-play-one", async () => {
+    if (!selectedAccountId) return;
+    if (!confirm("Play one match now?")) return;
+    const brawler = document.getElementById("gc-brawler-select").value || null;
+    gcSetResult("Match in progress (this can take 3-5 min)…", "run");
+    try {
+      const r = await gcCall("POST", "/play_one_match", {brawler, timeout_s: 420});
+      if (r?.ok && r.data?.ok) {
+        const d = r.data;
+        gcSetResult(`Match done · brawler=${d.brawler} · W:${d.wins} L:${d.losses} D:${d.draws} · ${d.duration_s}s`, "ok");
+      } else {
+        gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
+      }
+    } catch (e) {
+      gcSetResult("Error: " + e.message, "err");
+    }
+    gcRefreshAll();
+  }));
 
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();
