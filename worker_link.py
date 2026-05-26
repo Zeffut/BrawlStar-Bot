@@ -558,6 +558,31 @@ async def _run_ws_client():
 
                 sender_task = asyncio.create_task(sender_loop())
 
+                async def _run_cmd(cmd_id: str, name: str, handler, args: dict) -> None:
+                    """Run a single command in the thread pool and reply.
+
+                    Fired as a task so long commands (play_one_match,
+                    list_brawlers) don't block screenshot / state / etc.
+                    """
+                    try:
+                        data = await asyncio.get_running_loop().run_in_executor(
+                            None, handler, args)
+                        await ws.send(json.dumps({
+                            "type": "cmd_result", "id": cmd_id,
+                            "ok": True, "data": data,
+                        }))
+                    except websockets.exceptions.ConnectionClosed:
+                        pass
+                    except Exception as exc:
+                        log.exception("command %s failed", name)
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "cmd_result", "id": cmd_id,
+                                "ok": False, "error": str(exc),
+                            }))
+                        except Exception:
+                            pass
+
                 async for raw in ws:
                     try:
                         msg = json.loads(raw)
@@ -574,19 +599,10 @@ async def _run_ws_client():
                                 "ok": False, "error": f"unknown command: {name}",
                             }))
                             continue
-                        try:
-                            data = await asyncio.get_running_loop().run_in_executor(
-                                None, handler, args)
-                            await ws.send(json.dumps({
-                                "type": "cmd_result", "id": cmd_id,
-                                "ok": True, "data": data,
-                            }))
-                        except Exception as exc:
-                            log.exception("command %s failed", name)
-                            await ws.send(json.dumps({
-                                "type": "cmd_result", "id": cmd_id,
-                                "ok": False, "error": str(exc),
-                            }))
+                        # Fire-and-forget so this command can run in
+                        # parallel with others (e.g. a 5 min play_one_match
+                        # must not block screenshot requests).
+                        asyncio.create_task(_run_cmd(cmd_id, name, handler, args))
                 sender_task.cancel()
         except Exception as exc:
             log.warning("worker_link disconnected: %s", exc)
