@@ -312,6 +312,8 @@ def _bootstrap_linux() -> bool:
         import cv2 as _cv2
         import io as _io
         TPL = _cv2.imread("state_finder/images_to_detect/close_popup.png")
+        same_state_count = 0
+        last_state = None
         for attempt in range(45):
             raw = subprocess.check_output(
                 [adb, "-s", serial, "exec-out", "screencap", "-p"],
@@ -329,11 +331,23 @@ def _bootstrap_linux() -> bool:
                 _alert("Bot ready — game in lobby")
                 _report("bootstrap_ready", "Linux bootstrap OK")
                 return True
+            # Track stuck state.
+            if state == last_state:
+                same_state_count += 1
+            else:
+                same_state_count = 0
+                last_state = state
+            # In a menu/sub-screen for >=2 iterations -> safe BACK to escape.
+            if state in ("shop", "brawler_selection", "popup") and same_state_count >= 2:
+                log.info("stuck in state=%s for %d iters -> BACK key",
+                         state, same_state_count + 1)
+                subprocess.run(
+                    [adb, "-s", serial, "shell", "input", "keyevent", "4"],
+                    timeout=5,
+                )
+                time.sleep(1.5)
+                continue
             # Find X button via template matching. Tap it if found.
-            # If no X is visible, we DO NOT tap blindly anywhere
-            # (avoid clicking PLAY, brawlers, or quitting the app).
-            # The state_finder might mis-detect lobby in rare cases
-            # but that's safer than the bot causing chaos.
             pos = find_template_center(img, TPL) if TPL is not None else None
             if pos:
                 x, y = pos
