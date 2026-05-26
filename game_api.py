@@ -37,6 +37,38 @@ _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
 
+def _ocr_trophies(arr) -> int | None:
+    """Extract account trophy count from a lobby screenshot.
+
+    Crops a narrow strip around the trophy icon in the top-right HUD
+    (left-most of the trophies/coins/gems triplet) and returns the
+    leftmost digit value to avoid picking up coins/gems.
+    """
+    try:
+        h, w = arr.shape[:2]
+        # Tight crop: trophy icon sits roughly at x = 0.62-0.72 of width
+        # and y = 0.02-0.10 in landscape orientation.
+        crop = arr[int(h * 0.02):int(h * 0.10), int(w * 0.60):int(w * 0.72)]
+        text = extract_text_and_positions(crop)
+        best = None  # (x_pos, value)
+        for key, val in text.items():
+            cleaned = "".join(c for c in key if c.isdigit())
+            if not cleaned:
+                continue
+            n = int(cleaned)
+            if not (50 <= n <= 200000):
+                continue
+            try:
+                xpos = val.get("center", [0, 0])[0]
+            except Exception:
+                xpos = 0
+            if best is None or xpos < best[0]:
+                best = (xpos, n)
+        return best[1] if best else None
+    except Exception:
+        return None
+
+
 def _adb_screencap() -> Image.Image:
     """Capture a screenshot via `adb exec-out screencap -p`.
 
@@ -102,15 +134,7 @@ class GameAPI:
         """OCR the top-right trophy counter from the lobby screen."""
         try:
             img = self._grab()
-            arr = np.array(img)
-            h, w = arr.shape[:2]
-            # Top-right region where the trophy count sits.
-            crop = arr[int(h * 0.02):int(h * 0.09), int(w * 0.60):int(w * 0.85)]
-            text = extract_text_and_positions(crop)
-            for key in text.keys():
-                cleaned = "".join(ch for ch in key if ch.isdigit())
-                if cleaned and 100 <= int(cleaned) <= 200000:
-                    return int(cleaned)
+            return _ocr_trophies(np.array(img))
         except Exception as exc:
             log.warning("read_trophies(): %s", exc)
         return None
@@ -125,17 +149,8 @@ class GameAPI:
         # Re-use the already-captured frame for OCR (avoid double adb).
         trophies = None
         try:
-            import numpy as _np
-            arr = _np.array(img) if st != "unknown" else None
-            if arr is not None:
-                h, w = arr.shape[:2]
-                crop = arr[int(h * 0.02):int(h * 0.09), int(w * 0.60):int(w * 0.85)]
-                text = extract_text_and_positions(crop)
-                for key in text.keys():
-                    cleaned = "".join(c for c in key if c.isdigit())
-                    if cleaned and 100 <= int(cleaned) <= 200000:
-                        trophies = int(cleaned)
-                        break
+            if st != "unknown":
+                trophies = _ocr_trophies(np.array(img))
         except Exception:
             pass
         return {

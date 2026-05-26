@@ -381,10 +381,14 @@ def api_account_brawlers(account_id: int) -> dict:
     """Return brawlers cached in the cloud DB. Instant, no upstream call.
 
     Includes the age of the data so the UI can show staleness.
+    Also returns the total trophies (sum of all brawlers) as the
+    authoritative trophy count for the account.
     """
     brawlers, refreshed_at = db.get_account_brawlers(account_id)
+    total_trophies = sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
     return {
         "brawlers": brawlers,
+        "total_trophies": total_trophies,
         "refreshed_at": refreshed_at,
         "age_s": (time.time() - refreshed_at) if refreshed_at else None,
     }

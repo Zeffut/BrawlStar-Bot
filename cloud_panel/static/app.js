@@ -617,6 +617,7 @@ async function gcCaptureScreenshot() {
 
 function _renderBrawlers(brawlers, refreshedAt) {
   const sel = document.getElementById("gc-brawler-select");
+  const previouslySelected = sel.value;  // preserve user's choice across re-renders
   sel.innerHTML = '<option value="">— current —</option>';
   const sorted = (brawlers || []).slice().sort((a, b) => (b.trophies || 0) - (a.trophies || 0));
   for (const b of sorted) {
@@ -624,6 +625,10 @@ function _renderBrawlers(brawlers, refreshedAt) {
     o.value = b.name;
     o.textContent = b.trophies != null ? `${b.name} (${b.trophies} 🏆)` : b.name;
     sel.appendChild(o);
+  }
+  // Restore previously-selected brawler if it's still in the list.
+  if (previouslySelected && Array.from(sel.options).some(o => o.value === previouslySelected)) {
+    sel.value = previouslySelected;
   }
   const meta = document.getElementById("gc-brawlers-meta");
   if (meta) {
@@ -651,17 +656,35 @@ async function gcLoadBrawlers() {
     const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
     if (cached?.brawlers?.length) {
       _renderBrawlers(cached.brawlers, cached.refreshed_at);
+      if (cached.total_trophies != null) _renderAuthoritativeTrophies(cached.total_trophies);
     }
   } catch (e) {}
   try {
     const r = await api(`/api/accounts/${selectedAccountId}/brawlers`);
     if (r?.brawlers?.length) {
       _renderBrawlers(r.brawlers, r.refreshed_at);
+      if (r.total_trophies != null) _renderAuthoritativeTrophies(r.total_trophies);
       localStorage.setItem(cacheKey, JSON.stringify({
-        brawlers: r.brawlers, refreshed_at: r.refreshed_at,
+        brawlers: r.brawlers, refreshed_at: r.refreshed_at, total_trophies: r.total_trophies,
       }));
     }
   } catch (e) {}
+}
+
+// Use the brawlace total as the authoritative trophy display.
+// When OCR diverges by more than a few trophies, show both.
+function _renderAuthoritativeTrophies(cloudTotal) {
+  const el = document.getElementById("gc-trophies");
+  if (!el) return;
+  // Find current OCR-read value if displayed.
+  const ocrText = el.textContent;
+  const m = ocrText.match(/(\d+)/);
+  const ocrVal = m ? parseInt(m[1]) : null;
+  if (ocrVal != null && Math.abs(ocrVal - cloudTotal) > 5) {
+    el.innerHTML = `${cloudTotal} 🏆 <span style="color:var(--muted);font-size:12px">(OCR: ${ocrVal})</span>`;
+  } else {
+    el.textContent = `${cloudTotal} 🏆`;
+  }
 }
 
 async function gcRefreshBrawlers() {
