@@ -209,12 +209,13 @@ function renderProgression(labels, trophies, brawlers) {
     progressionChart = new Chart(document.getElementById("chart-progression"), {
       type: "line",
       data: { labels: [], datasets: [{ label: "Trophies", data: [],
-        borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.1)",
-        tension: 0.2, pointRadius: 3, fill: true }] },
+        borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.12)",
+        borderWidth: 2, tension: 0.3, pointRadius: 0, pointHoverRadius: 5,
+        pointHoverBackgroundColor: "#6ea4ff", fill: true }] },
       options: { responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false } },
-        scales: { x: {grid:{color:"#1a1f29"},ticks:{color:"#8b95a5",maxRotation:0,autoSkipPadding:20}},
-                  y: {grid:{color:"#1a1f29"},ticks:{color:"#8b95a5"}} } }
+        plugins: { legend: { display: false }, tooltip: { backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1, titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10, displayColors: false } },
+        scales: { x: {grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10},maxRotation:0,autoSkipPadding:20},border:{display:false}},
+                  y: {grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10}},border:{display:false}} } }
     });
   }
   progressionChart.data.labels = labels;
@@ -228,14 +229,15 @@ function renderWinRate(data) {
     winrateChart = new Chart(document.getElementById("chart-winrate"), {
       type: "bar",
       data: { labels: [], datasets: [
-        { label: "Wins",   data: [], backgroundColor: "#4ade80" },
-        { label: "Losses", data: [], backgroundColor: "#ef4444" },
-        { label: "Draws",  data: [], backgroundColor: "#fbbf24" },
+        { label: "Wins",   data: [], backgroundColor: "#22c55e", borderRadius: 4 },
+        { label: "Losses", data: [], backgroundColor: "#ef4444", borderRadius: 4 },
+        { label: "Draws",  data: [], backgroundColor: "#f59e0b", borderRadius: 4 },
       ]},
       options: { responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { labels: { color: "#c0c8d4" } } },
-        scales: { x: {stacked:true,grid:{color:"#1a1f29"},ticks:{color:"#8b95a5"}},
-                  y: {stacked:true,grid:{color:"#1a1f29"},ticks:{color:"#8b95a5"}} } }
+        plugins: { legend: { labels: { color: "#c4ccd8", font: { family: "Inter", size: 11 }, boxWidth: 10, padding: 12 } },
+                   tooltip: { backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1, titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10 } },
+        scales: { x: {stacked:true,grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10}},border:{display:false}},
+                  y: {stacked:true,grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10}},border:{display:false}} } }
     });
   }
   winrateChart.data.labels = sorted.map(d=>d.brawler);

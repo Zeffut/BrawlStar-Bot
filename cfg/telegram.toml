@@ -2,7 +2,7 @@
 # Get token from @BotFather; chat_id from any message you sent to the bot
 # (https://api.telegram.org/bot<TOKEN>/getUpdates).
 
-bot_token = "8927602653:AAHlj4gALCVNUHujBJSol1fX4ImagUlfVqU"
+bot_token = "8927602653:AAGTok2pf9uX_anh1UR3zeqZWXd4BPQ2hvo"
 chat_id = 6423758768
 
 # Polling settings.

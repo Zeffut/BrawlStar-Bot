@@ -33,14 +33,23 @@ $splits = Get-ChildItem -Path $EXTRACT -Filter "*.apk"
 Write-Host "  found $($splits.Count) split APKs"
 
 Write-Host "[3/4] adb install-multiple..."
+# Fresh ADB daemon every time, otherwise BlueStacks 5555 connection is flaky
+& $ADB kill-server | Out-Null
+Start-Sleep -Seconds 2
+& $ADB start-server | Out-Null
+Start-Sleep -Seconds 2
 & $ADB connect $ADB_HOST | Out-Null
-Start-Sleep -Seconds 1
-$args = @("-s", $ADB_HOST, "install-multiple", "-r", "-d") + ($splits.FullName)
-$out = & $ADB @args 2>&1
+Start-Sleep -Seconds 3
+& $ADB devices
+
+$splitList = $splits.FullName
+$installArgs = @("-s", $ADB_HOST, "install-multiple", "-r", "-d", "-g") + $splitList
+Write-Host "running: adb $($installArgs -join ' ')"
+$out = & $ADB @installArgs 2>&1
 Write-Host $out
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "INSTALL FAILED" -ForegroundColor Red
+    Write-Host "INSTALL FAILED ($LASTEXITCODE)" -ForegroundColor Red
     exit 1
 }
 

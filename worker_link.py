@@ -264,6 +264,8 @@ async def _run_ws_client():
                                     new_lines = [l for l in chunk.splitlines() if l.strip()]
                                     if new_lines:
                                         await ws.send(json.dumps({"type": "log", "lines": new_lines}))
+                        except websockets.exceptions.ConnectionClosed:
+                            return  # outer loop will reconnect
                         except Exception:
                             log.exception("log tail failed")
                         # screenshot every 15s (small JPEG, fast over WS).
@@ -280,6 +282,8 @@ async def _run_ws_client():
                                     "w": res["w"], "h": res["h"],
                                 }))
                                 last_screenshot_at = now
+                            except websockets.exceptions.ConnectionClosed:
+                                return
                             except Exception as e:
                                 log.debug("screenshot push failed: %s", e)
                         # health every 30s
@@ -289,6 +293,8 @@ async def _run_ws_client():
                                     None, _collect_health)
                                 await ws.send(json.dumps({"type": "health", "data": data}))
                                 last_health_at = now
+                            except websockets.exceptions.ConnectionClosed:
+                                return
                             except Exception:
                                 log.debug("health push failed")
 
