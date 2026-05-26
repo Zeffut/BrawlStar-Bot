@@ -40,31 +40,20 @@ _LOCK = threading.Lock()
 def _ocr_trophies(arr) -> int | None:
     """Extract account trophy count from a lobby screenshot.
 
-    Crops a narrow strip around the trophy icon in the top-right HUD
-    (left-most of the trophies/coins/gems triplet) and returns the
-    leftmost digit value to avoid picking up coins/gems.
+    The current trophy count is displayed in the top-LEFT next to the
+    player avatar (NOT the top-right which shows season max / pass).
     """
     try:
         h, w = arr.shape[:2]
-        # Tight crop: trophy icon sits roughly at x = 0.62-0.72 of width
-        # and y = 0.02-0.10 in landscape orientation.
-        crop = arr[int(h * 0.02):int(h * 0.10), int(w * 0.55):int(w * 0.78)]
+        # Top-left trophy pill: y 0.02-0.12, x 0.10-0.22 in landscape.
+        crop = arr[int(h * 0.02):int(h * 0.12), int(w * 0.10):int(w * 0.22)]
         text = extract_text_and_positions(crop)
-        best = None  # (x_pos, value)
-        for key, val in text.items():
+        # Pick the first plausible digit value.
+        for key in text.keys():
             cleaned = "".join(c for c in key if c.isdigit())
-            if not cleaned:
-                continue
-            n = int(cleaned)
-            if not (50 <= n <= 200000):
-                continue
-            try:
-                xpos = val.get("center", [0, 0])[0]
-            except Exception:
-                xpos = 0
-            if best is None or xpos < best[0]:
-                best = (xpos, n)
-        return best[1] if best else None
+            if cleaned and 50 <= int(cleaned) <= 200000:
+                return int(cleaned)
+        return None
     except Exception:
         return None
 
