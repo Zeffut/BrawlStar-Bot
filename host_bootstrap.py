@@ -238,19 +238,15 @@ def _install_brawlstars(adb: str) -> bool:
     return proc.returncode == 0 and "Success" in (proc.stdout + proc.stderr)
 
 
-def _launch_brawlstars(bs_path: str) -> bool:
-    # BlueStacks native launch command — more reliable than `adb shell monkey`.
-    log.info("launching Brawl Stars via HD-Player")
-    proc = subprocess.Popen([
-        bs_path, "--instance", "Nougat32",
-        "--cmd", "launchApp", "--package", BS_PACKAGE,
-    ])
-    try:
-        proc.wait(timeout=60)
-        return True
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        return False
+def _launch_brawlstars(bs_path: str, adb: str) -> bool:
+    """Launch the game via `adb shell am start` (the BlueStacks
+    --cmd launchApp variant tends to open the App Center instead of
+    actually switching to the Android instance)."""
+    log.info("launching Brawl Stars via adb am start")
+    code, out = _adb(adb, "-s", ADB_HOST, "shell", "am", "start",
+                     "-n", f"{BS_PACKAGE}/.GameApp", timeout=30)
+    log.info("am start → %s", out.strip())
+    return code == 0 and "Error" not in out
 
 
 # --------------------------------------------------------------- public
@@ -304,7 +300,7 @@ def bootstrap_host() -> bool:
         log.info("Brawl Stars already installed")
 
     # 4. Launch
-    if not _launch_brawlstars(bs):
+    if not _launch_brawlstars(bs, adb):
         log.warning("Brawl Stars launch returned non-zero, continuing anyway")
 
     _report("bootstrap_ready", "Host bootstrap OK")
