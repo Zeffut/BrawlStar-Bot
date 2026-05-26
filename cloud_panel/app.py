@@ -155,9 +155,13 @@ def sync_state(tag: str, authorization: str | None = Header(None)) -> dict:
     r = db.conn().execute(
         "SELECT MAX(timestamp) AS ts FROM matches WHERE account_id = ?", (aid,),
     ).fetchone()
+    s = db.conn().execute(
+        "SELECT MAX(started_at) AS ts FROM sessions WHERE account_id = ?", (aid,),
+    ).fetchone()
     return {
         "ok": True, "known": True,
         "latest_match_ts": (r["ts"] if r and r["ts"] else 0),
+        "latest_session_started_at": (s["ts"] if s and s["ts"] else 0),
     }
 
 

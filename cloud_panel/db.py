@@ -233,14 +233,25 @@ def get_account(account_id: int) -> dict | None:
 
 def start_session(account_id: int, brawler: str, target_trophies: int,
                   start_trophies: int | None, started_at: float | None = None) -> int:
+    """Insert a session — idempotent on (account_id, started_at, brawler).
+
+    Worker may re-push the same session during gap-sync; dedup prevents
+    duplicates after a cloud DB wipe.
+    """
+    ts = started_at or time.time()
     with _lock:
+        existing = conn().execute(
+            "SELECT id FROM sessions WHERE account_id = ? AND started_at = ? AND brawler = ?",
+            (account_id, ts, brawler),
+        ).fetchone()
+        if existing:
+            return existing["id"]
         c = conn().cursor()
         c.execute(
             "INSERT INTO sessions(account_id, brawler, target_trophies, "
             "                     start_trophies, started_at) "
             "VALUES (?, ?, ?, ?, ?)",
-            (account_id, brawler, target_trophies, start_trophies,
-             started_at or time.time()),
+            (account_id, brawler, target_trophies, start_trophies, ts),
         )
         return c.lastrowid
 

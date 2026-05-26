@@ -168,21 +168,44 @@ def sync_history_to_cloud() -> None:
         state = _cloud_get(f"/api/sync/state?tag={tag}")
         if state is None:
             continue
-        since = float(state.get("latest_match_ts") or 0)
+        # ---- Sessions sync (replay missing) ----
+        session_since = float(state.get("latest_session_started_at") or 0)
         try:
-            rows = _db.conn().execute(
-                "SELECT * FROM matches WHERE account_id = ? AND timestamp > ? "
-                "ORDER BY timestamp",
-                (acc["id"], since),
+            srows = _db.conn().execute(
+                "SELECT * FROM sessions WHERE account_id = ? AND started_at > ? "
+                "ORDER BY started_at",
+                (acc["id"], session_since),
             ).fetchall()
         except Exception:
-            log.exception("history query failed for %s", tag)
+            srows = []
+        if srows:
+            log.info("syncing %d missing sessions for #%s (since=%.0f)",
+                     len(srows), tag, session_since)
+        for s in srows:
+            try:
+                _post("/api/sync/session_start", {
+                    "tag": tag, "brawler": s["brawler"],
+                    "target_trophies": s["target_trophies"],
+                    "start_trophies": s["start_trophies"],
+                    "started_at": s["started_at"],
+                })
+            except Exception:
+                pass
+        # ---- Matches sync (replay missing) ----
+        match_since = float(state.get("latest_match_ts") or 0)
+        try:
+            mrows = _db.conn().execute(
+                "SELECT * FROM matches WHERE account_id = ? AND timestamp > ? "
+                "ORDER BY timestamp",
+                (acc["id"], match_since),
+            ).fetchall()
+        except Exception:
+            log.exception("matches query failed for %s", tag)
             continue
-        if not rows:
-            continue
-        log.info("syncing %d missing matches for #%s (since ts=%.0f)",
-                 len(rows), tag, since)
-        for r in rows:
+        if mrows:
+            log.info("syncing %d missing matches for #%s (since=%.0f)",
+                     len(mrows), tag, match_since)
+        for r in mrows:
             try:
                 _post("/api/sync/match", {
                     "tag": tag, "session_id": None,
