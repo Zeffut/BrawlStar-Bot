@@ -24,6 +24,7 @@ import requests
 from PIL import Image
 
 from state_finder.main import get_state
+import device
 from utils import extract_text_and_positions
 
 log = logging.getLogger(__name__)
@@ -36,13 +37,15 @@ TAG_CHARS = set("0289PYLQGRJCUV")
 AVATAR_TAP_XY = (200, 90)
 
 
-def _adb(*args, serial: str = "emulator-5554", timeout: int = 5) -> bytes:
+def _adb(*args, serial: str | None = None, timeout: int = 5) -> bytes:
+    if serial is None: serial = device.adb_serial()
     return subprocess.check_output(
         ["adb", "-s", serial, *args], timeout=timeout
     )
 
 
-def _screencap(serial: str = "emulator-5554") -> Image.Image:
+def _screencap(serial: str | None = None) -> Image.Image:
+    if serial is None: serial = device.adb_serial()
     raw = _adb("exec-out", "screencap", "-p", serial=serial, timeout=8)
     return Image.open(io.BytesIO(raw)).convert("RGB")
 
@@ -59,7 +62,8 @@ def _wait_state(target: str, serial: str, timeout_s: float = 8.0) -> bool:
     return False
 
 
-def ensure_lobby(serial: str = "emulator-5554", max_attempts: int = 12) -> bool:
+def ensure_lobby(serial: str | None = None, max_attempts: int = 12) -> bool:
+    if serial is None: serial = device.adb_serial()
     """Bring the game to the LOBBY screen if it's anywhere else.
 
     Strategy:
@@ -131,7 +135,8 @@ def _ocr_player_tag(profile_img: Image.Image) -> Optional[str]:
     return Counter(longest).most_common(1)[0][0]
 
 
-def detect_player_tag(serial: str = "emulator-5554") -> Optional[str]:
+def detect_player_tag(serial: str | None = None) -> Optional[str]:
+    if serial is None: serial = device.adb_serial()
     """Open the profile from the lobby, OCR the tag, return to the lobby.
 
     Requires the game to be on the LOBBY screen when called. Returns

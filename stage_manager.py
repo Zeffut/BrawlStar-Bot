@@ -12,6 +12,7 @@ log = logging.getLogger(__name__)
 from state_finder.main import get_state
 from trophy_observer import TrophyObserver
 # Added resource_path to imports
+import device
 from utils import find_template_center, extract_text_and_positions, load_toml_as_dict, async_notify_user, \
     save_brawler_data, resource_path
 
@@ -165,7 +166,7 @@ class StageManager:
         sh = self.window_controller.height or 1080
         # CONTINUE button is around 90-95% of screen height, centered.
         cx, cy = sw // 2, int(sh * 0.92)
-        serial = getattr(self.window_controller, "device_serial", None) or "emulator-5554"
+        serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
         try:
             subprocess.run(
                 ["adb", "-s", serial, "shell", "input", "tap", str(cx), str(cy)],
@@ -188,7 +189,7 @@ class StageManager:
         duration_ms = 4000 if self.long_press_star_drop == "yes" else 50
         # Pick the connected ADB device serial (works for BlueStacks
         # emulator-5554 and physical phones alike).
-        serial = getattr(self.window_controller, "device_serial", None) or "emulator-5554"
+        serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
         try:
             subprocess.run(
                 ["adb", "-s", serial, "shell", "input", "swipe",

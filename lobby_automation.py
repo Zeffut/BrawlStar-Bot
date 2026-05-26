@@ -7,6 +7,7 @@ import numpy as np
 
 from stage_manager import load_image
 from typization import BrawlerName
+import device
 from utils import extract_text_and_positions, count_hsv_pixels, load_toml_as_dict, find_template_center
 
 debug = load_toml_as_dict("cfg/general_config.toml")['super_debug'] == "yes"
@@ -83,7 +84,7 @@ class LobbyAutomation:
     def _reset_to_lobby(self) -> None:
         """Press BACK a couple of times to close any open menus."""
         try:
-            serial = getattr(self.window_controller, "device_serial", None) or "emulator-5554"
+            serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
             for _ in range(2):
                 subprocess.run(
                     ["adb", "-s", serial, "shell", "input", "keyevent", "4"],

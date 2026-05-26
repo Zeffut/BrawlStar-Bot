@@ -83,6 +83,7 @@ from account_detect import detect_player_tag, fetch_owned_brawlers, fetch_accoun
 import db  # noqa: E402
 from worker_pool import POOL, BotWorker  # noqa: E402
 import alerts  # noqa: E402
+import device  # noqa: E402
 import cloud_sync  # noqa: E402
 from push_max import PushMaxStrategy  # noqa: E402
 from logging_setup import setup_logging  # noqa: E402
@@ -787,12 +788,12 @@ class TelegramBot:
                     # panel can see it and so matches get persisted.
                     account_id = db.upsert_account(
                         tag, name=profile.get("name"),
-                        device_serial="emulator-5554",
+                        device_serial=device.adb_serial(),
                         telegram_chat_id=self.chat_id,
                     )
                     self.runner._account_id = account_id
                     POOL.register(account_id, BotWorker(
-                        account_id, "emulator-5554", self.runner,
+                        account_id, device.adb_serial(), self.runner,
                     ))
                     db.log_event("account_detected",
                                  {"tag": tag, "brawlers_owned": len(brawlers)},
@@ -928,14 +929,14 @@ def _bootstrap_account(bot: "TelegramBot") -> None:
             return
         account_id = db.upsert_account(
             tag, name=profile.get("name"),
-            device_serial="emulator-5554",
+            device_serial=device.adb_serial(),
             telegram_chat_id=bot.chat_id,
         )
         cloud_sync.account(tag, profile.get("name"))
         bot.runner._account_id = account_id
         bot._account = {"tag": tag, "name": profile.get("name"), "brawlers": brawlers}
         POOL.register(account_id, BotWorker(
-            account_id, "emulator-5554", bot.runner,
+            account_id, device.adb_serial(), bot.runner,
         ))
         log.info("bootstrap: registered account #%s (%d brawlers)",
                  tag, len(brawlers))
