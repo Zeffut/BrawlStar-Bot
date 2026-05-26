@@ -159,6 +159,9 @@ async function selectAccount(id) {
   document.getElementById("detail-content").hidden = false;
   for (const li of document.querySelectorAll("#accounts li"))
     li.classList.toggle("active", parseInt(li.dataset.id) === id);
+  // Kick off the brawlers fetch immediately so the dropdown fills ASAP
+  // (in parallel with the heavier account-detail call).
+  gcLoadBrawlers();
   await refreshDetail();
 }
 
@@ -591,9 +594,22 @@ function agoLabel(s) {
 
 async function gcLoadBrawlers() {
   if (!selectedAccountId) return;
+  // Show last-known list immediately from localStorage, then update from API.
+  const cacheKey = `brawlers:${selectedAccountId}`;
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+    if (cached?.brawlers?.length) {
+      _renderBrawlers(cached.brawlers, cached.refreshed_at);
+    }
+  } catch (e) {}
   try {
     const r = await api(`/api/accounts/${selectedAccountId}/brawlers`);
-    _renderBrawlers(r.brawlers, r.refreshed_at);
+    if (r?.brawlers?.length) {
+      _renderBrawlers(r.brawlers, r.refreshed_at);
+      localStorage.setItem(cacheKey, JSON.stringify({
+        brawlers: r.brawlers, refreshed_at: r.refreshed_at,
+      }));
+    }
   } catch (e) {}
 }
 
