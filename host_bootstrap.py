@@ -299,23 +299,59 @@ def _bootstrap_linux() -> bool:
     if code != 0:
         log.warning("am start non-zero, continuing anyway")
 
-    # 4. Dismiss every popup until the lobby is visible.
-    # Brawl Stars boot sequence: Supercell logo → loading → maybe news
-    # popup → maybe season pass / battle pass → maybe daily reward →
-    # maybe quest → lobby. Be patient (90 s total).
-    log.info("dismissing popups, waiting for lobby (≤ 90 s)…")
+    # 4. Dismiss every boot popup until the lobby is visible.
+    # Brawl Stars boot: Supercell logo → loading → news / season pass /
+    # daily streak / quests popups → lobby.
+    # Use the existing close_popup.png template — same X icon on every
+    # Brawl Stars popup. Falls back to BACK key if no X found.
+    log.info("dismissing boot popups (≤ 90 s)…")
     try:
-        from account_detect import ensure_lobby
-        if ensure_lobby(serial, max_attempts=30):
-            log.info("LOBBY REACHED")
-            _alert("Bot ready — game in lobby")
-        else:
-            log.warning("could not reach lobby — manual intervention may be needed")
-            _alert("Bot started but game not in lobby after 90s — check the phone screen")
+        from state_finder.main import get_state
+        from utils import find_template_center
+        from PIL import Image
+        import cv2 as _cv2
+        import io as _io
+        TPL = _cv2.imread("state_finder/images_to_detect/close_popup.png")
+        for attempt in range(45):
+            raw = subprocess.check_output(
+                [adb, "-s", serial, "exec-out", "screencap", "-p"],
+                timeout=10,
+            )
+            try:
+                img = Image.open(_io.BytesIO(raw))
+            except Exception:
+                log.warning("screencap parse failed, retrying")
+                time.sleep(2); continue
+            state = get_state(img)
+            log.debug("boot popup loop %d: state=%s", attempt + 1, state)
+            if state == "lobby":
+                log.info("LOBBY REACHED after %d attempts", attempt + 1)
+                _alert("Bot ready — game in lobby")
+                _report("bootstrap_ready", "Linux bootstrap OK")
+                return True
+            # Find X button via template matching
+            pos = find_template_center(img, TPL) if TPL is not None else None
+            if pos:
+                x, y = pos
+                log.info("close-X found at (%d,%d), tapping", x, y)
+                subprocess.run(
+                    [adb, "-s", serial, "shell", "input", "tap", str(int(x)), str(int(y))],
+                    timeout=5,
+                )
+            else:
+                # No X visible — try BACK key (loading screens, etc.)
+                log.debug("no X visible, sending BACK")
+                subprocess.run(
+                    [adb, "-s", serial, "shell", "input", "keyevent", "4"],
+                    timeout=5,
+                )
+            time.sleep(2.0)
+        log.warning("could not reach lobby after 45 attempts")
+        _alert("Bot started but game not in lobby — check the phone screen")
     except Exception:
-        log.exception("ensure_lobby failed")
+        log.exception("popup dismiss loop crashed")
 
-    _report("bootstrap_ready", "Linux bootstrap OK")
+    _report("bootstrap_ready", "Linux bootstrap OK (lobby unreached)")
     return True
 
 
