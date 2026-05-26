@@ -27,6 +27,7 @@ from pathlib import Path
 _OUR_LOGGERS = [
     "telegram_main", "stage_manager", "account_detect",
     "panel", "panel.app", "db", "alerts", "worker_pool",
+    "host_bootstrap", "device", "cloud_sync",
     "bot",  # generic fallback
 ]
 
