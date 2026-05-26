@@ -196,6 +196,101 @@ def _cmd_health(args: dict) -> dict:
     return _collect_health()
 
 
+# ---- bot session control (proxy to local panel API) --------------
+
+LOCAL_PANEL = "http://127.0.0.1:8000"
+
+
+def _local_get(path: str) -> dict:
+    import requests
+    r = requests.get(f"{LOCAL_PANEL}{path}", timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _local_post(path: str, body: dict | None = None) -> dict:
+    import requests
+    r = requests.post(f"{LOCAL_PANEL}{path}", json=body or {}, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def _resolve_local_account_id(tag: str) -> int | None:
+    """Find the local DB account_id matching this cloud tag."""
+    try:
+        accs = _local_get("/api/accounts")
+        for a in accs:
+            if a.get("tag") == tag:
+                return a.get("id")
+    except Exception as e:
+        log.warning("could not list local accounts: %s", e)
+    return None
+
+
+def _cmd_session_push_max(args: dict) -> dict:
+    tag = args.get("tag")
+    if not tag:
+        return {"ok": False, "error": "missing tag"}
+    aid = _resolve_local_account_id(tag)
+    if aid is None:
+        return {"ok": False, "error": f"account {tag} not found locally"}
+    return _local_post(f"/api/accounts/{aid}/push_max")
+
+
+def _cmd_session_start(args: dict) -> dict:
+    """Start a single-brawler session: args = {tag, brawler, target_trophies}"""
+    tag = args.get("tag")
+    brawler = args.get("brawler")
+    target = args.get("target_trophies")
+    if not (tag and brawler and target):
+        return {"ok": False, "error": "missing tag/brawler/target_trophies"}
+    aid = _resolve_local_account_id(tag)
+    if aid is None:
+        return {"ok": False, "error": f"account {tag} not found locally"}
+    return _local_post(f"/api/accounts/{aid}/start",
+                       {"brawler": brawler, "target_trophies": int(target)})
+
+
+def _cmd_session_stop(args: dict) -> dict:
+    tag = args.get("tag")
+    force = args.get("force", False)
+    if not tag:
+        return {"ok": False, "error": "missing tag"}
+    aid = _resolve_local_account_id(tag)
+    if aid is None:
+        return {"ok": False, "error": f"account {tag} not found locally"}
+    endpoint = "forcestop" if force else "stop"
+    return _local_post(f"/api/accounts/{aid}/{endpoint}")
+
+
+def _cmd_session_state(args: dict) -> dict:
+    tag = args.get("tag")
+    if not tag:
+        return {"ok": False, "error": "missing tag"}
+    aid = _resolve_local_account_id(tag)
+    if aid is None:
+        return {"ok": False, "error": "account not found locally"}
+    try:
+        st = _local_get(f"/api/accounts/{aid}/push_max_state")
+        return {"ok": True, "state": st}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def _cmd_list_brawlers(args: dict) -> dict:
+    tag = args.get("tag")
+    if not tag:
+        return {"ok": False, "error": "missing tag"}
+    aid = _resolve_local_account_id(tag)
+    if aid is None:
+        return {"ok": False, "error": "account not found locally"}
+    try:
+        data = _local_get(f"/api/accounts/{aid}/brawlers")
+        return {"ok": True, "brawlers": data}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 # ---- dispatch table ----------------------------------------------
 
 COMMANDS: dict[str, Callable[[dict], dict]] = {
@@ -207,6 +302,12 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "adb_reconnect":      _cmd_adb_reconnect,
     "bot_restart":        _cmd_bot_restart,
     "health":             _cmd_health,
+    # bot session control
+    "session_push_max":   _cmd_session_push_max,
+    "session_start":      _cmd_session_start,
+    "session_stop":       _cmd_session_stop,
+    "session_state":      _cmd_session_state,
+    "list_brawlers":      _cmd_list_brawlers,
 }
 
 

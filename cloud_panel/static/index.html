@@ -40,10 +40,19 @@
           <div class="tag" id="acc-tag"></div>
           <div class="muted" id="acc-instance"></div>
         </div>
-        <button class="header-btn" id="open-device-console" title="Diagnostics & manual control">
-          🔧 Device console
-        </button>
+        <div class="header-actions">
+          <button class="header-btn primary" id="btn-push-max" title="Smart rotation across all owned brawlers">
+            ▶ Push Max
+          </button>
+          <button class="header-btn danger" id="btn-stop" title="Stop current session (graceful)" hidden>
+            ⏹ Stop
+          </button>
+          <button class="header-btn" id="open-device-console" title="Diagnostics & manual control">
+            🔧 Device console
+          </button>
+        </div>
       </header>
+      <div id="session-banner" class="session-banner" hidden></div>
       <section class="cards">
         <div class="card"><label>Sessions</label><div id="kpi-sessions">—</div></div>
         <div class="card"><label>Total matches</label><div id="kpi-matches">—</div></div>

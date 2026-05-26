@@ -165,6 +165,7 @@ async function refreshDetail() {
       api(`/api/accounts/${selectedAccountId}/matches?limit=200`),
     ]);
   } catch (e) { return; }
+  refreshSessionState();
 
   document.getElementById("acc-name").textContent = acc.name || acc.tag;
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
@@ -396,6 +397,77 @@ document.getElementById("refresh-screen-btn").addEventListener("click", async ()
 // Hook the device console open button (created in detail-header).
 document.addEventListener("click", e => {
   if (e.target && e.target.id === "open-device-console") openDeviceConsole();
+});
+
+// ----------------- bot session control -----------------
+
+async function refreshSessionState() {
+  if (!selectedAccountId) return;
+  const banner = document.getElementById("session-banner");
+  const btnPush = document.getElementById("btn-push-max");
+  const btnStop = document.getElementById("btn-stop");
+  try {
+    const r = await api(`/api/accounts/${selectedAccountId}/session_state`);
+    if (r.ok && r.data && r.data.ok && r.data.state && r.data.state.active) {
+      const s = r.data.state;
+      const brawlers = s.brawlers || [];
+      const total = brawlers.length;
+      const done = brawlers.filter(b => b.exhausted).length;
+      const current = brawlers.find(b => !b.exhausted);
+      banner.hidden = false;
+      banner.innerHTML = `
+        <span class="dot"></span>
+        <span><strong>Push Max running</strong> · ${current ? current.name + ' (' + current.trophies + ' 🏆)' : 'rotating'} · ${done}/${total} done${s.summary ? ' · ' + s.summary : ''}</span>
+      `;
+      btnPush.hidden = true;
+      btnStop.hidden = false;
+    } else {
+      banner.hidden = true;
+      btnPush.hidden = false;
+      btnStop.hidden = true;
+    }
+  } catch (e) {
+    banner.hidden = true;
+    btnPush.hidden = false;
+    btnStop.hidden = true;
+  }
+}
+
+async function postSession(path, body) {
+  const r = await fetch(`/api/accounts/${selectedAccountId}${path}`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: body ? JSON.stringify(body) : "{}",
+  });
+  return r.json();
+}
+
+document.getElementById("btn-push-max").addEventListener("click", async () => {
+  if (!selectedAccountId) return;
+  const btn = document.getElementById("btn-push-max");
+  btn.disabled = true; btn.textContent = "▶ Starting…";
+  try {
+    const r = await postSession("/push_max");
+    if (!r.ok || (r.data && !r.data.ok)) {
+      alert("Push Max failed: " + (r.data?.error || r.error || "unknown"));
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = "▶ Push Max";
+    refreshSessionState();
+  }
+});
+
+document.getElementById("btn-stop").addEventListener("click", async () => {
+  if (!selectedAccountId) return;
+  if (!confirm("Stop the current session?")) return;
+  const btn = document.getElementById("btn-stop");
+  btn.disabled = true; btn.textContent = "⏹ Stopping…";
+  try {
+    await postSession("/stop", {force: false});
+  } finally {
+    btn.disabled = false; btn.textContent = "⏹ Stop";
+    refreshSessionState();
+  }
 });
 
 setInterval(refreshAll, REFRESH_MS);

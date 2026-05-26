@@ -288,6 +288,60 @@ def api_instance_logs(instance_db_id: int, limit: int = 100) -> list[dict]:
     return items
 
 
+class AccountSessionPayload(BaseModel):
+    brawler: str | None = None
+    target_trophies: int | None = None
+    force: bool | None = None
+
+
+async def _cmd_for_account(account_id: int, name: str, args: dict, timeout_s: float = 15) -> dict:
+    """Send a WS command to the worker hosting this account."""
+    acc = db.get_account(account_id)
+    if not acc:
+        raise HTTPException(404, "account not found")
+    inst_id = acc.get("instance_uid") or _resolve_instance(acc.get("instance_id"))
+    if not inst_id:
+        raise HTTPException(404, "instance not found")
+    payload = {"tag": acc["tag"], **args}
+    try:
+        data = await HUB.send_command(inst_id, name, payload, timeout_s=timeout_s)
+        return {"ok": True, "data": data}
+    except ConnectionError as exc:
+        raise HTTPException(503, str(exc))
+    except TimeoutError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/accounts/{account_id}/push_max")
+async def api_account_push_max(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "session_push_max", {}, timeout_s=20)
+
+
+@app.post("/api/accounts/{account_id}/start")
+async def api_account_start(account_id: int, payload: AccountSessionPayload) -> dict:
+    if not payload.brawler or not payload.target_trophies:
+        raise HTTPException(400, "brawler and target_trophies required")
+    return await _cmd_for_account(account_id, "session_start", {
+        "brawler": payload.brawler, "target_trophies": payload.target_trophies,
+    }, timeout_s=20)
+
+
+@app.post("/api/accounts/{account_id}/stop")
+async def api_account_stop(account_id: int, payload: AccountSessionPayload | None = None) -> dict:
+    force = bool(payload.force) if payload else False
+    return await _cmd_for_account(account_id, "session_stop", {"force": force}, timeout_s=15)
+
+
+@app.get("/api/accounts/{account_id}/session_state")
+async def api_account_session_state(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "session_state", {}, timeout_s=8)
+
+
+@app.get("/api/accounts/{account_id}/brawlers")
+async def api_account_brawlers(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "list_brawlers", {}, timeout_s=8)
+
+
 @app.get("/api/instances/{instance_db_id}/health")
 def api_instance_health(instance_db_id: int) -> dict:
     inst_id = _resolve_instance(instance_db_id)
