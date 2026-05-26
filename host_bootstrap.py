@@ -141,20 +141,41 @@ def _adb(adb: str, *args, timeout: float = 30) -> tuple[int, str]:
 
 
 def _ensure_bluestacks(bs_path: str) -> bool:
+    """Launch BlueStacks if not running. Uses a one-shot scheduled task
+    so the GUI lands in the user's Console session (subprocess.Popen
+    from a process in session 0 would put it in services session 0,
+    invisible to VNC)."""
     if _is_process_running("HD-Player.exe"):
         log.info("BlueStacks already running")
         return True
-    log.info("starting BlueStacks: %s", bs_path)
-    # Use cmd `start "" "path"` to launch in the user's interactive
-    # session instead of session 0. DETACHED_PROCESS would put the GUI
-    # in the wrong session and make it invisible to the user.
-    subprocess.Popen(
-        ["cmd", "/c", "start", "", bs_path],
-        creationflags=subprocess.CREATE_NO_WINDOW,
+    log.info("BlueStacks not running — scheduling one-shot launch task")
+    # Schedule via PowerShell — Register-ScheduledTask runs as Dev,
+    # LogonType=Interactive guarantees user session.
+    ps_cmd = (
+        '$t = Register-ScheduledTask -TaskName "BotLaunchBS" '
+        '-Action (New-ScheduledTaskAction -Execute "' + bs_path + '") '
+        '-Trigger (New-ScheduledTaskTrigger -At (Get-Date).AddSeconds(3) -Once) '
+        '-Principal (New-ScheduledTaskPrincipal -UserId "Dev" '
+        '-RunLevel Limited -LogonType Interactive) -Force; '
+        'Start-Sleep 8; '
+        'Unregister-ScheduledTask -TaskName "BotLaunchBS" -Confirm:$false'
     )
-    # Give it 30 s to start the GUI, then the port wait will block until ADB is up.
-    time.sleep(30)
-    return _is_process_running("HD-Player.exe")
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
+            capture_output=True, timeout=30,
+        )
+    except Exception:
+        log.exception("scheduled-task launch failed")
+        return False
+    # Wait up to 90 s for HD-Player to actually appear.
+    for i in range(18):
+        time.sleep(5)
+        if _is_process_running("HD-Player.exe"):
+            log.info("BlueStacks running (after %d s)", (i + 1) * 5)
+            return True
+    log.error("BlueStacks never appeared after scheduled-task launch")
+    return False
 
 
 def _ensure_adb(adb: str) -> bool:
