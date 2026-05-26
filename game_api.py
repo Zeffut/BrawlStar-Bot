@@ -545,6 +545,16 @@ class GameAPI:
                     return {"ok": False, "error": f"mode '{required_mode}' auto-switch not implemented yet (only brawlball is)"}
         if brawler is None:
             brawler = self.read_current_brawler() or "shelly"
+        # Bind the local account_id so post-match hooks persist results to
+        # both the local DB and the cloud panel.
+        try:
+            import db as _db
+            accs = _db.list_accounts()
+            if accs and not self._runner._account_id:
+                self._runner._account_id = accs[0]["id"]
+                log.info("play_one_match: bound runner.account_id = %d", accs[0]["id"])
+        except Exception:
+            log.exception("could not bind account_id")
         ok, msg = self._runner.start(
             brawler=brawler,
             trophies=999999,
