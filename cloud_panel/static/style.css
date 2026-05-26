@@ -499,15 +499,34 @@ main {
   padding-left: 9px;
 }
 .account-row.selected .a-name { color: var(--primary-2); }
+.a-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .a-name {
   font-weight: 600;
   font-size: 13px;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .a-tag {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
   color: var(--muted);
+}
+.a-troph {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.a-running {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--running);
+  box-shadow: 0 0 6px var(--running);
+  flex-shrink: 0;
+  animation: pulse 2s ease-out infinite;
+  position: relative;
 }
 
 .inst-empty {

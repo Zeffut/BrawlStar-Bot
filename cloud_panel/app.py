@@ -253,7 +253,14 @@ def api_instances() -> list[dict]:
 
 @app.get("/api/accounts")
 def api_accounts(instance_id: int | None = None) -> list[dict]:
-    return db.list_accounts(instance_id)
+    accs = db.list_accounts(instance_id)
+    # Enrich with running flag + cached trophy total so sidebar can show
+    # live state without per-account roundtrips.
+    for a in accs:
+        a["session_running"] = bool(db.current_session(a["id"]))
+        brawlers, _ = db.get_account_brawlers(a["id"])
+        a["total_trophies"] = sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
+    return accs
 
 
 @app.get("/api/accounts/{account_id}")

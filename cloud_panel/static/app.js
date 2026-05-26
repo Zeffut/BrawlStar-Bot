@@ -177,9 +177,15 @@ async function refreshAll() {
         const row = document.createElement("div");
         row.className = "account-row";
         if (a.id === selectedAccountId) row.classList.add("selected");
+        const running = a.session_running ? '<span class="a-running" title="session active"></span>' : '';
+        const troph = a.total_trophies != null ? `<span class="a-troph">${a.total_trophies} 🏆</span>` : '';
         row.innerHTML = `
-          <span class="a-name">${a.name || a.tag}</span>
-          <span class="a-tag">#${a.tag}</span>
+          ${running}
+          <div class="a-main">
+            <span class="a-name">${a.name || a.tag}</span>
+            <span class="a-tag">#${a.tag}</span>
+          </div>
+          ${troph}
         `;
         row.onclick = () => selectAccount(a.id);
         acctBox.appendChild(row);
@@ -603,7 +609,9 @@ async function gcCall(method, path, body) {
 }
 
 // Floating toast notifications (bottom-right). Stack newest at the bottom.
-function showToast(text, kind) {
+// `opts`: {sticky: bool} → if true, toast never auto-dismisses (caller
+// must call .dismiss() or update via .update(text)).
+function showToast(text, kind, opts = {}) {
   if (!text) return;
   const stack = document.getElementById("toast-stack");
   if (!stack) return;
@@ -622,8 +630,15 @@ function showToast(text, kind) {
     setTimeout(() => toast.remove(), 320);
   };
   toast.querySelector(".toast-close").addEventListener("click", dismiss);
-  const delay = kind === "err" ? 10000 : kind === "run" ? 8000 : 4000;
-  setTimeout(dismiss, delay);
+  toast.dismiss = dismiss;
+  toast.update = (newText, newKind) => {
+    toast.querySelector(".toast-text").textContent = newText;
+    if (newKind) toast.className = "toast " + newKind;
+  };
+  if (!opts.sticky) {
+    const delay = kind === "err" ? 10000 : kind === "run" ? 8000 : 4000;
+    setTimeout(dismiss, delay);
+  }
   return toast;
 }
 
@@ -792,18 +807,30 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
       body: `Brawler: ${brawler || "current"} · Mode: Brawl Ball. Le bot va passer en Brawl Ball si besoin, jouer le match et revenir au lobby.`,
       confirmText: "▶ Lancer",
     }))) return;
-    gcSetResult("Match in progress (this can take 3-5 min)…", "run");
+    // Sticky toast with live elapsed counter (match takes 3-5 min).
+    const startedAt = Date.now();
+    const toast = showToast("Match starting…", "run", {sticky: true});
+    const tick = setInterval(() => {
+      const s = Math.floor((Date.now() - startedAt) / 1000);
+      const mm = String(Math.floor(s / 60)).padStart(2, "0");
+      const ss = String(s % 60).padStart(2, "0");
+      toast?.update(`Match in progress · ${mm}:${ss}`, "run");
+    }, 1000);
     try {
       const r = await gcCall("POST", "/play_one_match",
                               {brawler, timeout_s: 420, required_mode: "brawlball"});
+      clearInterval(tick);
+      toast?.dismiss();
       if (r?.ok && r.data?.ok) {
         const d = r.data;
-        gcSetResult(`Match done · brawler=${d.brawler} · W:${d.wins} L:${d.losses} D:${d.draws} · ${d.duration_s}s`, "ok");
+        showToast(`Match done · ${d.brawler} · W:${d.wins} L:${d.losses} D:${d.draws} · ${d.duration_s}s`, "ok");
       } else {
-        gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
+        showToast("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
       }
     } catch (e) {
-      gcSetResult("Error: " + e.message, "err");
+      clearInterval(tick);
+      toast?.dismiss();
+      showToast("Error: " + e.message, "err");
     }
     gcRefreshAll();
   }));
@@ -838,6 +865,15 @@ function startSSE() {
       if (acc && acc.id === selectedAccountId) gcLoadBrawlers();
     } else if (m.type === "match") {
       _prependActivity(m);
+      // Trigger brawler list refresh ~5s later (let the bot's match
+      // hook + brawlace itself catch up). Background, silent.
+      const acc = _lastAccounts.find(a => a.tag === m.tag);
+      if (acc) {
+        setTimeout(() => {
+          fetch(`/api/accounts/${acc.id}/brawlers/refresh`, {method: "POST"})
+            .catch(() => {});
+        }, 5000);
+      }
     }
   });
   _sse.addEventListener("error", () => {
