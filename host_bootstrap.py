@@ -329,7 +329,11 @@ def _bootstrap_linux() -> bool:
                 _alert("Bot ready — game in lobby")
                 _report("bootstrap_ready", "Linux bootstrap OK")
                 return True
-            # Find X button via template matching
+            # Find X button via template matching. Tap it if found.
+            # If no X is visible, we DO NOT tap blindly anywhere
+            # (avoid clicking PLAY, brawlers, or quitting the app).
+            # The state_finder might mis-detect lobby in rare cases
+            # but that's safer than the bot causing chaos.
             pos = find_template_center(img, TPL) if TPL is not None else None
             if pos:
                 x, y = pos
@@ -339,33 +343,8 @@ def _bootstrap_linux() -> bool:
                     timeout=5,
                 )
             else:
-                # No X visible — cycle through 3 strategies:
-                #   attempt%3==0 → tap center (hypercharge unlock,
-                #                    "tap to continue" screens, etc.)
-                #   attempt%3==1 → BACK key (popups, loading screens)
-                #   attempt%3==2 → tap bottom-center (CONTINUE buttons)
-                w, h = img.size
-                if attempt % 3 == 0:
-                    cx, cy = w // 2, h // 2
-                    log.debug("no X visible, tap CENTER (%d,%d)", cx, cy)
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", "input", "tap", str(cx), str(cy)],
-                        timeout=5,
-                    )
-                elif attempt % 3 == 1:
-                    log.debug("no X visible, BACK key")
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", "input", "keyevent", "4"],
-                        timeout=5,
-                    )
-                else:
-                    cx, cy = w // 2, int(h * 0.9)
-                    log.debug("no X visible, tap BOTTOM (%d,%d)", cx, cy)
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", "input", "tap", str(cx), str(cy)],
-                        timeout=5,
-                    )
-            time.sleep(2.0)
+                log.debug("no X visible — just waiting (safer than blind taps)")
+            time.sleep(2.5)
         log.warning("could not reach lobby after 45 attempts")
         _alert("Bot started but game not in lobby — check the phone screen")
     except Exception:
