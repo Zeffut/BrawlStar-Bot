@@ -339,12 +339,32 @@ def _bootstrap_linux() -> bool:
                     timeout=5,
                 )
             else:
-                # No X visible — try BACK key (loading screens, etc.)
-                log.debug("no X visible, sending BACK")
-                subprocess.run(
-                    [adb, "-s", serial, "shell", "input", "keyevent", "4"],
-                    timeout=5,
-                )
+                # No X visible — cycle through 3 strategies:
+                #   attempt%3==0 → tap center (hypercharge unlock,
+                #                    "tap to continue" screens, etc.)
+                #   attempt%3==1 → BACK key (popups, loading screens)
+                #   attempt%3==2 → tap bottom-center (CONTINUE buttons)
+                w, h = img.size
+                if attempt % 3 == 0:
+                    cx, cy = w // 2, h // 2
+                    log.debug("no X visible, tap CENTER (%d,%d)", cx, cy)
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "tap", str(cx), str(cy)],
+                        timeout=5,
+                    )
+                elif attempt % 3 == 1:
+                    log.debug("no X visible, BACK key")
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "keyevent", "4"],
+                        timeout=5,
+                    )
+                else:
+                    cx, cy = w // 2, int(h * 0.9)
+                    log.debug("no X visible, tap BOTTOM (%d,%d)", cx, cy)
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "tap", str(cx), str(cy)],
+                        timeout=5,
+                    )
             time.sleep(2.0)
         log.warning("could not reach lobby after 45 attempts")
         _alert("Bot started but game not in lobby — check the phone screen")
