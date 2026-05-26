@@ -265,16 +265,16 @@ def _cmd_health(args: dict) -> dict:
 LOCAL_PANEL = "http://127.0.0.1:8000"
 
 
-def _local_get(path: str) -> dict:
+def _local_get(path: str, timeout: float = 10) -> dict:
     import requests
-    r = requests.get(f"{LOCAL_PANEL}{path}", timeout=10)
+    r = requests.get(f"{LOCAL_PANEL}{path}", timeout=timeout)
     r.raise_for_status()
     return r.json()
 
 
-def _local_post(path: str, body: dict | None = None) -> dict:
+def _local_post(path: str, body: dict | None = None, timeout: float = 10) -> dict:
     import requests
-    r = requests.post(f"{LOCAL_PANEL}{path}", json=body or {}, timeout=10)
+    r = requests.post(f"{LOCAL_PANEL}{path}", json=body or {}, timeout=timeout)
     r.raise_for_status()
     return r.json()
 
@@ -394,10 +394,11 @@ def _cmd_game_goto_lobby(args: dict) -> dict:
 
 
 def _cmd_game_play_one_match(args: dict) -> dict:
+    timeout_s = float(args.get("timeout_s", 420))
     return _local_post("/api/game/play_one_match", {
         "brawler": args.get("brawler"),
-        "timeout_s": float(args.get("timeout_s", 420)),
-    })
+        "timeout_s": timeout_s,
+    }, timeout=timeout_s + 30)
 
 
 def _local_snapshot() -> dict | None:
