@@ -175,6 +175,45 @@ header {
   .fleet-overview { display: none; }
 }
 
+/* -------- Skeleton shimmer (loading placeholders) -------- */
+.skel {
+  display: inline-block;
+  height: 1em;
+  min-width: 40px;
+  border-radius: 4px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,.04) 25%,
+    rgba(255,255,255,.10) 50%,
+    rgba(255,255,255,.04) 75%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s ease-in-out infinite;
+  color: transparent;
+  user-select: none;
+}
+@keyframes skel-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skel.wide { min-width: 80px; }
+.skel.thin { height: .8em; min-width: 50px; }
+
+/* -------- Empty state cards -------- */
+.empty-card {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.empty-card .icon {
+  font-size: 24px;
+  display: block;
+  margin-bottom: 8px;
+  opacity: .5;
+}
+.empty-card a { color: var(--primary-2); text-decoration: none; border-bottom: 1px dotted; }
+.empty-card a:hover { border-bottom-style: solid; }
+
 /* ----------------------------------------------------------- layout */
 
 main {

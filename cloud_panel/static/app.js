@@ -105,7 +105,12 @@ async function refreshAll() {
   tree.innerHTML = "";
 
   if (instances.length === 0) {
-    tree.innerHTML = `<div class="inst-empty">No instances yet. Start a bot worker to populate.</div>`;
+    tree.innerHTML = `
+      <div class="empty-card">
+        <span class="icon">📭</span>
+        <div>No instances yet.</div>
+        <div style="margin-top:6px;font-size:11px">Start a bot worker (HP or other host) and it'll appear here within 30s.</div>
+      </div>`;
     return;
   }
 
