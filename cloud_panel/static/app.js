@@ -664,12 +664,8 @@ async function gcRefreshAll() {
   } else {
     document.getElementById("gc-state").textContent = "state: —";
   }
-  // Current brawler is not reliably extractable via OCR from the lobby
-  // (the name isn't rendered as text). We display the last brawler
-  // chosen in the dropdown instead.
-  const dropdownVal = document.getElementById("gc-brawler-select")?.value;
-  const el = document.getElementById("gc-current-brawler");
-  if (el) el.textContent = dropdownVal || "— (use dropdown)";
+  // Note: current_brawler isn't reliably OCR-able from the lobby (no
+  // text on screen). The dropdown selection is the source of truth.
   // One-shot screenshot preview per account, only the first time it's selected.
   if (!_previewFetched.has(selectedAccountId)) {
     _previewFetched.add(selectedAccountId);
