@@ -92,8 +92,17 @@ if ($pkgs -notmatch $pkgPattern) {
 }
 Log "Brawl Stars installed"
 
-& $ADB -s $ADB_HOST shell monkey -p $BS_PACKAGE -c android.intent.category.LAUNCHER 1 | Out-Null
-Log "Brawl Stars launch sent"
+# Launch Brawl Stars via BlueStacks native command (more reliable than
+# `adb shell monkey` which hangs intermittently on BS ADB transport).
+$launchProc = Start-Process -FilePath $BSTACKS `
+    -ArgumentList "--instance","Nougat32","--cmd","launchApp","--package",$BS_PACKAGE `
+    -PassThru -WindowStyle Hidden
+if (-not $launchProc.WaitForExit(30000)) {
+    Log "Brawl Stars launch timed out — killing"
+    $launchProc.Kill()
+} else {
+    Log "Brawl Stars launch sent (HD-Player launchApp)"
+}
 
 $bot = Get-Process python -ErrorAction SilentlyContinue
 if (-not $bot) {
