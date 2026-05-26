@@ -424,24 +424,10 @@ async def _run_ws_client():
                             return  # outer loop will reconnect
                         except Exception:
                             log.exception("log tail failed")
-                        # screenshot every 15s (small JPEG, fast over WS).
-                        # The UI can also request an on-demand fresh frame
-                        # via the `screenshot` command.
+                        # screenshots are 100% on-demand (user clicks → ws cmd).
+                        # No periodic push — saves CPU during matches and keeps
+                        # the bot's vision loop unaffected.
                         now = time.time()
-                        if now - last_screenshot_at >= 15:
-                            try:
-                                res = await asyncio.get_running_loop().run_in_executor(
-                                    None, _cmd_screenshot, {})
-                                await ws.send(json.dumps({
-                                    "type": "screenshot",
-                                    "jpeg_b64": res["jpeg_b64"],
-                                    "w": res["w"], "h": res["h"],
-                                }))
-                                last_screenshot_at = now
-                            except websockets.exceptions.ConnectionClosed:
-                                return
-                            except Exception as e:
-                                log.debug("screenshot push failed: %s", e)
                         # health every 30s
                         if now - last_health_at >= 30:
                             try:

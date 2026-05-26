@@ -282,12 +282,12 @@ async function refreshDevicePanel() {
   selectedInstanceForDevice = inst.id;
   document.getElementById("device-panel").hidden = false;
 
-  // Fetch health, screenshot, logs in parallel
-  const [healthRes, shotRes, logsRes] = await Promise.all([
+  // Fetch health and logs only (screenshot is on-demand via "↻ refresh now").
+  const [healthRes, logsRes] = await Promise.all([
     api(`/api/instances/${inst.id}/health`).catch(() => ({connected:false})),
-    api(`/api/instances/${inst.id}/screenshot`).catch(() => ({available:false})),
     api(`/api/instances/${inst.id}/logs?limit=120`).catch(() => []),
   ]);
+  const shotRes = {available: false};  // skip auto fetch
 
   // WS status indicator
   const wsEl = document.getElementById("ws-status");
@@ -304,12 +304,10 @@ async function refreshDevicePanel() {
   const ageEl = document.getElementById("screen-age");
   if (shotRes.available) {
     const mime = shotRes.mime || "image/png";
-    const b64 = shotRes.b64 || shotRes.png_b64;  // backward compat
+    const b64 = shotRes.b64 || shotRes.png_b64;
     screenEl.src = `data:${mime};base64,${b64}`;
-    const age = shotRes.age_s ?? 0;
-    ageEl.textContent = `last frame ${age.toFixed(1)} s ago — auto every 15s`;
-  } else {
-    ageEl.textContent = "no screenshot yet";
+  } else if (!screenEl.src) {
+    ageEl.textContent = "click ↻ refresh now to capture a frame";
   }
 
   // Health
@@ -488,12 +486,13 @@ function gcSetResult(text, kind) {
 }
 
 async function gcRefreshAll() {
+  // No automatic screenshot: capture only fires when the user clicks 📷.
+  // Reading state/trophies is cheap (no scrcpy frame copy on the bot side).
   if (!selectedAccountId) return;
-  const [stateRes, brawlerRes, trophyRes, shotRes] = await Promise.all([
+  const [stateRes, brawlerRes, trophyRes] = await Promise.all([
     gcCall("GET", "/state").catch(() => null),
     gcCall("GET", "/current_brawler").catch(() => null),
     gcCall("GET", "/trophies").catch(() => null),
-    gcCall("GET", "/screenshot").catch(() => null),
   ]);
   if (stateRes?.ok && stateRes.data?.state) {
     document.getElementById("gc-state").textContent = "state: " + stateRes.data.state;
@@ -506,10 +505,23 @@ async function gcRefreshAll() {
   if (trophyRes?.ok && trophyRes.data?.trophies != null) {
     document.getElementById("gc-trophies").textContent = trophyRes.data.trophies + " 🏆";
   }
-  if (shotRes?.ok && shotRes.data?.b64) {
-    document.getElementById("gc-screenshot").src = `data:${shotRes.data.mime};base64,${shotRes.data.b64}`;
-    document.getElementById("gc-screen-meta").textContent =
-      `${shotRes.data.w}×${shotRes.data.h}`;
+}
+
+async function gcCaptureScreenshot() {
+  if (!selectedAccountId) return;
+  const btn = document.getElementById("gc-capture");
+  btn.disabled = true; btn.textContent = "📷 capturing…";
+  try {
+    const r = await gcCall("GET", "/screenshot");
+    if (r?.ok && r.data?.b64) {
+      document.getElementById("gc-screenshot").src = `data:${r.data.mime};base64,${r.data.b64}`;
+      document.getElementById("gc-screen-meta").textContent =
+        `${r.data.w}×${r.data.h} · ${new Date().toLocaleTimeString()}`;
+    } else {
+      document.getElementById("gc-screen-meta").textContent = "capture failed";
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = "📷 capture";
   }
 }
 
@@ -539,6 +551,7 @@ async function gcRefreshBrawlers() {
 
 document.getElementById("gc-refresh-state").addEventListener("click", gcRefreshAll);
 document.getElementById("gc-refresh-brawlers").addEventListener("click", gcRefreshBrawlers);
+document.getElementById("gc-capture").addEventListener("click", gcCaptureScreenshot);
 
 document.getElementById("gc-goto-lobby").addEventListener("click", async () => {
   if (!selectedAccountId) return;

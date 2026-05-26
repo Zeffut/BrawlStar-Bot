@@ -493,13 +493,36 @@ main {
   gap: 16px;
 }
 @media (max-width: 900px) { .gc-grid { grid-template-columns: 1fr; } }
-.gc-screen img {
-  width: 100%;
+.gc-screen-frame {
+  position: relative;
   border-radius: var(--radius);
   background: #000;
-  display: block;
-  min-height: 100px;
+  overflow: hidden;
+  min-height: 180px;
 }
+.gc-screen-frame img {
+  width: 100%;
+  display: block;
+  min-height: 180px;
+}
+.gc-screen-frame img:not([src]),
+.gc-screen-frame img[src=""] { opacity: 0; }
+.gc-capture-btn {
+  position: absolute;
+  bottom: 10px; right: 10px;
+  background: rgba(0,0,0,.7);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.15);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--fast);
+}
+.gc-capture-btn:hover { background: var(--primary); border-color: var(--primary); }
+.gc-capture-btn:disabled { opacity: .5; cursor: wait; }
 .gc-meta { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
 .gc-controls {
   display: flex;
