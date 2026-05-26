@@ -499,10 +499,22 @@ async function gcCall(method, path, body) {
   return r.json();
 }
 
+let _gcResultTimer = null;
 function gcSetResult(text, kind) {
   const el = document.getElementById("gc-result");
   el.textContent = text;
   el.className = "gc-result " + (kind || "");
+  if (_gcResultTimer) { clearTimeout(_gcResultTimer); _gcResultTimer = null; }
+  // Auto-clear: ok/run after 4s, errors after 10s so the user has time to read.
+  if (!text) return;
+  const delay = kind === "err" ? 10000 : 4000;
+  _gcResultTimer = setTimeout(() => {
+    el.classList.add("fading");
+    setTimeout(() => {
+      el.textContent = "";
+      el.className = "gc-result";
+    }, 350);
+  }, delay);
 }
 
 // Tracks which accounts have already had their one-shot preview fetched
