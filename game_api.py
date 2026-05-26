@@ -172,10 +172,17 @@ class GameAPI:
         }
 
     def read_trophies(self) -> int | None:
-        """OCR the top-right trophy counter from the lobby screen."""
+        """OCR the trophy counter from the lobby screen.
+
+        Returns None if not on the lobby (any other screen has different
+        numbers at the same position).
+        """
         try:
             img = self._grab()
-            return _ocr_trophies(np.array(img))
+            arr = np.array(img)
+            if get_state(img) != "lobby":
+                return None
+            return _ocr_trophies(arr)
         except Exception as exc:
             log.warning("read_trophies(): %s", exc)
         return None
@@ -248,10 +255,12 @@ class GameAPI:
             st = get_state(img)
         except Exception:
             st = "unknown"
-        # Re-use the already-captured frame for OCR (avoid double adb).
+        # OCR trophies ONLY on the lobby screen — on other screens (end
+        # of match, brawler menu, etc) the top-left corner contains a
+        # totally different number (daily wins, brawler trophies, etc).
         trophies = None
         try:
-            if st != "unknown":
+            if st == "lobby":
                 trophies = _ocr_trophies(np.array(img))
         except Exception:
             pass
