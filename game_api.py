@@ -148,6 +148,54 @@ class GameAPI:
             "ts": round(time.time(), 2),
         }
 
+    def switch_to_brawlball(self, max_attempts: int = 3) -> bool:
+        """Open the mode selection menu and pick Brawl Ball.
+
+        From lobby:
+          1. Tap the mode banner at bottom-center -> opens mode picker
+          2. OCR for 'BRAWL BALL' / 'BRAWLBALL' tile and tap it
+          3. Back to lobby. Verify by re-reading current mode.
+        """
+        for attempt in range(max_attempts):
+            log.info("switch_to_brawlball attempt %d/%d", attempt + 1, max_attempts)
+            # 1. Ensure we're on lobby first.
+            self.goto_lobby(max_attempts=5)
+            # 2. Tap the mode banner (centered, just above PLAY button).
+            self.tap(0.55, 0.92)
+            time.sleep(1.5)
+            # 3. We should be on the mode picker. OCR for Brawl Ball tile.
+            try:
+                img = self._grab()
+                arr = np.array(img)
+                text = extract_text_and_positions(arr)
+                target = None
+                for key, val in text.items():
+                    k = key.lower().replace(" ", "").replace("-", "")
+                    if k in ("brawlball", "brawllball"):
+                        target = val.get("center")
+                        break
+                if target:
+                    h, w = arr.shape[:2]
+                    cx, cy = target
+                    log.info("found BRAWL BALL tile at (%d,%d)", cx, cy)
+                    self.tap(cx / w, cy / h)
+                    time.sleep(1.5)
+                    # 4. Check we landed somewhere sensible; back to lobby.
+                    self.goto_lobby(max_attempts=8)
+                    mode = self.read_current_mode()
+                    if mode == "brawlball":
+                        return True
+                    log.warning("post-switch mode is %r, retrying", mode)
+                else:
+                    log.warning("BRAWL BALL tile not found in mode picker OCR")
+                    self._tap_back()
+                    time.sleep(0.8)
+            except Exception as exc:
+                log.warning("switch_to_brawlball OCR failed: %s", exc)
+                self._tap_back()
+                time.sleep(0.8)
+        return False
+
     def read_current_mode(self) -> str | None:
         """OCR the current game mode shown at the bottom-center of the lobby.
 
@@ -360,10 +408,15 @@ class GameAPI:
         self.goto_lobby(max_attempts=8)
         if required_mode:
             cur_mode = self.read_current_mode()
-            if cur_mode is None:
-                return {"ok": False, "error": "could not read current mode (lobby not detected?)"}
+            log.info("mode check: current=%r required=%r", cur_mode, required_mode)
             if cur_mode != required_mode.lower():
-                return {"ok": False, "error": f"wrong mode: lobby is on '{cur_mode}', expected '{required_mode}'. Switch the mode on the phone and retry."}
+                # Currently only Brawl Ball is supported for auto-switch.
+                if required_mode.lower() == "brawlball":
+                    log.info("not on brawlball — auto-switching")
+                    if not self.switch_to_brawlball():
+                        return {"ok": False, "error": "could not switch to Brawl Ball automatically — change mode on phone and retry"}
+                else:
+                    return {"ok": False, "error": f"mode '{required_mode}' auto-switch not implemented yet (only brawlball is)"}
         if brawler is None:
             brawler = self.read_current_brawler() or "shelly"
         ok, msg = self._runner.start(

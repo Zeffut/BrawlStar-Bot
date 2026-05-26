@@ -726,17 +726,15 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
   withLoader("gc-play-one", async () => {
     if (!selectedAccountId) return;
     const brawler = document.getElementById("gc-brawler-select").value || null;
-    const requiredMode = document.getElementById("gc-mode-select").value || null;
-    const modeLabel = requiredMode ? requiredMode.toUpperCase() : "any";
     if (!(await showConfirm({
       title: "Lancer une partie ?",
-      body: `Brawler: ${brawler || "current"} · Mode requis: ${modeLabel}. Le bot vérifie le mode, lance le match et revient au lobby à la fin.`,
+      body: `Brawler: ${brawler || "current"} · Mode: Brawl Ball. Le bot va passer en Brawl Ball si besoin, jouer le match et revenir au lobby.`,
       confirmText: "▶ Lancer",
     }))) return;
     gcSetResult("Match in progress (this can take 3-5 min)…", "run");
     try {
       const r = await gcCall("POST", "/play_one_match",
-                              {brawler, timeout_s: 420, required_mode: requiredMode});
+                              {brawler, timeout_s: 420, required_mode: "brawlball"});
       if (r?.ok && r.data?.ok) {
         const d = r.data;
         gcSetResult(`Match done · brawler=${d.brawler} · W:${d.wins} L:${d.losses} D:${d.draws} · ${d.duration_s}s`, "ok");
