@@ -157,7 +157,9 @@ main {
 
 #account-detail {
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 28px 32px 80px;
+  min-width: 0;
 }
 
 /* ----------------------------------------------------------- sidebar */
@@ -459,6 +461,8 @@ main {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 18px 20px 14px;
+  min-width: 0;
+  overflow: hidden;
 }
 .chart-card h3 {
   margin: 0 0 14px;
@@ -490,6 +494,8 @@ main {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   padding: 18px 20px;
+  min-width: 0;
+  overflow-x: auto;
 }
 .list-card h3 {
   margin: 0 0 14px;
