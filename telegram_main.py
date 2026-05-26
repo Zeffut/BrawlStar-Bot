@@ -912,33 +912,54 @@ class TelegramBot:
 
 
 def _bootstrap_account(bot: "TelegramBot") -> None:
-    """Detect the account once at startup so the panel isn't empty."""
+    """Detect / load the account once at startup so the panel isn't empty.
+
+    Resolution order:
+      1. cfg/device.toml override (account_tag + account_name)
+      2. OCR-based detection via detect_player_tag()
+    """
     try:
-        tag = detect_player_tag()
-        if not tag:
-            log.info("bootstrap: no tag detected (game not in lobby?)")
-            return
-        profile = fetch_account_profile(tag)
-        brawlers = profile["brawlers"]
-        if not brawlers:
-            # Brawlace returned nothing — the OCR'd tag is almost
-            # certainly wrong. Don't pollute the DB with bogus accounts.
-            log.warning("bootstrap: tag #%s returned no brawlers from "
-                        "brawlace — likely OCR error, skipping",
-                        tag)
-            return
+        # 1. Manual override (cfg/device.toml)
+        override_tag, override_name = device.account_override()
+        if override_tag:
+            log.info("bootstrap: using account override tag=%s name=%s",
+                     override_tag, override_name)
+            tag = override_tag
+            name = override_name
+            brawlers: list[dict] = []
+            # Try brawlace for richer data, but don't block on it.
+            try:
+                profile = fetch_account_profile(tag)
+                brawlers = profile.get("brawlers") or []
+                name = profile.get("name") or name
+            except Exception:
+                log.warning("brawlace unreachable; using override values as-is")
+        else:
+            # 2. OCR-based detection
+            tag = detect_player_tag()
+            if not tag:
+                log.info("bootstrap: no tag detected (game not in lobby?)")
+                return
+            profile = fetch_account_profile(tag)
+            brawlers = profile.get("brawlers") or []
+            name = profile.get("name")
+            if not brawlers and not override_tag:
+                # OCR'd tag + no brawlace confirmation → likely wrong
+                log.warning("bootstrap: tag #%s returned no brawlers from brawlace — skipping",
+                            tag)
+                return
         account_id = db.upsert_account(
-            tag, name=profile.get("name"),
+            tag, name=name,
             device_serial=device.adb_serial(),
             telegram_chat_id=bot.chat_id,
         )
-        cloud_sync.account(tag, profile.get("name"))
+        cloud_sync.account(tag, name)
         bot.runner._account_id = account_id
-        bot._account = {"tag": tag, "name": profile.get("name"), "brawlers": brawlers}
+        bot._account = {"tag": tag, "name": name, "brawlers": brawlers}
         POOL.register(account_id, BotWorker(
             account_id, device.adb_serial(), bot.runner,
         ))
-        log.info("bootstrap: registered account #%s (%d brawlers)",
+        log.info("bootstrap: registered account #%s (%d brawlers known)",
                  tag, len(brawlers))
     except Exception:
         log.exception("bootstrap_account failed")

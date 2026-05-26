@@ -29,12 +29,13 @@ from utils import extract_text_and_positions
 
 log = logging.getLogger(__name__)
 
-# Supercell tag charset (uppercase). Used to validate OCR output.
-TAG_CHARS = set("0289PYLQGRJCUV")
+# Supercell Brawl Stars tag charset (uppercase). Brawl Stars uses a
+# broader set than Clash Royale — includes B, R, M, F, etc.
+TAG_CHARS = set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-# Avatar tap point in *native* device coordinates (works on the user's
-# BlueStacks at 2560x1440). The OS scales input.tap to device coords.
-AVATAR_TAP_XY = (200, 90)
+# Avatar tap point as a RATIO of the screen (works on any resolution).
+# The brawler avatar sits at the very top-left of the lobby.
+AVATAR_TAP_RATIO = (0.08, 0.085)  # x = 8% of width, y = 8.5% of height
 
 
 def _adb(*args, serial: str | None = None, timeout: int = 5) -> bytes:
@@ -107,32 +108,144 @@ def ensure_lobby(serial: str | None = None, max_attempts: int = 12) -> bool:
     return False
 
 
-def _ocr_player_tag(profile_img: Image.Image) -> Optional[str]:
-    """Find a `#XXXXXXX` tag in the profile screen by scanning the top-left
-    region. Returns the cleaned tag (uppercase, no `#`) or None."""
-    # Tag sits under the avatar at native y=400-450 (2560x1440 screenshots).
-    # Scan a small vertical band to be robust to layout shifts.
-    candidates: List[str] = []
-    for y0 in (390, 410, 430):
-        crop = profile_img.crop((20, y0, 600, y0 + 70))
+def _ocr_player_tag_candidates(profile_img: Image.Image, max_candidates: int = 30) -> List[str]:
+    """Return ranked candidate tags from OCR (best first). The caller
+    validates them via brawlace.com to pick the real one."""
+    w, h = profile_img.size
+    raw_candidates: list[tuple[str, bool]] = []
+    for ratio in (0.24, 0.27, 0.30, 0.32, 0.35, 0.38, 0.41):
+        y0 = int(h * ratio)
+        crop = profile_img.crop((int(w * 0.01), y0, int(w * 0.26), y0 + int(h * 0.06)))
         for key in extract_text_and_positions(np.array(crop)).keys():
+            has_hash = key.lstrip().startswith("#")
             m = re.search(r"#?([A-Za-z0-9]{5,12})", key)
             if not m:
                 continue
             raw = m.group(1).upper()
-            # OCR sometimes reads B as 8 or vice versa. Try both swaps.
-            for variant in {raw, raw.replace("B", "8"), raw.replace("8", "B")}:
+            # Don't filter on digit/alpha mix — OCR often confuses digits
+            # with letters (9→I, 2→Z, 0→O). brawlace.com validation will
+            # reject bogus candidates.
+            raw_candidates.append((raw, has_hash))
+    # Build expanded variants covering common OCR confusions.
+    # Important pairs: I↔1, O↔0, Z↔2, B↔8, B↔R, S↔5, G↔6, T↔7
+    seen: set[str] = set()
+    ranked: list[str] = []
+    def _add(t: str, hashed: bool):
+        if t in seen or not all(c in TAG_CHARS for c in t):
+            return
+        seen.add(t)
+        ranked.append(t)
+
+    # Ordered by frequency (most common OCR confusions first so the
+    # right candidate surfaces sooner).
+    PAIRS = [("I", "9"), ("9", "I"), ("I", "1"), ("1", "I"),
+             ("O", "0"), ("0", "O"), ("Z", "2"), ("2", "Z"),
+             ("R", "B"), ("B", "R"), ("B", "8"), ("8", "B"),
+             ("S", "5"), ("5", "S"), ("G", "6"), ("6", "G"),
+             ("T", "7"), ("7", "T")]
+
+    # Generate positional variants: for each position in the raw tag,
+    # find PAIRS where the current char matches and swap. Then combine
+    # up to 3 simultaneous positional swaps to cover the most common
+    # OCR misreads.
+    def swaps_at(s: str):
+        """For each position, list (idx, candidate_char) replacements."""
+        out: list[tuple[int, str]] = []
+        for i, c in enumerate(s):
+            for a, b in PAIRS:
+                if c == a:
+                    out.append((i, b))
+        return out
+
+    def apply_swaps(s: str, swap_set: list[tuple[int, str]]) -> str:
+        chars = list(s)
+        for i, ch in swap_set:
+            chars[i] = ch
+        return "".join(chars)
+
+    from itertools import combinations
+    for hashed_pass in (True, False):
+        for raw, hashed in raw_candidates:
+            if hashed != hashed_pass:
+                continue
+            _add(raw, hashed)
+            single_swaps = swaps_at(raw)
+            # 1-swap variants
+            for sw in single_swaps:
+                _add(apply_swaps(raw, [sw]), hashed)
+                if len(ranked) >= max_candidates:
+                    return ranked
+            # 2-swap combinations (at DIFFERENT positions)
+            for s1, s2 in combinations(single_swaps, 2):
+                if s1[0] == s2[0]:
+                    continue
+                _add(apply_swaps(raw, [s1, s2]), hashed)
+                if len(ranked) >= max_candidates:
+                    return ranked
+            # 3-swap combinations
+            for s1, s2, s3 in combinations(single_swaps, 3):
+                positions = {s1[0], s2[0], s3[0]}
+                if len(positions) != 3:
+                    continue
+                _add(apply_swaps(raw, [s1, s2, s3]), hashed)
+                if len(ranked) >= max_candidates:
+                    return ranked
+    return ranked[:max_candidates]
+
+
+def _ocr_player_tag(profile_img: Image.Image) -> Optional[str]:
+    """Find a `#XXXXXXX` tag in the profile screen by scanning the top-left
+    region. Returns the cleaned tag (uppercase, no `#`) or None.
+
+    The tag sits in the upper-left of the profile, just under the
+    avatar. Resolution-independent: we scan a band at 26%-42% of the
+    screen height, covering both BlueStacks (tag at ~30%) and physical
+    phones (tag at ~30% too — Brawl Stars UI is aspect-ratio adaptive).
+    """
+    w, h = profile_img.size
+    candidates: List[str] = []
+    # Scan a 10-step vertical band from 24% to 44% of height.
+    for ratio in (0.24, 0.27, 0.30, 0.32, 0.35, 0.38, 0.41):
+        y0 = int(h * ratio)
+        crop = profile_img.crop((int(w * 0.01), y0, int(w * 0.26), y0 + int(h * 0.06)))
+        for key in extract_text_and_positions(np.array(crop)).keys():
+            # Tags ALWAYS start with #. EasyOCR sometimes drops the #, so we
+            # accept both, but score #-prefixed candidates higher.
+            has_hash = key.lstrip().startswith("#")
+            m = re.search(r"#?([A-Za-z0-9]{5,12})", key)
+            if not m:
+                continue
+            raw = m.group(1).upper()
+            # Brawl Stars tags are mixed alphanumeric — reject pure-letter
+            # OCR noise (e.g. "PODDYOODIS").
+            has_digit = any(c.isdigit() for c in raw)
+            has_alpha = any(c.isalpha() for c in raw)
+            if not (has_digit and has_alpha):
+                continue
+            # Try common OCR confusions: B↔8, I↔1, O↔0, Z↔2
+            base_variants = {raw}
+            base_variants.add(raw.replace("B", "8"))
+            base_variants.add(raw.replace("I", "1"))
+            base_variants.add(raw.replace("O", "0"))
+            base_variants.add(raw.replace("Z", "2"))
+            for variant in base_variants:
                 if all(c in TAG_CHARS for c in variant):
-                    candidates.append(variant)
+                    candidates.append((variant, has_hash))
     if not candidates:
         return None
-    # OCR sometimes drops a letter (PYLV98LG9 → PYV98LG9). Among
-    # plausible candidates, prefer the LONGEST one first, then the most
-    # common at that length. Brawl Stars tags are 8-9 chars typically.
+    # Rank: prefer #-prefixed, then longer tags, then most common.
     from collections import Counter
-    max_len = max(len(c) for c in candidates)
-    longest = [c for c in candidates if len(c) == max_len]
-    return Counter(longest).most_common(1)[0][0]
+    # Group by tag string; track if any source had #.
+    by_tag: dict[str, dict] = {}
+    for tag, hashed in candidates:
+        d = by_tag.setdefault(tag, {"hashed": False, "count": 0})
+        d["hashed"] = d["hashed"] or hashed
+        d["count"] += 1
+    # Sort: hashed first, then by length (longer is better), then count.
+    ranked = sorted(by_tag.items(),
+                    key=lambda kv: (kv[1]["hashed"], len(kv[0]), kv[1]["count"]),
+                    reverse=True)
+    return ranked[0][0]
 
 
 def detect_player_tag(serial: str | None = None) -> Optional[str]:
@@ -147,19 +260,38 @@ def detect_player_tag(serial: str | None = None) -> Optional[str]:
     if not ensure_lobby(serial):
         log.warning("detect_player_tag aborted: couldn't reach lobby")
         return None
-    # 2. Tap avatar.
-    log.debug("tapping avatar at %s", AVATAR_TAP_XY)
-    _adb("shell", "input", "tap", str(AVATAR_TAP_XY[0]), str(AVATAR_TAP_XY[1]),
-         serial=serial)
-    # 3. Wait for profile screen, then OCR.
+    # 2. Tap the avatar (top-left of lobby). Coords are computed from
+    # the actual screen resolution so this works on any device.
+    lobby_img = _screencap(serial)
+    w, h = lobby_img.size
+    tap_x = int(w * AVATAR_TAP_RATIO[0])
+    tap_y = int(h * AVATAR_TAP_RATIO[1])
+    log.debug("tapping avatar at (%d, %d) on %dx%d screen", tap_x, tap_y, w, h)
+    _adb("shell", "input", "tap", str(tap_x), str(tap_y), serial=serial)
+    # 3. Wait for profile screen, then OCR candidates + validate via brawlace.
     time.sleep(2.0)
     img = _screencap(serial)
-    tag = _ocr_player_tag(img)
-    log.info("OCR'd tag: %s", tag)
-    # 4. Always try to return to lobby (BACK key).
+    candidates = _ocr_player_tag_candidates(img)
+    log.info("OCR candidates (%d): %s", len(candidates), candidates[:10])
+    # 4. Always try to return to lobby (BACK key) BEFORE network calls.
     _adb("shell", "input", "keyevent", "4", serial=serial)
     time.sleep(1.0)
-    return tag
+    # 5. Validate against brawlace.com — first candidate that returns
+    #    >0 brawlers is the real tag. Delay between requests to avoid
+    #    rate-limit (brawlace returns 403 if hit too fast).
+    for i, c in enumerate(candidates):
+        if i > 0:
+            time.sleep(0.4)
+        try:
+            profile = fetch_account_profile(c, timeout=5)
+            if profile.get("brawlers"):
+                log.info("VALIDATED tag via brawlace: #%s (%s, %d brawlers)",
+                         c, profile.get("name"), len(profile["brawlers"]))
+                return c
+        except Exception:
+            continue
+    log.warning("no OCR candidate validated via brawlace (tried %d)", len(candidates))
+    return None
 
 
 # --------------------------- brawlace scraping ---------------------------

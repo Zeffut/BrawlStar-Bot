@@ -66,3 +66,27 @@ def adb_serial() -> str:
     log.info("adb device serial resolved → %s", val)
     _cached = val
     return val
+
+
+def account_override() -> tuple[str | None, str | None]:
+    """Return (tag, name) override from cfg/device.toml if set, else (None, None).
+
+    Useful when brawlace.com (or other tag validation services) is
+    blocked by Cloudflare or unreachable. The user can hardcode their
+    tag in cfg/device.toml to skip auto-detection entirely:
+
+        serial = "22002522"
+        account_tag = "QPRCQ9BV2"
+        account_name = "zeffut5.0"
+    """
+    if not CFG_PATH.exists():
+        return None, None
+    try:
+        with CFG_PATH.open("rb") as f:
+            data = tomllib.load(f)
+        tag = (data.get("account_tag") or "").strip().lstrip("#").upper() or None
+        name = (data.get("account_name") or "").strip() or None
+        return tag, name
+    except Exception:
+        log.exception("device.toml account override read failed")
+        return None, None
