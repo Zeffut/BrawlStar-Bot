@@ -61,7 +61,7 @@ async function refreshAll() {
   for (const inst of instances) {
     const card = document.createElement("div");
     card.className = "instance-card";
-    const instAccounts = accountsByInstance[inst.instance_uid] || [];
+    const instAccounts = accountsByInstance[inst.instance_id] || [];
     const isSelected = instAccounts.some(a => a.id === selectedAccountId);
     if (isSelected) card.classList.add("selected");
 
