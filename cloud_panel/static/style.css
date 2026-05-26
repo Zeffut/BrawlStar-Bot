@@ -350,6 +350,7 @@ main {
   color: var(--muted);
   font-size: 14px;
 }
+#empty-state[hidden] { display: none; }
 
 .detail-header {
   display: flex;
