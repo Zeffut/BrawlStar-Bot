@@ -109,7 +109,23 @@ class GameAPI:
     # ---- observation ---------------------------------------------
 
     def _grab(self) -> Image.Image:
-        """Return a fresh PIL screenshot via adb (always real-time)."""
+        """Return a fresh PIL screenshot.
+
+        Priority: piggyback on the bot's shared `wc.last_frame` if it's
+        recent (<3s old) to avoid ADB contention while the bot is playing.
+        Otherwise spawn our own adb screencap.
+        """
+        try:
+            wc = self.wc
+            if wc is not None and getattr(wc, "last_frame", None) is not None:
+                age = time.time() - getattr(wc, "last_frame_time", 0)
+                if age < 3.0:
+                    import cv2
+                    # last_frame is BGR np.ndarray (from scrcpy/adb path).
+                    rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
+                    return Image.fromarray(rgb)
+        except Exception:
+            pass
         return _adb_screencap()
 
     def state(self) -> str:
