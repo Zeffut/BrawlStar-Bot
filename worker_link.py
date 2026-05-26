@@ -131,6 +131,44 @@ def _cmd_adb_reconnect(args: dict) -> dict:
     return {"ok": code == 0, "output": out.strip()[:500]}
 
 
+def _cmd_git_update(args: dict) -> dict:
+    """Pull latest from origin/main and restart the bot service.
+
+    Triggered by GitHub webhook → cloud → all workers. The git pull
+    auto-stashes local-only files (cfg/telegram.toml, cfg/device.toml,
+    cfg/cloud.toml) so they survive the update.
+    """
+    bot_dir = str(Path(__file__).resolve().parent)
+    try:
+        # Stash anything locally modified (e.g. cfg/telegram.toml with token).
+        stash = subprocess.run(["git", "stash", "push", "-u", "-m", "auto-deploy"],
+                                cwd=bot_dir, capture_output=True, text=True, timeout=10)
+        had_stash = "No local changes" not in stash.stdout
+        # Pull.
+        pull = subprocess.run(["git", "pull", "--ff-only"],
+                               cwd=bot_dir, capture_output=True, text=True, timeout=30)
+        if pull.returncode != 0:
+            # Try to restore stash on failure.
+            if had_stash:
+                subprocess.run(["git", "stash", "pop"], cwd=bot_dir, timeout=10)
+            return {"ok": False, "error": f"git pull failed: {pull.stderr[:300]}"}
+        # Restore stashed local config files.
+        if had_stash:
+            subprocess.run(["git", "stash", "pop"], cwd=bot_dir, timeout=10)
+        # Restart the bot via systemd (requires NOPASSWD sudoers rule for
+        # `systemctl restart brawlbot`). The current process WILL be killed
+        # so we reply quickly first; we use Popen + detached.
+        subprocess.Popen(
+            ["sudo", "-n", "systemctl", "restart", "brawlbot"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return {"ok": True, "sha": args.get("sha"), "msg": args.get("msg"),
+                "pull_stdout": pull.stdout[-300:]}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def _cmd_bot_restart(args: dict) -> dict:
     """Exit the bot — systemd will respawn it on Linux."""
     log.info("bot_restart requested by cloud")
@@ -361,6 +399,7 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "phone_reboot":       _cmd_phone_reboot,
     "adb_reconnect":      _cmd_adb_reconnect,
     "bot_restart":        _cmd_bot_restart,
+    "git_update":         _cmd_git_update,
     "health":             _cmd_health,
     # bot session control
     "session_push_max":   _cmd_session_push_max,

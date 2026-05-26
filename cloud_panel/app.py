@@ -8,8 +8,11 @@ Read endpoints are public on localhost; for prod exposition use Dokploy
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
+
+log = logging.getLogger(__name__)
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket
@@ -199,6 +202,60 @@ def api_account_matches(account_id: int, limit: int = 200) -> list[dict]:
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "ts": time.time(), "sse_subscribers": BUS.count}
+
+
+# ============================================================
+# GitHub webhook — auto-deploy workers on push to main
+# ============================================================
+
+
+import hmac as _hmac
+import hashlib as _hashlib
+
+GITHUB_WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+
+
+@app.post("/api/github/webhook")
+async def github_webhook(request: Request) -> dict:
+    """Receive GitHub `push` events and trigger `git_update` on every worker.
+
+    Validates X-Hub-Signature-256 (HMAC-SHA256 of body) if a secret is set.
+    """
+    body = await request.body()
+    sig = request.headers.get("X-Hub-Signature-256", "")
+    if GITHUB_WEBHOOK_SECRET:
+        expected = "sha256=" + _hmac.new(
+            GITHUB_WEBHOOK_SECRET.encode(), body, _hashlib.sha256
+        ).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            raise HTTPException(403, "bad signature")
+    event = request.headers.get("X-GitHub-Event", "")
+    if event != "push":
+        return {"ok": True, "ignored": event}
+    try:
+        payload = _json.loads(body)
+    except Exception:
+        raise HTTPException(400, "bad json")
+    ref = payload.get("ref", "")
+    if ref != "refs/heads/main":
+        return {"ok": True, "ignored_ref": ref}
+    head = payload.get("head_commit", {})
+    commit_sha = head.get("id", "")[:7]
+    commit_msg = (head.get("message", "") or "").splitlines()[0][:120]
+    log.info("github webhook: push to main %s '%s' → triggering workers", commit_sha, commit_msg)
+    # Fan-out: send git_update to every connected worker (parallel).
+    results = {}
+    for conn in HUB.list():
+        try:
+            r = await HUB.send_command(conn.instance_id, "git_update",
+                                        {"sha": commit_sha, "msg": commit_msg},
+                                        timeout_s=90)
+            results[conn.instance_id] = {"ok": True, "data": r}
+        except Exception as exc:
+            results[conn.instance_id] = {"ok": False, "error": str(exc)}
+    # Broadcast UI event so the panel reflects deploy activity.
+    BUS.publish({"type": "git_update", "sha": commit_sha, "msg": commit_msg, "results": results})
+    return {"ok": True, "sha": commit_sha, "workers": results}
 
 
 # ============================================================
