@@ -173,6 +173,7 @@ async function refreshDetail() {
   } catch (e) { return; }
   refreshSessionState();
   gcRefreshAll();
+  gcLoadBrawlers();
 
   document.getElementById("acc-name").textContent = acc.name || acc.tag;
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
@@ -539,22 +540,57 @@ async function gcCaptureScreenshot() {
   });
 }
 
+function _renderBrawlers(brawlers, refreshedAt) {
+  const sel = document.getElementById("gc-brawler-select");
+  sel.innerHTML = '<option value="">— current —</option>';
+  const sorted = (brawlers || []).slice().sort((a, b) => (b.trophies || 0) - (a.trophies || 0));
+  for (const b of sorted) {
+    const o = document.createElement("option");
+    o.value = b.name;
+    o.textContent = b.trophies != null ? `${b.name} (${b.trophies} 🏆)` : b.name;
+    sel.appendChild(o);
+  }
+  const meta = document.getElementById("gc-brawlers-meta");
+  if (meta) {
+    if (!brawlers || !brawlers.length) {
+      meta.textContent = "no brawlers cached yet";
+    } else {
+      const age = refreshedAt ? Math.round((Date.now()/1000) - refreshedAt) : null;
+      meta.textContent = `${brawlers.length} brawlers · refreshed ${age != null ? agoLabel(age) : '—'}`;
+    }
+  }
+}
+
+function agoLabel(s) {
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s/60) + "m ago";
+  if (s < 86400) return Math.floor(s/3600) + "h ago";
+  return Math.floor(s/86400) + "d ago";
+}
+
+async function gcLoadBrawlers() {
+  if (!selectedAccountId) return;
+  try {
+    const r = await api(`/api/accounts/${selectedAccountId}/brawlers`);
+    _renderBrawlers(r.brawlers, r.refreshed_at);
+  } catch (e) {}
+}
+
 async function gcRefreshBrawlers() {
   if (!selectedAccountId) return;
   await withLoader("gc-refresh-brawlers", async () => {
-    gcSetResult("Opening brawler menu and scanning… (~30 s)", "run");
-    const r = await gcCall("GET", "/brawlers?force=true");
-    if (r?.ok && r.data?.brawlers) {
-      const sel = document.getElementById("gc-brawler-select");
-      sel.innerHTML = '<option value="">— current —</option>';
-      for (const b of r.data.brawlers) {
-        const o = document.createElement("option");
-        o.value = b.name; o.textContent = b.name;
-        sel.appendChild(o);
+    gcSetResult("Refreshing brawlers via brawlace (5-15 s)…", "run");
+    try {
+      const r = await fetch(`/api/accounts/${selectedAccountId}/brawlers/refresh`, {method: "POST"});
+      const j = await r.json();
+      if (j.ok) {
+        _renderBrawlers(j.brawlers, j.refreshed_at);
+        gcSetResult(`Refreshed: ${j.brawlers.length} brawlers`, "ok");
+      } else {
+        gcSetResult("Failed: " + (j.detail || "unknown"), "err");
       }
-      gcSetResult(`Found ${r.data.brawlers.length} brawlers`, "ok");
-    } else {
-      gcSetResult("Failed: " + (r?.data?.error || r?.error || "unknown"), "err");
+    } catch (e) {
+      gcSetResult("Error: " + e.message, "err");
     }
   });
 }
@@ -610,6 +646,11 @@ function startSSE() {
     let m;
     try { m = JSON.parse(ev.data); } catch (e) { return; }
     if (m.type === "snapshot") onSnapshot(m);
+    else if (m.type === "brawlers_refreshed") {
+      // Reload brawlers list if the refreshed account is selected.
+      const acc = _lastAccounts.find(a => a.id === m.account_id);
+      if (acc && acc.id === selectedAccountId) gcLoadBrawlers();
+    }
   });
   _sse.addEventListener("error", () => {
     // EventSource auto-reconnects by itself, just log.

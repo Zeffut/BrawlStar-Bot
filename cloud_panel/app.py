@@ -269,21 +269,13 @@ _BRAWLACE_NAME_RE = _re.compile(
 )
 _FLARESOLVERR_URL = os.environ.get("FLARESOLVERR_URL", "http://flaresolverr:8191/v1")
 
-_PROFILE_CACHE: dict[str, tuple[float, dict]] = {}
-_PROFILE_TTL = 600  # 10 min
+def _fetch_profile_from_brawlace(tag: str) -> dict:
+    """Raw fetch via flaresolverr. Returns {name, brawlers:[...]}.
 
-
-@app.get("/api/util/brawler_profile/{tag}")
-def util_brawler_profile(tag: str) -> dict:
-    """Return {name, brawlers:[{name,power,trophies}]} for the given tag.
-
-    Goes through flaresolverr to bypass Cloudflare. Cached 10 min.
+    Raises HTTPException on upstream failure.
     """
     import urllib.request, json as _json
     tag = tag.lstrip("#").upper()
-    cached = _PROFILE_CACHE.get(tag)
-    if cached and (time.time() - cached[0]) < _PROFILE_TTL:
-        return {"ok": True, "cached": True, **cached[1]}
     payload = _json.dumps({
         "cmd": "request.get",
         "url": f"https://brawlace.com/players/{tag}",
@@ -311,9 +303,91 @@ def util_brawler_profile(tag: str) -> dict:
             "power": int(power),
             "trophies": int(trophies),
         })
-    result = {"name": name, "brawlers": brawlers}
-    _PROFILE_CACHE[tag] = (time.time(), result)
-    return {"ok": True, "cached": False, **result}
+    return {"name": name, "brawlers": brawlers}
+
+
+@app.get("/api/util/brawler_profile/{tag}")
+def util_brawler_profile(tag: str) -> dict:
+    """Direct scrape (used only by the worker on tag validation).
+
+    The browser should NOT call this — it reads from the DB via
+    /api/accounts/{id}/brawlers.
+    """
+    return {"ok": True, **_fetch_profile_from_brawlace(tag)}
+
+
+# ---- DB-backed account brawlers (preferred path) ------------------
+
+
+@app.get("/api/accounts/{account_id}/brawlers")
+def api_account_brawlers(account_id: int) -> dict:
+    """Return brawlers cached in the cloud DB. Instant, no upstream call.
+
+    Includes the age of the data so the UI can show staleness.
+    """
+    brawlers, refreshed_at = db.get_account_brawlers(account_id)
+    return {
+        "brawlers": brawlers,
+        "refreshed_at": refreshed_at,
+        "age_s": (time.time() - refreshed_at) if refreshed_at else None,
+    }
+
+
+@app.post("/api/accounts/{account_id}/brawlers/refresh")
+def api_account_brawlers_refresh(account_id: int) -> dict:
+    """Manual refresh — pulls brawlace via flaresolverr, persists, returns."""
+    acc = db.get_account(account_id)
+    if not acc:
+        raise HTTPException(404, "account not found")
+    profile = _fetch_profile_from_brawlace(acc["tag"])
+    if profile.get("brawlers"):
+        db.set_account_brawlers(account_id, profile["brawlers"])
+    return {"ok": True, "brawlers": profile.get("brawlers", []), "refreshed_at": time.time()}
+
+
+# ---- background refresher -----------------------------------------
+
+import asyncio as _asyncio2  # already imported as asyncio earlier, alias to avoid shadowing
+import logging as _logging
+_refresh_log = _logging.getLogger("brawler_refresher")
+
+REFRESH_INTERVAL_S = 3600       # rescan each account at most once per hour
+REFRESH_STALE_AFTER_S = 3600    # consider data stale after 1h
+REFRESH_BATCH_PAUSE_S = 5       # gap between requests so flaresolverr isn't hammered
+
+
+async def _brawlers_refresh_loop():
+    await _asyncio2.sleep(20)  # give workers time to register
+    while True:
+        try:
+            stale = db.accounts_needing_refresh(REFRESH_STALE_AFTER_S)
+            for acc in stale:
+                tag = acc["tag"]
+                try:
+                    profile = await _asyncio2.get_running_loop().run_in_executor(
+                        None, _fetch_profile_from_brawlace, tag)
+                    if profile.get("brawlers"):
+                        db.set_account_brawlers(acc["id"], profile["brawlers"])
+                        _refresh_log.info("refreshed brawlers for #%s (%d)",
+                                          tag, len(profile["brawlers"]))
+                        # Push event to live SSE subscribers.
+                        BUS.publish({
+                            "type": "brawlers_refreshed",
+                            "account_id": acc["id"],
+                            "tag": tag,
+                            "count": len(profile["brawlers"]),
+                        })
+                except Exception as exc:
+                    _refresh_log.warning("refresh #%s failed: %s", tag, exc)
+                await _asyncio2.sleep(REFRESH_BATCH_PAUSE_S)
+        except Exception:
+            _refresh_log.exception("refresh loop iteration crashed")
+        await _asyncio2.sleep(60)  # check every minute for staleness
+
+
+@app.on_event("startup")
+async def _start_brawlers_refresher() -> None:
+    _asyncio2.create_task(_brawlers_refresh_loop())
 
 
 # ============================================================
@@ -453,11 +527,6 @@ async def api_account_stop(account_id: int, payload: AccountSessionPayload | Non
 @app.get("/api/accounts/{account_id}/session_state")
 async def api_account_session_state(account_id: int) -> dict:
     return await _cmd_for_account(account_id, "session_state", {}, timeout_s=8)
-
-
-@app.get("/api/accounts/{account_id}/brawlers")
-async def api_account_brawlers(account_id: int) -> dict:
-    return await _cmd_for_account(account_id, "list_brawlers", {}, timeout_s=8)
 
 
 # -------- Game API proxies (per-account, fine-grained) ---------

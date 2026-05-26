@@ -39,12 +39,14 @@ CREATE TABLE IF NOT EXISTS instances (
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    instance_id     INTEGER NOT NULL REFERENCES instances(id),
-    tag             TEXT NOT NULL,
-    name            TEXT,
-    created_at      REAL NOT NULL,
-    last_seen_at    REAL NOT NULL,
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    instance_id           INTEGER NOT NULL REFERENCES instances(id),
+    tag                   TEXT NOT NULL,
+    name                  TEXT,
+    created_at            REAL NOT NULL,
+    last_seen_at          REAL NOT NULL,
+    brawlers_json         TEXT,
+    brawlers_refreshed_at REAL,
     UNIQUE(instance_id, tag)
 );
 
@@ -90,6 +92,50 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);
 def init() -> None:
     with _lock:
         conn().executescript(SCHEMA)
+        # Lightweight migration: add brawlers columns if missing.
+        c = conn().cursor()
+        existing = {r["name"] for r in c.execute("PRAGMA table_info(accounts)").fetchall()}
+        if "brawlers_json" not in existing:
+            c.execute("ALTER TABLE accounts ADD COLUMN brawlers_json TEXT")
+        if "brawlers_refreshed_at" not in existing:
+            c.execute("ALTER TABLE accounts ADD COLUMN brawlers_refreshed_at REAL")
+
+
+def set_account_brawlers(account_id: int, brawlers: list[dict]) -> None:
+    with _lock:
+        conn().execute(
+            "UPDATE accounts SET brawlers_json = ?, brawlers_refreshed_at = ? WHERE id = ?",
+            (json.dumps(brawlers), time.time(), account_id),
+        )
+
+
+def get_account_brawlers(account_id: int) -> tuple[list[dict], float | None]:
+    with _lock:
+        r = conn().execute(
+            "SELECT brawlers_json, brawlers_refreshed_at FROM accounts WHERE id = ?",
+            (account_id,),
+        ).fetchone()
+    if not r or not r["brawlers_json"]:
+        return [], None
+    try:
+        return json.loads(r["brawlers_json"]), r["brawlers_refreshed_at"]
+    except Exception:
+        return [], None
+
+
+def accounts_needing_refresh(stale_after_s: float) -> list[dict]:
+    """Return accounts whose brawlers cache is older than stale_after_s
+    (or never fetched). Used by the background refresher."""
+    cutoff = time.time() - stale_after_s
+    with _lock:
+        rows = conn().execute(
+            "SELECT a.id, a.tag, a.brawlers_refreshed_at "
+            "FROM accounts a "
+            "WHERE a.brawlers_refreshed_at IS NULL OR a.brawlers_refreshed_at < ? "
+            "ORDER BY a.brawlers_refreshed_at IS NOT NULL, a.brawlers_refreshed_at",
+            (cutoff,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # --------------------------------------------------------- instances
