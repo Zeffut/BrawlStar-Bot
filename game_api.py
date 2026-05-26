@@ -148,6 +148,38 @@ class GameAPI:
             "ts": round(time.time(), 2),
         }
 
+    def read_current_mode(self) -> str | None:
+        """OCR the current game mode shown at the bottom-center of the lobby.
+
+        Returns a normalized mode name (e.g. "brawlball", "showdown",
+        "gemgrab"). Returns None if not detectable.
+        """
+        try:
+            img = self._grab()
+            arr = np.array(img)
+            h, w = arr.shape[:2]
+            # Mode banner sits at the bottom-center, just above the PLAY button.
+            crop = arr[int(h * 0.84):int(h * 0.96), int(w * 0.40):int(w * 0.70)]
+            text = extract_text_and_positions(crop)
+            joined = " ".join(text.keys()).lower()
+            # Common French / English mode keywords.
+            modes = {
+                "brawlball": ["brawlball", "brawl ball", "brawl-ball", "bal de"],
+                "showdown": ["showdown", "survie"],
+                "gemgrab": ["gem grab", "rafle de gemmes", "razzia"],
+                "bounty": ["bounty", "prime"],
+                "heist": ["heist", "braquage"],
+                "knockout": ["knockout", "ko"],
+                "duels": ["duel"],
+                "hotzone": ["hot zone", "zone"],
+            }
+            for canon, kws in modes.items():
+                if any(k in joined for k in kws):
+                    return canon
+        except Exception as exc:
+            log.warning("read_current_mode(): %s", exc)
+        return None
+
     def read_current_brawler(self) -> str | None:
         """OCR the brawler name shown above the play button in lobby."""
         try:
@@ -167,23 +199,62 @@ class GameAPI:
 
     # ---- navigation ----------------------------------------------
 
-    def goto_lobby(self, max_attempts: int = 6) -> bool:
-        """Close popups / dialogs and try to reach the lobby."""
-        for _ in range(max_attempts):
+    def goto_lobby(self, max_attempts: int = 20) -> bool:
+        """Aggressively close everything and reach the lobby.
+
+        Tries multiple dismissal strategies per attempt: tap likely
+        CONTINUE buttons (center-bottom, bottom-right), long-press for
+        star drops, BACK key, OK button. Loops until lobby or max_attempts.
+        """
+        last_state = None
+        same_state_count = 0
+        for i in range(max_attempts):
             st = self.state()
             if st == "lobby":
                 return True
+            # Track how long we've been stuck on the same screen.
+            if st == last_state:
+                same_state_count += 1
+            else:
+                same_state_count = 0
+                last_state = st
+            # State-specific dismiss strategies.
             if st in ("popup", "shop", "brawler_selection"):
                 self._tap_back()
-                time.sleep(0.8)
-                continue
-            if st in ("star_drop", "trophy_reward", "end"):
-                # Tap center-bottom CONTINUE.
-                self.tap(0.5, 0.92)
-                time.sleep(1.0)
-                continue
-            time.sleep(0.6)
+            elif st == "star_drop":
+                # TOUCHEZ ET MAINTENEZ: long-press center for 4s.
+                self._long_press(0.5, 0.5, 4000)
+            elif st in ("end", "trophy_reward"):
+                # Try several candidate locations for CONTINUE button.
+                self.tap(0.92, 0.94)   # bottom-right (Continuer)
+                time.sleep(0.4)
+                self.tap(0.5, 0.93)    # center-bottom (Continue)
+            else:
+                # Unknown state: try the universal dismiss sequence.
+                self.tap(0.92, 0.94)
+                time.sleep(0.3)
+                self.tap(0.5, 0.93)
+                if same_state_count >= 2:
+                    self._tap_back()
+                if same_state_count >= 4:
+                    # Long-press in case there's a hidden tap-and-hold.
+                    self._long_press(0.5, 0.5, 4000)
+            time.sleep(1.2)
         return self.state() == "lobby"
+
+    def _long_press(self, x_ratio: float, y_ratio: float, duration_ms: int) -> None:
+        if not self.wc.width or not self.wc.height:
+            self.wc.screenshot()
+        x = int(x_ratio * self.wc.width)
+        y = int(y_ratio * self.wc.height)
+        try:
+            subprocess.run(
+                ["adb", "-s", device.adb_serial(), "shell", "input", "swipe",
+                 str(x), str(y), str(x), str(y), str(duration_ms)],
+                timeout=duration_ms / 1000 + 3, check=False,
+            )
+        except Exception:
+            pass
 
     def _tap_back(self) -> None:
         serial = device.adb_serial()
@@ -272,16 +343,27 @@ class GameAPI:
 
     # ---- match playing -------------------------------------------
 
-    def play_one_match(self, brawler: str | None = None, timeout_s: float = 420) -> dict:
+    def play_one_match(self, brawler: str | None = None, timeout_s: float = 420,
+                        required_mode: str | None = None) -> dict:
         """Play one match end-to-end, return result.
 
-        Delegates to the running BotRunner with mode='single' and
-        max_matches=1.
+        If `required_mode` is set, verify the lobby is on that mode and
+        abort if it isn't (no auto-switch yet — the user can change mode
+        on the phone manually).
+        Delegates to the running BotRunner with mode='single' and max_matches=1.
         """
         if self._runner is None:
             return {"ok": False, "error": "runner not bound"}
         if self._runner.is_running():
             return {"ok": False, "error": "a session is already running"}
+        # Ensure we're on the lobby before checking mode (dismiss popups).
+        self.goto_lobby(max_attempts=8)
+        if required_mode:
+            cur_mode = self.read_current_mode()
+            if cur_mode is None:
+                return {"ok": False, "error": "could not read current mode (lobby not detected?)"}
+            if cur_mode != required_mode.lower():
+                return {"ok": False, "error": f"wrong mode: lobby is on '{cur_mode}', expected '{required_mode}'. Switch the mode on the phone and retry."}
         if brawler is None:
             brawler = self.read_current_brawler() or "shelly"
         ok, msg = self._runner.start(
@@ -300,6 +382,12 @@ class GameAPI:
         if self._runner.is_running():
             self._runner.force_stop()
             return {"ok": False, "error": "match timeout"}
+        # Force return to lobby — dismiss any reward / star drop / credits
+        # screens that the runner left behind.
+        try:
+            self.goto_lobby(max_attempts=20)
+        except Exception:
+            log.exception("post-match goto_lobby failed")
         # Read last match result from runner stats.
         return {
             "ok": True,

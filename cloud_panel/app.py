@@ -648,14 +648,21 @@ async def api_account_game_goto_lobby(account_id: int) -> dict:
 class GamePlayOneMatchPayload(BaseModel):
     brawler: str | None = None
     timeout_s: float = 420
+    required_mode: str | None = None
 
 
 @app.post("/api/accounts/{account_id}/game/play_one_match")
 async def api_account_game_play_one_match(account_id: int, payload: GamePlayOneMatchPayload) -> dict:
     # WS timeout = match timeout + 30s slack
     return await _cmd_for_account(account_id, "game_play_one_match",
-                                   {"brawler": payload.brawler, "timeout_s": payload.timeout_s},
+                                   {"brawler": payload.brawler, "timeout_s": payload.timeout_s,
+                                    "required_mode": payload.required_mode},
                                    timeout_s=payload.timeout_s + 30)
+
+
+@app.get("/api/accounts/{account_id}/game/current_mode")
+async def api_account_game_current_mode(account_id: int) -> dict:
+    return await _cmd_for_account(account_id, "game_current_mode", {}, timeout_s=15)
 
 
 @app.get("/api/instances/{instance_db_id}/health")

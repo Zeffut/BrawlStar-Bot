@@ -398,7 +398,12 @@ def _cmd_game_play_one_match(args: dict) -> dict:
     return _local_post("/api/game/play_one_match", {
         "brawler": args.get("brawler"),
         "timeout_s": timeout_s,
+        "required_mode": args.get("required_mode"),
     }, timeout=timeout_s + 30)
+
+
+def _cmd_game_current_mode(args: dict) -> dict:
+    return _local_get("/api/game/current_mode")
 
 
 def _local_snapshot() -> dict | None:
@@ -444,6 +449,7 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "game_tap":              _cmd_game_tap,
     "game_goto_lobby":       _cmd_game_goto_lobby,
     "game_play_one_match":   _cmd_game_play_one_match,
+    "game_current_mode":     _cmd_game_current_mode,
 }
 
 

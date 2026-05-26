@@ -205,6 +205,30 @@ class WindowController:
     def click(self, x, y, delay=0.05, already_include_ratio=True):
         if not already_include_ratio:
             x, y = x * self.width_ratio, y * self.height_ratio
+        # Prefer adb shell input tap (works even when scrcpy.control is
+        # broken). For long presses (delay > 0.1) use input swipe with
+        # same start/end + duration in ms.
+        import subprocess
+        import device as _device
+        serial = _device.adb_serial()
+        try:
+            if delay > 0.1:
+                ms = int(delay * 1000)
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "input", "swipe",
+                     str(int(x)), str(int(y)), str(int(x)), str(int(y)), str(ms)],
+                    timeout=delay + 3, check=False,
+                )
+            else:
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "input", "tap",
+                     str(int(x)), str(int(y))],
+                    timeout=3, check=False,
+                )
+            return
+        except Exception:
+            pass
+        # Fallback to scrcpy if adb fails (e.g. device unplugged).
         self.touch_down(x, y, pointer_id=self.PID_ATTACK)
         time.sleep(delay)
         self.touch_up(x, y, pointer_id=self.PID_ATTACK)

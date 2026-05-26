@@ -388,9 +388,18 @@ async def game_goto_lobby() -> dict:
 class PlayMatchPayload(BaseModel):
     brawler: str | None = None
     timeout_s: float = 420
+    required_mode: str | None = None
 
 
 @app.post("/api/game/play_one_match")
 async def game_play_one_match(payload: PlayMatchPayload) -> dict:
     return await asyncio.get_event_loop().run_in_executor(
-        None, lambda: _game().play_one_match(brawler=payload.brawler, timeout_s=payload.timeout_s))
+        None, lambda: _game().play_one_match(
+            brawler=payload.brawler, timeout_s=payload.timeout_s,
+            required_mode=payload.required_mode))
+
+
+@app.get("/api/game/current_mode")
+async def game_current_mode() -> dict:
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: {"mode": _game().read_current_mode()})
