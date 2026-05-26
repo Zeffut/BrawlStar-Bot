@@ -24,51 +24,118 @@ const ago = ts => {
 const deltaClass = n => n>0 ? "delta-pos" : n<0 ? "delta-neg" : "";
 
 async function refreshAll() {
-  let instances = [], accounts = [];
+  let instances = [], accounts = [], healths = {};
   try {
     [instances, accounts] = await Promise.all([
       api("/api/instances"),
-      api(selectedInstanceId ? `/api/accounts?instance_id=${selectedInstanceId}` : "/api/accounts"),
+      api("/api/accounts"),
     ]);
+    // Fetch live health/worker info for each instance (parallel)
+    const hs = await Promise.all(instances.map(i =>
+      api(`/api/instances/${i.id}/health`).catch(() => ({connected: false}))
+    ));
+    instances.forEach((i, idx) => { healths[i.id] = hs[idx]; });
   } catch (e) { return; }
 
+  const online = instances.filter(i => i.fresh).length;
+  const totalAccounts = accounts.length;
   document.getElementById("fleet-summary").textContent =
-    `${instances.filter(i=>i.fresh).length} / ${instances.length} instances online · ${accounts.length} accounts`;
+    `${online}/${instances.length} online · ${totalAccounts} accounts`;
+  document.getElementById("sidebar-meta").textContent =
+    `${online}/${instances.length}`;
 
-  // Instances sidebar
-  const ul = document.getElementById("instances");
-  ul.innerHTML = "";
-  const allItem = document.createElement("li");
-  allItem.className = "instance-row" + (selectedInstanceId === null ? " active" : "");
-  allItem.innerHTML = `<span class="status-dot running"></span><span class="name">All</span>`;
-  allItem.onclick = () => { selectedInstanceId = null; refreshAll(); };
-  ul.appendChild(allItem);
-  for (const inst of instances) {
-    const li = document.createElement("li");
-    li.className = "instance-row" + (inst.id === selectedInstanceId ? " active" : "");
-    li.innerHTML = `
-      <span class="status-dot ${inst.fresh ? 'running' : 'stopped'}"></span>
-      <div>
-        <div class="name">${inst.name || inst.instance_id}</div>
-        <div class="meta">${inst.accounts_count} accounts · ${ago(inst.last_seen_at)}</div>
-      </div>`;
-    li.onclick = () => { selectedInstanceId = inst.id; refreshAll(); };
-    ul.appendChild(li);
-  }
-
-  // Accounts sidebar
-  const ulA = document.getElementById("accounts");
-  ulA.innerHTML = "";
+  // Build a tree: instances → accounts
+  const accountsByInstance = {};
   for (const a of accounts) {
-    const li = document.createElement("li");
-    li.dataset.id = a.id;
-    if (a.id === selectedAccountId) li.classList.add("active");
-    li.innerHTML = `
-      <div class="name">${a.name || a.tag}</div>
-      <div class="meta">#${a.tag} · ${a.instance_name || a.instance_uid}</div>`;
-    li.onclick = () => selectAccount(a.id);
-    ulA.appendChild(li);
+    (accountsByInstance[a.instance_uid] ||= []).push(a);
   }
+
+  const tree = document.getElementById("instances-tree");
+  tree.innerHTML = "";
+
+  if (instances.length === 0) {
+    tree.innerHTML = `<div class="inst-empty">No instances yet. Start a bot worker to populate.</div>`;
+    return;
+  }
+
+  for (const inst of instances) {
+    const card = document.createElement("div");
+    card.className = "instance-card";
+    const instAccounts = accountsByInstance[inst.instance_uid] || [];
+    const isSelected = instAccounts.some(a => a.id === selectedAccountId);
+    if (isSelected) card.classList.add("selected");
+
+    const health = healths[inst.id] || {};
+    const liveBrawl = health.brawlstars_pid ? "running" : "off";
+    const battery = health.battery != null ? `${health.battery}%` : "—";
+    const ramFree = health.ram_free_mb != null ? `${Math.round(health.ram_free_mb/1024*10)/10} GB` : "—";
+
+    // Head
+    const head = document.createElement("div");
+    head.className = "instance-head";
+    head.innerHTML = `
+      <span class="inst-dot ${inst.fresh ? 'online' : ''}"></span>
+      <div class="inst-main">
+        <div class="inst-name">${inst.name || inst.instance_id}</div>
+        <div class="inst-id">${inst.instance_id} · ${ago(inst.last_seen_at)}</div>
+      </div>
+      <span class="inst-status-pill ${inst.fresh ? 'online' : ''}">
+        ${inst.fresh ? 'online' : 'offline'}
+      </span>
+    `;
+    card.appendChild(head);
+
+    // Activity (only if WS connected)
+    if (health.connected) {
+      const act = document.createElement("div");
+      act.className = "inst-activity";
+      act.innerHTML = `
+        <div class="inst-activity-row">
+          <span class="label">📱 ${health.model || 'device'}</span>
+          <span class="value">${health.android ? 'Android ' + health.android : ''}</span>
+        </div>
+        <div class="inst-activity-row">
+          <span class="label">🔋 Battery</span>
+          <span class="value">${battery}</span>
+        </div>
+        <div class="inst-activity-row">
+          <span class="label">🎮 Brawl Stars</span>
+          <span class="value ${liveBrawl === 'running' ? 'delta-pos' : ''}">${liveBrawl}</span>
+        </div>
+        <div class="inst-activity-row">
+          <span class="label">🧠 RAM free</span>
+          <span class="value">${ramFree}</span>
+        </div>
+      `;
+      card.appendChild(act);
+    }
+
+    // Accounts list
+    if (instAccounts.length) {
+      const acctBox = document.createElement("div");
+      acctBox.className = "inst-accounts";
+      for (const a of instAccounts) {
+        const row = document.createElement("div");
+        row.className = "account-row";
+        if (a.id === selectedAccountId) row.classList.add("selected");
+        row.innerHTML = `
+          <span class="a-name">${a.name || a.tag}</span>
+          <span class="a-tag">#${a.tag}</span>
+        `;
+        row.onclick = () => selectAccount(a.id);
+        acctBox.appendChild(row);
+      }
+      card.appendChild(acctBox);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "inst-empty";
+      empty.textContent = "no account detected yet";
+      card.appendChild(empty);
+    }
+
+    tree.appendChild(card);
+  }
+
   if (!selectedAccountId && accounts.length) selectAccount(accounts[0].id);
 }
 
