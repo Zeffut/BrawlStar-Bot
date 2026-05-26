@@ -36,6 +36,10 @@ log = logging.getLogger(__name__)
 _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
+# Battery gate thresholds (configurable later via cfg).
+BATTERY_LOW_PCT = 30      # stop grinding below this
+BATTERY_RESUME_PCT = 75   # resume grinding once above this
+
 
 def _is_brawlball_label(s: str) -> bool:
     """Fuzzy match for the BRAWL BALL tile label.
@@ -176,6 +180,67 @@ class GameAPI:
             log.warning("read_trophies(): %s", exc)
         return None
 
+    def battery_status(self) -> dict:
+        """Read battery level + charging state via adb dumpsys battery."""
+        try:
+            out = subprocess.run(
+                ["adb", "-s", device.adb_serial(), "shell", "dumpsys", "battery"],
+                capture_output=True, text=True, timeout=5, check=False,
+            ).stdout
+            level = None
+            charging = None
+            for line in out.splitlines():
+                line = line.strip()
+                if line.startswith("level:"):
+                    try: level = int(line.split(":", 1)[1].strip())
+                    except Exception: pass
+                elif line.startswith("status:"):
+                    # 1=unknown 2=charging 3=discharging 4=not-charging 5=full
+                    try: charging = int(line.split(":", 1)[1].strip()) in (2, 5)
+                    except Exception: pass
+            return {"level": level, "charging": charging}
+        except Exception as exc:
+            log.warning("battery_status: %s", exc)
+            return {"level": None, "charging": None}
+
+    def can_play(self) -> tuple[bool, str]:
+        """Return (ok, reason) — refuses to play if battery is too low.
+
+        Rule: if level < LOW_PCT and not charging, refuse.
+              Once paused, only resume when level >= RESUME_PCT.
+        """
+        bat = self.battery_status()
+        lvl, chg = bat.get("level"), bat.get("charging")
+        if lvl is None:
+            return True, "battery level unknown — proceeding"
+        if chg and lvl < BATTERY_RESUME_PCT and getattr(self, "_battery_paused", False):
+            return False, f"charging ({lvl}%, will resume at {BATTERY_RESUME_PCT}%)"
+        if lvl < BATTERY_LOW_PCT and not chg:
+            self._battery_paused = True
+            return False, f"battery too low ({lvl}%) — plug in, will resume at {BATTERY_RESUME_PCT}%"
+        if lvl >= BATTERY_RESUME_PCT:
+            self._battery_paused = False
+        return True, f"battery OK ({lvl}%{', charging' if chg else ''})"
+
+    def wait_for_battery(self, max_wait_s: float = 3600, poll_s: float = 60) -> bool:
+        """Block until battery is OK to play (or max_wait_s passes).
+
+        Used by grind loops (push_max, repeated play_one_match) to pause
+        when battery drops too low and auto-resume when it recovers.
+        """
+        ok, reason = self.can_play()
+        if ok:
+            return True
+        log.info("battery gate: %s — pausing up to %ds", reason, max_wait_s)
+        deadline = time.time() + max_wait_s
+        while time.time() < deadline:
+            time.sleep(poll_s)
+            ok, reason = self.can_play()
+            log.info("battery gate check: %s", reason)
+            if ok:
+                return True
+        return False
+
     def snapshot(self) -> dict:
         """Return a lightweight observation snapshot (no screenshot)."""
         try:
@@ -190,9 +255,13 @@ class GameAPI:
                 trophies = _ocr_trophies(np.array(img))
         except Exception:
             pass
+        bat = self.battery_status()
         return {
             "state": st,
             "trophies": trophies,
+            "battery_pct": bat.get("level"),
+            "battery_charging": bat.get("charging"),
+            "battery_paused": getattr(self, "_battery_paused", False),
             "ts": round(time.time(), 2),
         }
 
@@ -457,6 +526,10 @@ class GameAPI:
             return {"ok": False, "error": "runner not bound"}
         if self._runner.is_running():
             return {"ok": False, "error": "a session is already running"}
+        # Battery gate — refuse to play if too low (plug in to resume).
+        ok_bat, bat_reason = self.can_play()
+        if not ok_bat:
+            return {"ok": False, "error": bat_reason}
         # Ensure we're on the lobby before checking mode (dismiss popups).
         self.goto_lobby(max_attempts=8)
         if required_mode:

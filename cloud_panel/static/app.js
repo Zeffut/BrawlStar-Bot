@@ -597,6 +597,20 @@ async function gcRefreshAll() {
   if (snap) {
     if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state;
     if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
+    if (snap.battery_pct != null) {
+      const charging = snap.battery_charging ? " ⚡" : "";
+      const paused = snap.battery_paused ? " · PAUSED" : "";
+      let icon = "🔋";
+      if (snap.battery_pct < 30) icon = "🪫";
+      else if (snap.battery_pct < 50) icon = "🔋";
+      const el = document.getElementById("gc-battery");
+      if (el) {
+        el.textContent = `${icon} ${snap.battery_pct}%${charging}${paused}`;
+        el.style.color = snap.battery_paused ? "var(--red)"
+                       : snap.battery_pct < 30 ? "var(--yellow)"
+                       : "var(--text)";
+      }
+    }
   } else {
     document.getElementById("gc-state").textContent = "state: —";
   }
@@ -797,6 +811,18 @@ function onSnapshot(snap) {
   if (acc && acc.instance_uid === snap.instance_id) {
     if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state;
     if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
+    if (snap.battery_pct != null) {
+      const el = document.getElementById("gc-battery");
+      if (el) {
+        const charging = snap.battery_charging ? " ⚡" : "";
+        const paused = snap.battery_paused ? " · PAUSED" : "";
+        const icon = snap.battery_pct < 30 ? "🪫" : "🔋";
+        el.textContent = `${icon} ${snap.battery_pct}%${charging}${paused}`;
+        el.style.color = snap.battery_paused ? "var(--red)"
+                       : snap.battery_pct < 30 ? "var(--yellow)"
+                       : "var(--text)";
+      }
+    }
   }
 
   // Update sidebar pills (running/available transitions) — cheap.
