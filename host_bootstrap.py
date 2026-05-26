@@ -145,7 +145,13 @@ def _ensure_bluestacks(bs_path: str) -> bool:
         log.info("BlueStacks already running")
         return True
     log.info("starting BlueStacks: %s", bs_path)
-    subprocess.Popen([bs_path], creationflags=0x00000008)  # DETACHED_PROCESS
+    # Use cmd `start "" "path"` to launch in the user's interactive
+    # session instead of session 0. DETACHED_PROCESS would put the GUI
+    # in the wrong session and make it invisible to the user.
+    subprocess.Popen(
+        ["cmd", "/c", "start", "", bs_path],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
     # Give it 30 s to start the GUI, then the port wait will block until ADB is up.
     time.sleep(30)
     return _is_process_running("HD-Player.exe")
@@ -160,8 +166,15 @@ def _ensure_adb(adb: str) -> bool:
 
 
 def _is_package_installed(adb: str, package: str) -> bool:
-    code, out = _adb(adb, "-s", ADB_HOST, "shell", "pm", "list", "packages", timeout=15)
-    return package in out
+    """Retry a few times — `pm list packages` can fail during BS boot."""
+    for attempt in range(5):
+        code, out = _adb(adb, "-s", ADB_HOST, "shell", "pm", "list", "packages", timeout=15)
+        if code == 0 and "package:" in out:
+            return package in out
+        log.debug("pm list packages attempt %d failed (code=%d), retrying", attempt + 1, code)
+        time.sleep(5)
+    log.warning("pm list packages never succeeded; assuming package IS installed to skip auto-install")
+    return True  # safer: don't auto-reinstall when state is unknown
 
 
 def _download_xapk(url: str, dst: Path) -> bool:
