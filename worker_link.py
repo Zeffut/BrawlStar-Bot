@@ -504,6 +504,13 @@ async def _run_ws_client():
                     await asyncio.get_running_loop().run_in_executor(None, _check_and_self_update)
                 except Exception:
                     log.debug("self-update check failed", exc_info=True)
+                # Re-sync local match history to cloud (in case cloud DB was
+                # wiped by a Dokploy redeploy while we were disconnected).
+                try:
+                    import cloud_sync as _cs
+                    await asyncio.get_running_loop().run_in_executor(None, _cs.sync_history_to_cloud)
+                except Exception:
+                    log.debug("history sync on reconnect failed", exc_info=True)
 
                 async def sender_loop():
                     nonlocal last_log_offset, last_screenshot_at, last_health_at, last_snapshot_at

@@ -135,6 +135,83 @@ def event(type_: str, payload: dict | None = None, tag: str | None = None) -> No
 # --------------------------------------------------- background heartbeat
 
 
+def _cloud_get(endpoint: str) -> dict | None:
+    cfg = _load_cfg()
+    if not is_enabled():
+        return None
+    url = cfg["url"].rstrip("/") + endpoint
+    try:
+        r = requests.get(url, timeout=10,
+                         headers={"Authorization": f"Bearer {cfg['token']}"})
+        if r.status_code >= 400:
+            return None
+        return r.json()
+    except requests.RequestException as exc:
+        log.warning("cloud GET %s failed: %s", endpoint, exc)
+        return None
+
+
+def sync_history_to_cloud() -> None:
+    """Push every local match newer than cloud's known watermark.
+
+    Runs at WS reconnect and periodically. Makes cloud DB wipes
+    invisible — worker is the source of truth.
+    """
+    if not is_enabled():
+        return
+    try:
+        import db as _db
+    except Exception:
+        return
+    for acc in _db.list_accounts():
+        tag = acc["tag"]
+        state = _cloud_get(f"/api/sync/state?tag={tag}")
+        if state is None:
+            continue
+        since = float(state.get("latest_match_ts") or 0)
+        try:
+            rows = _db.conn().execute(
+                "SELECT * FROM matches WHERE account_id = ? AND timestamp > ? "
+                "ORDER BY timestamp",
+                (acc["id"], since),
+            ).fetchall()
+        except Exception:
+            log.exception("history query failed for %s", tag)
+            continue
+        if not rows:
+            continue
+        log.info("syncing %d missing matches for #%s (since ts=%.0f)",
+                 len(rows), tag, since)
+        for r in rows:
+            try:
+                _post("/api/sync/match", {
+                    "tag": tag, "session_id": None,
+                    "brawler": r["brawler"], "result": r["result"],
+                    "trophies_before": r["trophies_before"],
+                    "trophies_after": r["trophies_after"],
+                    "account_trophies_after": r["account_trophies_after"],
+                    "timestamp": r["timestamp"],
+                })
+            except Exception:
+                pass
+
+
+def start_history_sync_loop(interval_s: float = 120.0) -> None:
+    """Background thread: periodically re-sync local matches to cloud."""
+    if not is_enabled():
+        return
+    def loop():
+        time.sleep(15)  # let initial heartbeat finish
+        while True:
+            try:
+                sync_history_to_cloud()
+            except Exception:
+                log.exception("history sync iteration")
+            time.sleep(interval_s)
+    threading.Thread(target=loop, daemon=True, name="cloud-history-sync").start()
+    log.info("history sync loop started (every %ds)", interval_s)
+
+
 def start_heartbeat_loop(interval_s: float = 30.0) -> None:
     """Spawn a daemon thread that pings the cloud every interval_s.
 

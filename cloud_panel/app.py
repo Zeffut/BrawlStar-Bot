@@ -133,6 +133,34 @@ def sync_match(payload: MatchPayload, authorization: str | None = Header(None)) 
     return {"ok": True, "match_id": mid}
 
 
+class SyncStatePayload(BaseModel):
+    tag: str
+
+
+@app.get("/api/sync/state")
+def sync_state(tag: str, authorization: str | None = Header(None)) -> dict:
+    """Tell the worker what we already have for this account.
+
+    Worker uses this to push only the gap (matches/sessions newer than
+    what's already in the cloud DB). Makes cloud DB wipes invisible to
+    the user — worker auto-replays missing history on next sync tick.
+    """
+    _require_auth(authorization)
+    rows = db.conn().execute(
+        "SELECT a.id FROM accounts a WHERE a.tag = ? LIMIT 1", (tag,),
+    ).fetchall()
+    if not rows:
+        return {"ok": True, "known": False, "latest_match_ts": 0}
+    aid = rows[0]["id"]
+    r = db.conn().execute(
+        "SELECT MAX(timestamp) AS ts FROM matches WHERE account_id = ?", (aid,),
+    ).fetchone()
+    return {
+        "ok": True, "known": True,
+        "latest_match_ts": (r["ts"] if r and r["ts"] else 0),
+    }
+
+
 class EventPayload(BaseModel):
     instance_id: str
     tag: str | None = None

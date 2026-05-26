@@ -282,7 +282,19 @@ def current_session(account_id: int) -> dict | None:
 def log_match(account_id: int, session_id: int | None, brawler: str,
               result: str, trophies_before: int | None, trophies_after: int | None,
               account_trophies_after: int | None, timestamp: float | None = None) -> int:
+    """Insert a match — idempotent on (account_id, timestamp, brawler).
+
+    Worker may re-push the same match during gap-sync after a cloud DB
+    wipe; dedup ensures we don't double-count.
+    """
+    ts = timestamp or time.time()
     with _lock:
+        existing = conn().execute(
+            "SELECT id FROM matches WHERE account_id = ? AND timestamp = ? AND brawler = ?",
+            (account_id, ts, brawler),
+        ).fetchone()
+        if existing:
+            return existing["id"]
         c = conn().cursor()
         c.execute(
             "INSERT INTO matches(session_id, account_id, brawler, result, "
@@ -290,7 +302,7 @@ def log_match(account_id: int, session_id: int | None, brawler: str,
             "                    account_trophies_after, timestamp) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, account_id, brawler, result, trophies_before,
-             trophies_after, account_trophies_after, timestamp or time.time()),
+             trophies_after, account_trophies_after, ts),
         )
         return c.lastrowid
 
