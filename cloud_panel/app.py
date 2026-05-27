@@ -819,6 +819,41 @@ async def api_account_game_current_mode(account_id: int) -> dict:
     return await _cmd_for_account(account_id, "game_current_mode", {}, timeout_s=15)
 
 
+# -------- Telegram alerts config proxy (per-instance) --------
+
+
+@app.get("/api/instances/{instance_db_id}/alerts")
+async def api_instance_alerts(instance_db_id: int) -> dict:
+    return await _cmd_for_instance(instance_db_id, "alerts_get", {}, timeout_s=10)
+
+
+class AlertUpdateBody(BaseModel):
+    event: str
+    enabled: bool | None = None
+    template: str | None = None
+    filter: dict | None = None
+
+
+@app.put("/api/instances/{instance_db_id}/alerts")
+async def api_instance_alerts_update(instance_db_id: int, payload: AlertUpdateBody) -> dict:
+    return await _cmd_for_instance(instance_db_id, "alerts_update",
+                                   payload.model_dump(exclude_none=True),
+                                   timeout_s=10)
+
+
+async def _cmd_for_instance(instance_db_id: int, name: str, args: dict, timeout_s: float = 10) -> dict:
+    inst_id = _resolve_instance(instance_db_id)
+    if not inst_id:
+        raise HTTPException(404, "instance not found")
+    try:
+        data = await HUB.send_command(inst_id, name, args, timeout_s=timeout_s)
+        return {"ok": True, "data": data}
+    except ConnectionError as exc:
+        raise HTTPException(503, str(exc))
+    except TimeoutError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.get("/api/instances/{instance_db_id}/health")
 def api_instance_health(instance_db_id: int) -> dict:
     inst_id = _resolve_instance(instance_db_id)

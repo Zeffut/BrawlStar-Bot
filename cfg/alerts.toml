@@ -27,3 +27,25 @@ template = "⚠️ Could not read current trophies for {brawler}. Cycle started 
 [stop_during_init]
 enabled = false
 template = "🛑 Bot stopped during init (no match started)."
+
+[bot_stuck]
+enabled = true
+threshold_minutes = 8
+template = """⚠️ Bot semble bloqué
+Aucun match terminé depuis {minutes} min.
+Brawler en cours: {brawler} — {matches} matches dans cette session.
+Le bot tente une récupération automatique vers le lobby."""
+
+[battery_low]
+enabled = true
+template = "🔋 Batterie faible — bot en pause (reprend à 75%)."
+
+[battery_resumed]
+enabled = false
+template = "⚡ Batterie OK — bot reprend."
+
+[session_ended]
+enabled = false
+template = """🏁 Session terminée
+{matches} matches • W/L/D {wins}/{losses}/{draws}
+Trophies: {start_trophies} → {end_trophies} ({delta:+d})"""

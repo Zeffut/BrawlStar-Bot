@@ -409,6 +409,22 @@ def _cmd_game_current_mode(args: dict) -> dict:
     return _local_get("/api/game/current_mode")
 
 
+def _cmd_alerts_get(args: dict) -> dict:
+    return _local_get("/api/alerts")
+
+
+def _cmd_alerts_update(args: dict) -> dict:
+    event = args.get("event")
+    if not event:
+        return {"ok": False, "error": "missing event"}
+    body = {k: v for k, v in args.items() if k in ("enabled", "template", "filter")}
+    # Use _local_put (we don't have one — inline)
+    import requests
+    r = requests.put(f"{LOCAL_PANEL}/api/alerts/{event}", json=body, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
 def _local_snapshot() -> dict | None:
     """Fetch a lightweight snapshot (state + trophies + tag + session)."""
     try:
@@ -453,6 +469,9 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "game_goto_lobby":       _cmd_game_goto_lobby,
     "game_play_one_match":   _cmd_game_play_one_match,
     "game_current_mode":     _cmd_game_current_mode,
+    # Telegram alerts config
+    "alerts_get":            _cmd_alerts_get,
+    "alerts_update":         _cmd_alerts_update,
 }
 
 

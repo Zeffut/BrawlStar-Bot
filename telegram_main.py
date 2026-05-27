@@ -122,6 +122,9 @@ class BotRunner:
         self._target_trophies: int = 0
         self._max_matches: int | None = None
         self._target_total_trophies: int | None = None
+        # Timestamp of the last match-end detection. Used by the stuck-watchdog.
+        self._last_match_at: float = 0.0
+        self._stuck_alerted: bool = False
         self._account_id: int | None = None
         self._session_id: int | None = None
         # When non-None we're in "push max" mode and this controls
@@ -180,6 +183,8 @@ class BotRunner:
             self._target_trophies = trophies
             self._max_matches = max_matches
             self._target_total_trophies = target_total_trophies
+            self._last_match_at = time.time()
+            self._stuck_alerted = False
             try:
                 save_brawler_data(data)
             except Exception as exc:
@@ -193,7 +198,52 @@ class BotRunner:
             self.thread = threading.Thread(target=self._run, args=(data,), daemon=True)
             self.thread.start()
             self.started_at = time.time()
+            # Start the stuck-watchdog (one per session, exits when runner stops).
+            self._start_stuck_watchdog()
             return True, f"Started bot for {brawler} (target {trophies} trophies)."
+
+    def _start_stuck_watchdog(self) -> None:
+        """Background thread: alerts via Telegram if no match completes for
+        too long while a session is active.
+
+        Threshold read from cfg/alerts.toml `[bot_stuck] threshold_minutes`
+        (default 8 min). Alert is fired ONCE per stuck episode (cleared on
+        any match progress).
+        """
+        def watch():
+            from alerts import _load as _alerts_load
+            while self.is_running():
+                time.sleep(60)
+                try:
+                    elapsed = time.time() - self._last_match_at
+                    cfg = _alerts_load().get("bot_stuck", {})
+                    threshold_min = float(cfg.get("threshold_minutes", 8))
+                    if elapsed > threshold_min * 60 and not self._stuck_alerted:
+                        log.warning("STUCK detected: no match for %.0f min", elapsed / 60)
+                        self._stuck_alerted = True
+                        msg = alerts.format_alert(
+                            "bot_stuck",
+                            minutes=int(elapsed / 60),
+                            brawler=(self.brawler_data[0]["brawler"]
+                                     if self.brawler_data else "?"),
+                            matches=self._match_count,
+                        )
+                        if msg and self.notify:
+                            try: self.notify(msg)
+                            except Exception: log.exception("stuck alert send failed")
+                        # Best-effort recovery: try to dismiss any popup back to lobby
+                        try:
+                            import game_api as _ga
+                            api = _ga.get()
+                            if api is not None:
+                                api.goto_lobby(max_attempts=10)
+                        except Exception:
+                            log.exception("auto-recovery failed")
+                except Exception:
+                    log.exception("stuck watchdog iteration crashed")
+        t = threading.Thread(target=watch, daemon=True, name="stuck-watchdog")
+        t.start()
+        log.info("stuck watchdog armed")
 
     def stop(self) -> tuple[bool, str]:
         log.info("BotRunner.stop() called (soft)")
@@ -537,6 +587,8 @@ class BotRunner:
                 except Exception:
                     log.exception("cloud match push failed")
             runner._match_count += 1
+            runner._last_match_at = time.time()
+            runner._stuck_alerted = False  # reset on any progress
             if game_result == "victory":
                 runner._win_count += 1
             elif game_result == "defeat":

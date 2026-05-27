@@ -232,6 +232,7 @@ async function refreshDetail() {
   refreshSessionState();
   gcRefreshAll();
   gcLoadBrawlers();
+  loadAlerts();
 
   document.getElementById("acc-name").textContent = acc.name || acc.tag;
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
@@ -1041,6 +1042,72 @@ function _prependActivity(m) {
 }
 
 loadActivity();
+
+// ----------------- Telegram alerts config -----------------
+
+const ALERT_LABELS = {
+  match: "Chaque match",
+  target_reached: "Objectif atteint",
+  cycle_started: "Début de cycle",
+  cycle_started_no_ocr: "Cycle (OCR fail)",
+  stop_during_init: "Stop pendant init",
+  bot_stuck: "Bot bloqué",
+  battery_low: "Batterie faible",
+  battery_resumed: "Batterie OK",
+  session_ended: "Session terminée",
+};
+
+async function loadAlerts() {
+  if (!selectedAccountId) return;
+  const acc = _lastAccounts.find(a => a.id === selectedAccountId);
+  if (!acc) return;
+  const instances = await api("/api/instances", {silent: true}).catch(() => []);
+  const inst = instances.find(i => i.instance_id === acc.instance_uid);
+  if (!inst) return;
+  const list = document.getElementById("alerts-list");
+  const statusEl = document.getElementById("alerts-status");
+  statusEl.textContent = "loading…";
+  try {
+    const r = await api(`/api/instances/${inst.id}/alerts`, {silent: true});
+    const cfg = (r?.ok && r.data) || {};
+    const known = Object.keys(ALERT_LABELS);
+    list.innerHTML = "";
+    const enabled = known.filter(k => cfg[k]?.enabled).length;
+    statusEl.textContent = `${enabled}/${known.length} active`;
+    for (const event of known) {
+      const c = cfg[event] || {enabled: false};
+      const row = document.createElement("div");
+      row.className = "alert-row";
+      row.innerHTML = `
+        <label class="toggle">
+          <input type="checkbox" ${c.enabled ? "checked" : ""} data-event="${event}">
+          <span class="slider"></span>
+        </label>
+        <div class="name">${ALERT_LABELS[event]}</div>
+        <div class="meta">${event}</div>
+      `;
+      list.appendChild(row);
+      row.querySelector("input").addEventListener("change", async (e) => {
+        const enabled = e.target.checked;
+        try {
+          await api(`/api/instances/${inst.id}/alerts`, {
+            method: "PUT", body: {event, enabled},
+          });
+          showToast(`${ALERT_LABELS[event]} : ${enabled ? "ON" : "OFF"}`, "ok");
+          // Refresh count.
+          const newCount = Array.from(list.querySelectorAll("input"))
+            .filter(i => i.checked).length;
+          statusEl.textContent = `${newCount}/${known.length} active`;
+        } catch (err) {
+          e.target.checked = !enabled;  // revert
+        }
+      });
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="empty-card" style="padding:14px"><div>Failed to load alerts</div></div>`;
+    statusEl.textContent = "error";
+  }
+}
 
 // ----------------- Mobile sidebar toggle + keyboard shortcuts -----------------
 
