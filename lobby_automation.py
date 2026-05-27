@@ -156,15 +156,18 @@ class LobbyAutomation:
                              brawler, match_key, real_x, real_y)
                     self.window_controller.click(real_x, real_y)
                     time.sleep(1.5)
-                    # Press SELECT exactly ONCE. Clicking twice was the
-                    # source of "the Brawl Pass opens after select": the
-                    # second click hits a UI element below the menu.
-                    select_x = self.coords_cfg['lobby']['select_btn'][0]
-                    select_y = self.coords_cfg['lobby']['select_btn'][1]
-                    log.debug("clicking SELECT at (%d,%d)", select_x, select_y)
-                    self.window_controller.click(select_x, select_y, already_include_ratio=False)
+                    # Find the EQUIP/SELECT button via OCR — its position
+                    # differs between BlueStacks (1920x1080) and phones,
+                    # and the hardcoded select_btn coords were wrong on Mi 9T
+                    # → bot tapped outside the popup, kept previous brawler.
+                    if not self._find_and_tap_equip_button():
+                        log.warning("EQUIP button not found via OCR — falling back "
+                                    "to legacy select_btn coords")
+                        select_x = self.coords_cfg['lobby']['select_btn'][0]
+                        select_y = self.coords_cfg['lobby']['select_btn'][1]
+                        self.window_controller.click(select_x, select_y, already_include_ratio=False)
                     time.sleep(1.5)
-                    log.info("brawler %r selected", brawler)
+                    log.info("brawler %r selection completed", brawler)
                     return
                 # Swipe to scroll within the menu.
                 start_y = 900 if phase == 0 else dy_start
@@ -178,6 +181,40 @@ class LobbyAutomation:
 
         # Not found anywhere — fail this attempt; outer loop will retry.
         raise ValueError(f"Brawler '{brawler}' not found in menu OCR.")
+
+    # OCR variants of the equip/select button text.
+    _EQUIP_KEYWORDS = (
+        "equiper", "équiper", "equip", "équipé", "equipé",
+        "select", "sélectionner", "selectionner", "selected", "sélection",
+    )
+
+    def _find_and_tap_equip_button(self) -> bool:
+        """OCR the screen for the EQUIP/SELECT button and tap it.
+
+        After tapping a brawler row, BS shows a popup with the brawler
+        details + an EQUIP button. Hardcoded coords were calibrated for
+        BlueStacks; on phones they miss the button and the popup closes
+        without selecting (= previous brawler stays equipped).
+        """
+        try:
+            from utils import extract_text_and_positions
+            import numpy as np
+            screenshot = self.window_controller.screenshot()
+            arr = np.array(screenshot)
+            text = extract_text_and_positions(arr)
+            for key, val in text.items():
+                k = key.lower().strip().replace(" ", "")
+                if any(kw in k for kw in self._EQUIP_KEYWORDS):
+                    cx, cy = val.get("center", [0, 0])
+                    if cx > 0 and cy > 0:
+                        log.info("EQUIP button OCR'd as %r at (%d,%d) — tapping",
+                                 key, cx, cy)
+                        # cx/cy are in frame coords; wc.click rescales to device.
+                        self.window_controller.click(cx, cy)
+                        return True
+        except Exception:
+            log.exception("_find_and_tap_equip_button OCR failed")
+        return False
 
     @staticmethod
     def resolve_ocr_typos(potential_brawler_name: str) -> str:

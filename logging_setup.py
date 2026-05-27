@@ -29,6 +29,7 @@ _OUR_LOGGERS = [
     "panel", "panel.app", "db", "alerts", "worker_pool",
     "host_bootstrap", "device", "cloud_sync",
     "game_api", "screen_capture", "worker_link",
+    "lobby_automation", "play", "push_max", "trophy_observer",
     "bot",  # generic fallback
 ]
 
