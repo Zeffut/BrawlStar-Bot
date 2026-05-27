@@ -361,7 +361,27 @@ def _bootstrap_linux() -> bool:
                     )
                     time.sleep(1.5)
                     continue
-                elif state in ("end", "trophy_reward", "match"):
+                elif state == "match" and same_state_count >= 4:
+                    # Persistent "match" at boot time is suspect — real
+                    # matches don't last across multi-minute boots and the
+                    # state detector falls back to "match" on unknown
+                    # screens. Force-restart Brawl Stars to bail out.
+                    log.warning("stuck in state=match for %d iters at boot "
+                                "-> force-stop + relaunch Brawl Stars",
+                                same_state_count + 1)
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "am", "force-stop",
+                         "com.supercell.brawlstars"], timeout=5,
+                    )
+                    time.sleep(2)
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "am", "start", "-n",
+                         "com.supercell.brawlstars/.GameApp"], timeout=10,
+                    )
+                    time.sleep(5)
+                    same_state_count = 0
+                    continue
+                elif state in ("end", "trophy_reward"):
                     log.info("stuck in state=%s -> tap CONTINUE candidates",
                              state)
                     sw = img.width; sh = img.height
