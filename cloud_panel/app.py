@@ -543,12 +543,39 @@ def _fetch_profile_from_brawlace(tag: str) -> dict:
 
 @app.get("/api/util/brawler_profile/{tag}")
 def util_brawler_profile(tag: str) -> dict:
-    """Direct scrape (used only by the worker on tag validation).
+    """Player profile by tag.
 
-    The browser should NOT call this — it reads from the DB via
-    /api/accounts/{id}/brawlers.
+    Strategy: prefer the DB-cached row (instant), fall back to a live
+    flaresolverr fetch when the cache is empty or stale.
     """
-    return {"ok": True, **_fetch_profile_from_brawlace(tag)}
+    tag_norm = tag.lstrip("#").upper()
+    # 1. DB cache first — find an account matching this tag.
+    rows = db.conn().execute(
+        "SELECT a.id, a.name FROM accounts a WHERE a.tag = ? LIMIT 1",
+        (tag_norm,),
+    ).fetchall()
+    if rows:
+        acc_id = rows[0]["id"]
+        brawlers, refreshed_at = db.get_account_brawlers(acc_id)
+        if brawlers:
+            return {
+                "ok": True, "source": "db",
+                "name": rows[0]["name"],
+                "brawlers": brawlers,
+                "refreshed_at": refreshed_at,
+            }
+    # 2. Live fetch via flaresolverr (raises HTTPException on failure).
+    try:
+        return {"ok": True, "source": "live", **_fetch_profile_from_brawlace(tag)}
+    except HTTPException:
+        # If we have ANY cached data even stale, prefer it over erroring.
+        if rows:
+            brawlers, refreshed_at = db.get_account_brawlers(rows[0]["id"])
+            if brawlers:
+                return {"ok": True, "source": "db_fallback",
+                        "name": rows[0]["name"], "brawlers": brawlers,
+                        "refreshed_at": refreshed_at}
+        raise
 
 
 # ---- DB-backed account brawlers (preferred path) ------------------

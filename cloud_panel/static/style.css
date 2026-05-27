@@ -609,12 +609,20 @@ main {
   opacity: .4 !important;
   cursor: not-allowed !important;
   pointer-events: auto;
+  filter: grayscale(60%);
 }
+/* Kill all hover transitions on disabled controls — no color shift,
+   no border change, no background change. */
 .header-btn:disabled:hover,
-.ctl:disabled:hover {
-  background: var(--surface-2);
-  color: var(--text-2);
-  border-color: var(--border-2);
+.ctl:disabled:hover,
+.gc-inline select:disabled:hover,
+.refresh-btn:disabled:hover,
+.gc-capture-btn:disabled:hover {
+  background: inherit !important;
+  color: inherit !important;
+  border-color: inherit !important;
+  filter: grayscale(60%) !important;
+  transform: none !important;
 }
 .header-btn.primary {
   background: linear-gradient(135deg, var(--primary), #3b6fd4);
