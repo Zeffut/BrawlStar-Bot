@@ -1112,6 +1112,7 @@ def main() -> int:
     if cloud_sync.is_enabled():
         cloud_sync.start_heartbeat_loop()
         cloud_sync.start_history_sync_loop()
+        cloud_sync.start_brawlers_refresh_loop()
         # Push every known local account on startup so the cloud panel
         # reflects them even if ADB-based redetection fails right now.
         for acc in db.list_accounts():

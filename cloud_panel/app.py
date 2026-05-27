@@ -71,24 +71,11 @@ class AccountPayload(BaseModel):
 
 @app.post("/api/sync/account")
 def sync_account(payload: AccountPayload, authorization: str | None = Header(None)) -> dict:
+    """Worker registers/updates an account. Cloud is passive — worker
+    owns brawler fetch scheduling (pushed via /api/sync/brawlers)."""
     _require_auth(authorization)
     inst = db.upsert_instance(payload.instance_id)
     acc = db.upsert_account(inst, payload.tag, payload.name)
-    # If we have no brawlers cached for this account, kick off an immediate
-    # fetch (don't wait the 60s for the next refresher tick).
-    brawlers, _ = db.get_account_brawlers(acc)
-    if not brawlers:
-        try:
-            profile = _fetch_profile_from_brawlace(payload.tag)
-            if profile.get("brawlers"):
-                db.set_account_brawlers(acc, profile["brawlers"])
-                BUS.publish({
-                    "type": "brawlers_refreshed",
-                    "account_id": acc, "tag": payload.tag,
-                    "count": len(profile["brawlers"]),
-                })
-        except Exception:
-            log.exception("eager brawler fetch failed for %s", payload.tag)
     return {"ok": True, "account_id": acc}
 
 
@@ -159,6 +146,27 @@ def sync_match(payload: MatchPayload, authorization: str | None = Header(None)) 
         "timestamp": payload.timestamp or time.time(),
     })
     return {"ok": True, "match_id": mid}
+
+
+class BrawlersPayload(BaseModel):
+    instance_id: str
+    tag: str
+    brawlers: list[dict]
+
+
+@app.post("/api/sync/brawlers")
+def sync_brawlers(payload: BrawlersPayload, authorization: str | None = Header(None)) -> dict:
+    """Worker pushes its current brawler list — cloud just stores."""
+    _require_auth(authorization)
+    inst = db.upsert_instance(payload.instance_id)
+    acc = db.upsert_account(inst, payload.tag, None)
+    db.set_account_brawlers(acc, payload.brawlers)
+    BUS.publish({
+        "type": "brawlers_refreshed",
+        "account_id": acc, "tag": payload.tag,
+        "count": len(payload.brawlers),
+    })
+    return {"ok": True, "account_id": acc, "count": len(payload.brawlers)}
 
 
 class SyncStatePayload(BaseModel):
@@ -611,49 +619,9 @@ def api_account_brawlers_refresh(account_id: int) -> dict:
     return {"ok": True, "brawlers": profile.get("brawlers", []), "refreshed_at": time.time()}
 
 
-# ---- background refresher -----------------------------------------
-
-import asyncio as _asyncio2  # already imported as asyncio earlier, alias to avoid shadowing
-import logging as _logging
-_refresh_log = _logging.getLogger("brawler_refresher")
-
-REFRESH_INTERVAL_S = 3600       # rescan each account at most once per hour
-REFRESH_STALE_AFTER_S = 3600    # consider data stale after 1h
-REFRESH_BATCH_PAUSE_S = 5       # gap between requests so flaresolverr isn't hammered
-
-
-async def _brawlers_refresh_loop():
-    await _asyncio2.sleep(20)  # give workers time to register
-    while True:
-        try:
-            stale = db.accounts_needing_refresh(REFRESH_STALE_AFTER_S)
-            for acc in stale:
-                tag = acc["tag"]
-                try:
-                    profile = await _asyncio2.get_running_loop().run_in_executor(
-                        None, _fetch_profile_from_brawlace, tag)
-                    if profile.get("brawlers"):
-                        db.set_account_brawlers(acc["id"], profile["brawlers"])
-                        _refresh_log.info("refreshed brawlers for #%s (%d)",
-                                          tag, len(profile["brawlers"]))
-                        # Push event to live SSE subscribers.
-                        BUS.publish({
-                            "type": "brawlers_refreshed",
-                            "account_id": acc["id"],
-                            "tag": tag,
-                            "count": len(profile["brawlers"]),
-                        })
-                except Exception as exc:
-                    _refresh_log.warning("refresh #%s failed: %s", tag, exc)
-                await _asyncio2.sleep(REFRESH_BATCH_PAUSE_S)
-        except Exception:
-            _refresh_log.exception("refresh loop iteration crashed")
-        await _asyncio2.sleep(60)  # check every minute for staleness
-
-
-@app.on_event("startup")
-async def _start_brawlers_refresher() -> None:
-    _asyncio2.create_task(_brawlers_refresh_loop())
+# NOTE: brawlers refresh is now the worker's responsibility. The cloud
+# only provides the flaresolverr proxy + DB storage + SSE broadcast.
+# See cloud_sync.start_brawlers_refresh_loop() on the worker side.
 
 
 # ============================================================

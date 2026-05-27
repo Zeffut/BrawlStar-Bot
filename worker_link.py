@@ -533,8 +533,11 @@ async def _run_ws_client():
                 try:
                     import cloud_sync as _cs
                     await asyncio.get_running_loop().run_in_executor(None, _cs.sync_history_to_cloud)
+                    # Also refresh brawlers so the panel shows fresh trophies
+                    # right after reconnect (no waiting for the 1h tick).
+                    await asyncio.get_running_loop().run_in_executor(None, _cs.refresh_and_push_brawlers)
                 except Exception:
-                    log.debug("history sync on reconnect failed", exc_info=True)
+                    log.debug("history/brawlers sync on reconnect failed", exc_info=True)
 
                 async def sender_loop():
                     nonlocal last_log_offset, last_screenshot_at, last_health_at, last_snapshot_at

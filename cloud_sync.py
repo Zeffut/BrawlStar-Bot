@@ -219,6 +219,65 @@ def sync_history_to_cloud() -> None:
                 pass
 
 
+def push_brawlers(tag: str, brawlers: list[dict]) -> None:
+    """Push the worker's current brawler list to the cloud DB."""
+    _post("/api/sync/brawlers", {"tag": tag, "brawlers": brawlers})
+
+
+def refresh_and_push_brawlers() -> None:
+    """Fetch this account's brawlers via the cloud's flaresolverr proxy
+    and push the result back. Worker owns the schedule + decision; the
+    cloud is just an infrastructure service.
+    """
+    if not is_enabled():
+        return
+    try:
+        import db as _db
+    except Exception:
+        return
+    accs = _db.list_accounts()
+    if not accs:
+        return
+    cfg = _load_cfg()
+    url = cfg["url"].rstrip("/") + "/api/util/brawler_profile/"
+    token = cfg["token"]
+    for acc in accs:
+        tag = acc["tag"]
+        try:
+            r = requests.get(url + tag, timeout=80,
+                             headers={"Authorization": f"Bearer {token}"})
+            if r.status_code != 200:
+                log.warning("brawler fetch HTTP %d for %s", r.status_code, tag)
+                continue
+            profile = r.json()
+            brawlers = profile.get("brawlers") or []
+            if brawlers:
+                push_brawlers(tag, brawlers)
+                log.info("brawler refresh ok: %s -> cloud (%d)", tag, len(brawlers))
+        except Exception as exc:
+            log.warning("brawler refresh failed for %s: %s", tag, exc)
+
+
+def start_brawlers_refresh_loop(interval_s: float = 3600.0) -> None:
+    """Background thread: refreshes brawlers every interval_s (default 1h).
+
+    The worker drives this — the cloud is passive. First tick fires
+    ~30s after start so initial heartbeat lands first.
+    """
+    if not is_enabled():
+        return
+    def loop():
+        time.sleep(30)
+        while True:
+            try:
+                refresh_and_push_brawlers()
+            except Exception:
+                log.exception("brawlers refresh iteration")
+            time.sleep(interval_s)
+    threading.Thread(target=loop, daemon=True, name="cloud-brawlers-refresh").start()
+    log.info("brawlers refresh loop started (every %ds)", interval_s)
+
+
 def start_history_sync_loop(interval_s: float = 120.0) -> None:
     """Background thread: periodically re-sync local matches to cloud."""
     if not is_enabled():
