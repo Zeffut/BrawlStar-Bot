@@ -243,6 +243,51 @@ class GameAPI:
             self._battery_paused = False
         return True, f"battery OK ({lvl}%{', charging' if chg else ''})"
 
+    # ---- Power saver (idle low-battery handling) -----------------
+
+    def enter_power_save(self) -> None:
+        """Force-stop Brawl Stars and turn off the phone screen.
+
+        Used when battery is too low to keep playing. Saves drain and
+        lets the phone recharge faster (Brawl Stars idle still drains
+        notably, and the OLED screen is the biggest culprit).
+        """
+        serial = device.adb_serial()
+        try:
+            subprocess.run(["adb", "-s", serial, "shell", "am", "force-stop",
+                            "com.supercell.brawlstars"], timeout=5, check=False)
+            # Screen off via POWER keyevent (only toggles if currently on).
+            # Use dumpsys to check state first.
+            ds = subprocess.run(["adb", "-s", serial, "shell", "dumpsys", "display"],
+                                capture_output=True, text=True, timeout=5, check=False).stdout
+            if "mScreenState=ON" in ds:
+                subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "26"],
+                                timeout=5, check=False)
+            log.info("power-save: Brawl Stars stopped + screen off")
+        except Exception:
+            log.exception("enter_power_save failed")
+
+    def exit_power_save(self) -> None:
+        """Wake screen, unlock if needed, and relaunch Brawl Stars."""
+        serial = device.adb_serial()
+        try:
+            ds = subprocess.run(["adb", "-s", serial, "shell", "dumpsys", "display"],
+                                capture_output=True, text=True, timeout=5, check=False).stdout
+            if "mScreenState=OFF" in ds:
+                subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "26"],
+                                timeout=5, check=False)
+                time.sleep(0.5)
+            # Swipe up to unlock (no PIN expected on the bot phone).
+            subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "82"],
+                            timeout=5, check=False)
+            time.sleep(0.3)
+            subprocess.run(["adb", "-s", serial, "shell", "am", "start", "-n",
+                            "com.supercell.brawlstars/.GameApp"],
+                            timeout=10, check=False)
+            log.info("power-save exited: screen on + game launched")
+        except Exception:
+            log.exception("exit_power_save failed")
+
     def wait_for_battery(self, max_wait_s: float = 3600, poll_s: float = 60) -> bool:
         """Block until battery is OK to play (or max_wait_s passes).
 
@@ -673,6 +718,7 @@ def init(window_controller, lobby_automation) -> GameAPI:
     Triggers a first screenshot to populate `wc.last_frame` so that the
     cloud panel can serve captures immediately, without waiting for the
     bot's main loop to do its first frame.
+    Also starts the power-saver background monitor.
     """
     global _API
     with _LOCK:
@@ -685,4 +731,44 @@ def init(window_controller, lobby_automation) -> GameAPI:
                 log.info("GameAPI initialized (wc.last_frame warmed)")
             except Exception:
                 log.info("GameAPI initialized (warm-up failed, will fetch on demand)")
+            # Start the background power-saver loop.
+            _start_power_saver(_API)
     return _API
+
+
+def _start_power_saver(api: "GameAPI") -> None:
+    """Background loop: enter/exit power-save mode based on battery state.
+
+    Rules:
+      - If idle (no runner session) AND battery < LOW_PCT and not charging:
+        enter power save (force-stop game + screen off)
+      - If in power-save AND battery >= RESUME_PCT:
+        exit (wake + relaunch game)
+    Runs every 60s, fully self-contained.
+    """
+    def loop():
+        in_power_save = False
+        while True:
+            try:
+                time.sleep(60)
+                bat = api.battery_status()
+                lvl = bat.get("level")
+                chg = bat.get("charging")
+                if lvl is None:
+                    continue
+                # Don't disturb an active session.
+                session_active = (api._runner is not None and api._runner.is_running())
+                if not in_power_save:
+                    if not session_active and lvl < BATTERY_LOW_PCT and not chg:
+                        log.info("power-saver: battery=%d%% idle → entering power save", lvl)
+                        api.enter_power_save()
+                        in_power_save = True
+                else:
+                    if lvl >= BATTERY_RESUME_PCT:
+                        log.info("power-saver: battery=%d%% → exiting power save", lvl)
+                        api.exit_power_save()
+                        in_power_save = False
+            except Exception:
+                log.exception("power-saver iteration crashed")
+    threading.Thread(target=loop, daemon=True, name="power-saver").start()
+    log.info("power-saver loop started")
