@@ -262,18 +262,26 @@ class GameAPI:
     def can_play(self) -> tuple[bool, str]:
         """Return (ok, reason) — refuses to play if battery is too low.
 
-        Rule: if level < LOW_PCT and not charging, refuse.
-              Once paused, only resume when level >= RESUME_PCT.
+        Rules:
+          - level < LOW_PCT (any state): refuse, set paused flag.
+          - paused AND level < RESUME_PCT: stay paused (wait for charge).
+          - level >= RESUME_PCT: clear pause, OK to play.
         """
         bat = self.battery_status()
         lvl, chg = bat.get("level"), bat.get("charging")
         if lvl is None:
             return True, "battery level unknown — proceeding"
-        if chg and lvl < BATTERY_RESUME_PCT and getattr(self, "_battery_paused", False):
-            return False, f"charging ({lvl}%, will resume at {BATTERY_RESUME_PCT}%)"
-        if lvl < BATTERY_LOW_PCT and not chg:
+        # Hard floor: any level under LOW triggers pause regardless of
+        # charging state. The phone needs to recharge to RESUME before
+        # we let the bot drain it again.
+        if lvl < BATTERY_LOW_PCT:
             self._battery_paused = True
-            return False, f"battery too low ({lvl}%) — plug in, will resume at {BATTERY_RESUME_PCT}%"
+            chg_txt = ", charging" if chg else " — plug in"
+            return False, f"battery too low ({lvl}%{chg_txt}, will resume at {BATTERY_RESUME_PCT}%)"
+        # Hysteresis: once paused, stay paused until RESUME_PCT.
+        if getattr(self, "_battery_paused", False) and lvl < BATTERY_RESUME_PCT:
+            chg_txt = ", charging" if chg else ""
+            return False, f"recharging ({lvl}%{chg_txt}, will resume at {BATTERY_RESUME_PCT}%)"
         if lvl >= BATTERY_RESUME_PCT:
             self._battery_paused = False
         return True, f"battery OK ({lvl}%{', charging' if chg else ''})"
@@ -944,17 +952,21 @@ def _start_power_saver(api: "GameAPI") -> None:
                 if not in_power_save:
                     # Critical: force-pause even an active session — the
                     # post-match gate is too late if the bot is stuck
-                    # mid-match or on a reward screen.
-                    if lvl < BATTERY_CRITICAL_PCT and not chg:
+                    # mid-match or on a reward screen. Triggers regardless
+                    # of charging state (low + plugged in still needs to
+                    # recharge to RESUME, not keep grinding).
+                    if lvl < BATTERY_CRITICAL_PCT:
                         log.warning("power-saver: battery=%d%% CRITICAL → "
-                                    "force-stopping session + entering power save", lvl)
+                                    "force-stopping session + entering power save "
+                                    "(charging=%s)", lvl, chg)
                         if session_active and api._runner is not None:
                             try: api._runner.force_stop()
                             except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
                         in_power_save = True
-                    elif not session_active and lvl < BATTERY_LOW_PCT and not chg:
-                        log.info("power-saver: battery=%d%% idle → entering power save", lvl)
+                    elif not session_active and lvl < BATTERY_LOW_PCT:
+                        log.info("power-saver: battery=%d%% idle → entering power save "
+                                 "(charging=%s)", lvl, chg)
                         api.enter_power_save()
                         in_power_save = True
                 else:
