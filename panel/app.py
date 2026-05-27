@@ -333,7 +333,46 @@ async def game_state() -> dict:
 
 @app.get("/api/game/snapshot")
 async def game_snapshot() -> dict:
-    return await asyncio.get_event_loop().run_in_executor(None, lambda: _game().snapshot())
+    """Return the bot snapshot. If the game API isn't initialized yet
+    (bot still booting / stuck in boot loop), still return battery info
+    so the panel can compute the charging status and lock the UI.
+    """
+    api = game_api_mod.get()
+    if api is None:
+        # Degraded snapshot: ADB direct call for battery.
+        import subprocess as _sp
+        try:
+            import device as _device
+            out = _sp.run(
+                ["adb", "-s", _device.adb_serial(), "shell", "dumpsys", "battery"],
+                capture_output=True, text=True, timeout=5, check=False,
+            ).stdout
+            level = None
+            chg = None
+            for line in out.splitlines():
+                line = line.strip()
+                if line.startswith("level:"):
+                    try: level = int(line.split(":", 1)[1].strip())
+                    except Exception: pass
+                elif line.startswith("status:"):
+                    try: chg = int(line.split(":", 1)[1].strip()) in (2, 5)
+                    except Exception: pass
+            return {
+                "state": "booting",
+                "trophies": None,
+                "battery_pct": level,
+                "battery_charging": chg,
+                "battery_paused": bool(chg) or (level is not None and level < 35),
+                "ts": round(__import__("time").time(), 2),
+            }
+        except Exception:
+            return {
+                "state": "booting", "trophies": None,
+                "battery_pct": None, "battery_charging": None,
+                "battery_paused": True,
+                "ts": round(__import__("time").time(), 2),
+            }
+    return await asyncio.get_event_loop().run_in_executor(None, lambda: api.snapshot())
 
 
 @app.get("/api/game/diag")
