@@ -37,9 +37,13 @@ _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
 # Battery gate thresholds (configurable later via cfg).
-BATTERY_LOW_PCT = 30      # stop grinding below this (post-match gate)
-BATTERY_CRITICAL_PCT = 20 # force-pause even mid-session below this
-BATTERY_RESUME_PCT = 75   # resume grinding once above this
+# Designed with a wide margin: by the time CRITICAL fires we still have
+# ~15-20 min of grinding before the phone hits 5% (where Android starts
+# throttling and refusing to launch apps). Safer to over-pause than to
+# let the phone die.
+BATTERY_LOW_PCT = 35       # stop grinding below this (any state)
+BATTERY_CRITICAL_PCT = 25  # force-pause even an active session below this
+BATTERY_RESUME_PCT = 75    # resume grinding once above this
 
 
 def _is_brawlball_label(s: str) -> bool:
@@ -236,41 +240,57 @@ class GameAPI:
             log.warning("read_trophies(): %s", exc)
         return None
 
-    def battery_status(self) -> dict:
-        """Read battery level + charging state via adb dumpsys battery."""
-        try:
-            out = subprocess.run(
-                ["adb", "-s", device.adb_serial(), "shell", "dumpsys", "battery"],
-                capture_output=True, text=True, timeout=5, check=False,
-            ).stdout
-            level = None
-            charging = None
-            for line in out.splitlines():
-                line = line.strip()
-                if line.startswith("level:"):
-                    try: level = int(line.split(":", 1)[1].strip())
-                    except Exception: pass
-                elif line.startswith("status:"):
-                    # 1=unknown 2=charging 3=discharging 4=not-charging 5=full
-                    try: charging = int(line.split(":", 1)[1].strip()) in (2, 5)
-                    except Exception: pass
-            return {"level": level, "charging": charging}
-        except Exception as exc:
-            log.warning("battery_status: %s", exc)
-            return {"level": None, "charging": None}
+    def battery_status(self, retries: int = 3) -> dict:
+        """Read battery level + charging state via adb dumpsys battery.
+
+        Retries on ADB transient errors. Returns level=None only after
+        all retries fail — callers must treat unknown level as a danger
+        signal (assume LOW), never as OK to play.
+        """
+        last_exc = None
+        for attempt in range(retries):
+            try:
+                out = subprocess.run(
+                    ["adb", "-s", device.adb_serial(), "shell", "dumpsys", "battery"],
+                    capture_output=True, text=True, timeout=5, check=False,
+                ).stdout
+                level = None
+                charging = None
+                for line in out.splitlines():
+                    line = line.strip()
+                    if line.startswith("level:"):
+                        try: level = int(line.split(":", 1)[1].strip())
+                        except Exception: pass
+                    elif line.startswith("status:"):
+                        # 1=unknown 2=charging 3=discharging 4=not-charging 5=full
+                        try: charging = int(line.split(":", 1)[1].strip()) in (2, 5)
+                        except Exception: pass
+                if level is not None:
+                    return {"level": level, "charging": charging}
+            except Exception as exc:
+                last_exc = exc
+            if attempt < retries - 1:
+                time.sleep(1.5)
+        log.warning("battery_status: all %d retries failed (last: %s)", retries, last_exc)
+        return {"level": None, "charging": None}
 
     def can_play(self) -> tuple[bool, str]:
         """Return (ok, reason) — refuses to play if battery is too low.
 
         Rules:
+          - level unknown (ADB failed): refuse — never assume safe.
           - level < LOW_PCT (any state): refuse, set paused flag.
           - paused AND level < RESUME_PCT: stay paused (wait for charge).
           - level >= RESUME_PCT: clear pause, OK to play.
         """
         bat = self.battery_status()
         lvl, chg = bat.get("level"), bat.get("charging")
+        # Safety: if we can't read battery, assume worst case rather than
+        # proceeding blind. The bot grinding while ADB is broken could
+        # drain the phone to 0%.
         if lvl is None:
-            return True, "battery level unknown — proceeding"
+            self._battery_paused = True
+            return False, "battery level unknown (ADB failure) — refusing to play"
         # Hard floor: any level under LOW triggers pause regardless of
         # charging state. The phone needs to recharge to RESUME before
         # we let the bot drain it again.
@@ -940,21 +960,36 @@ def _start_power_saver(api: "GameAPI") -> None:
     """
     def loop():
         in_power_save = False
+        critical_notified = False
         while True:
             try:
-                time.sleep(60)
+                # Adaptive poll: tight loop when battery is at risk so a
+                # fast drain (high-CPU brawler, OLED, etc.) can't slip
+                # between two 60s checks.
                 bat = api.battery_status()
                 lvl = bat.get("level")
                 chg = bat.get("charging")
                 if lvl is None:
+                    # ADB failure: treat as risk, also force-stop the
+                    # session — we can't tell what the phone is doing.
+                    log.warning("power-saver: battery unknown (ADB down?) — "
+                                "force-stopping session as safety net")
+                    if api._runner is not None and api._runner.is_running():
+                        try: api._runner.force_stop()
+                        except Exception: log.exception("force_stop failed")
+                    if not in_power_save:
+                        api.enter_power_save()
+                        in_power_save = True
+                    time.sleep(30)
                     continue
+                # Choose next poll interval based on current level.
+                poll_interval = 20 if lvl < BATTERY_LOW_PCT + 5 else 60
                 session_active = (api._runner is not None and api._runner.is_running())
                 if not in_power_save:
                     # Critical: force-pause even an active session — the
                     # post-match gate is too late if the bot is stuck
                     # mid-match or on a reward screen. Triggers regardless
-                    # of charging state (low + plugged in still needs to
-                    # recharge to RESUME, not keep grinding).
+                    # of charging state.
                     if lvl < BATTERY_CRITICAL_PCT:
                         log.warning("power-saver: battery=%d%% CRITICAL → "
                                     "force-stopping session + entering power save "
@@ -964,9 +999,26 @@ def _start_power_saver(api: "GameAPI") -> None:
                             except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
                         in_power_save = True
-                    elif not session_active and lvl < BATTERY_LOW_PCT:
-                        log.info("power-saver: battery=%d%% idle → entering power save "
-                                 "(charging=%s)", lvl, chg)
+                        if not critical_notified and api._runner is not None and api._runner.notify:
+                            try:
+                                import alerts as _alerts
+                                msg = _alerts.format_alert("battery_low") or \
+                                      f"🪫 Batterie CRITIQUE ({lvl}%) — bot en pause."
+                                api._runner.notify(msg)
+                                critical_notified = True
+                            except Exception:
+                                log.exception("critical battery notif failed")
+                    elif lvl < BATTERY_LOW_PCT:
+                        # Below LOW: pause even if session active. The
+                        # session's post-match hook will catch this too,
+                        # but the background check is the safety net for
+                        # long matches / stuck states.
+                        log.info("power-saver: battery=%d%% < LOW (%d) → entering power save "
+                                 "(charging=%s, session_active=%s)",
+                                 lvl, BATTERY_LOW_PCT, chg, session_active)
+                        if session_active and api._runner is not None:
+                            try: api._runner.force_stop()
+                            except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
                         in_power_save = True
                 else:
@@ -974,7 +1026,10 @@ def _start_power_saver(api: "GameAPI") -> None:
                         log.info("power-saver: battery=%d%% → exiting power save", lvl)
                         api.exit_power_save()
                         in_power_save = False
+                        critical_notified = False
+                time.sleep(poll_interval)
             except Exception:
                 log.exception("power-saver iteration crashed")
+                time.sleep(30)
     threading.Thread(target=loop, daemon=True, name="power-saver").start()
     log.info("power-saver loop started")

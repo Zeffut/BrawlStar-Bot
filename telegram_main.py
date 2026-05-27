@@ -157,6 +157,19 @@ class BotRunner:
             if self.is_running():
                 log.warning("start denied: bot already running")
                 return False, "Bot already running. Use /stop first."
+            # Pre-session battery gate: refuse to start a grind on a
+            # phone that's already low. Prevents the bot from draining
+            # the last 5% by launching at 28%.
+            try:
+                import game_api as _gapi
+                api = _gapi.get()
+                if api is not None:
+                    ok_bat, bat_reason = api.can_play()
+                    if not ok_bat:
+                        log.warning("start denied: %s", bat_reason)
+                        return False, f"Battery gate: {bat_reason}"
+            except Exception:
+                log.exception("pre-session battery check failed")
             if mode == "push_max":
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
