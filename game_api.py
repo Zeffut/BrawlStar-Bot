@@ -998,6 +998,7 @@ def _start_power_saver(api: "GameAPI") -> None:
                             try: api._runner.force_stop()
                             except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
+                        api._battery_paused = True
                         in_power_save = True
                         if not critical_notified:
                             try:
@@ -1018,11 +1019,16 @@ def _start_power_saver(api: "GameAPI") -> None:
                             try: api._runner.force_stop()
                             except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
+                        # Critical: surface the pause to the cloud (status=charging).
+                        # Without this flag, the panel would still show "running"
+                        # even though the runner just got force-stopped.
+                        api._battery_paused = True
                         in_power_save = True
                 else:
                     if lvl >= BATTERY_RESUME_PCT:
                         log.info("power-saver: battery=%d%% → exiting power save", lvl)
                         api.exit_power_save()
+                        api._battery_paused = False
                         in_power_save = False
                         critical_notified = False
                 time.sleep(poll_interval)
