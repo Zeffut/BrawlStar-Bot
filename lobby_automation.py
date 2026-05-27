@@ -183,7 +183,10 @@ class LobbyAutomation:
         raise ValueError(f"Brawler '{brawler}' not found in menu OCR.")
 
     # OCR variants of the equip/select button text.
+    # Modern BS (2026) uses CHOISIR in French ("CHOOSE") — older builds
+    # used ÉQUIPER. Cover both.
     _EQUIP_KEYWORDS = (
+        "choisir", "choose",
         "equiper", "équiper", "equip", "équipé", "equipé",
         "select", "sélectionner", "selectionner", "selected", "sélection",
     )
