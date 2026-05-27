@@ -752,7 +752,9 @@ async def api_account_push_max(account_id: int, payload: PushMaxBody | None = No
     args = {}
     if payload and payload.target_total_trophies is not None:
         args["target_total_trophies"] = payload.target_total_trophies
-    return await _cmd_for_account(account_id, "session_push_max", args, timeout_s=20)
+    # Worker fetches the brawler list (via flaresolverr) before starting,
+    # so allow ample time on a cold call.
+    return await _cmd_for_account(account_id, "session_push_max", args, timeout_s=100)
 
 
 @app.post("/api/accounts/{account_id}/start")

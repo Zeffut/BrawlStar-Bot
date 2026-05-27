@@ -533,12 +533,20 @@ async function refreshSessionState() {
 }
 
 async function postSession(path, body) {
-  const r = await fetch(`/api/accounts/${selectedAccountId}${path}`, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: body ? JSON.stringify(body) : "{}",
-  });
-  return r.json();
+  try {
+    const r = await fetch(`/api/accounts/${selectedAccountId}${path}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: body ? JSON.stringify(body) : "{}",
+    });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      return {ok: false, error: `HTTP ${r.status}${txt ? ': ' + txt.slice(0, 120) : ''}`};
+    }
+    return await r.json();
+  } catch (e) {
+    return {ok: false, error: String(e.message || e)};
+  }
 }
 
 async function askPushMaxTarget() {
