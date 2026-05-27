@@ -180,6 +180,17 @@ async function refreshAll() {
     tree.appendChild(card);
   }
 
+  // Wire the charging guard to whatever instance owns the selected
+  // account. When the worker reports battery_paused → status "charging",
+  // we lock out all action buttons.
+  if (selectedAccountId) {
+    const acc = accounts.find(a => a.id === selectedAccountId);
+    if (acc) {
+      const inst = instances.find(i => i.instance_id === acc.instance_uid);
+      _applyChargingGuard(!!(inst && inst.status === "charging"));
+    }
+  }
+
   if (!selectedAccountId && accounts.length) selectAccount(accounts[0].id);
 }
 
@@ -447,6 +458,7 @@ document.addEventListener("click", e => {
 
 // Tracks whether a grinding session is active for the selected account.
 let _sessionActive = false;
+let _instanceCharging = false;
 
 // Buttons that mustn't run during a session (could derail the bot).
 const SESSION_GUARDED_BUTTONS = [
@@ -454,23 +466,46 @@ const SESSION_GUARDED_BUTTONS = [
   "gc-refresh-brawlers", "gc-capture",
 ];
 const SESSION_GUARDED_SELECTS = ["gc-brawler-select"];
+// Also gate the top-bar action: starting a new session while the
+// phone is charging would be refused by the worker anyway, but
+// disabling the UI is friendlier than a backend error.
+const CHARGING_EXTRA_BUTTONS = ["btn-push-max"];
 
-function _applySessionGuards(active) {
-  _sessionActive = active;
-  for (const id of SESSION_GUARDED_BUTTONS) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    el.disabled = active;
-    el.title = active ? "Désactivé : session de grind en cours" : el.dataset.origTitle || "";
-    if (!el.dataset.origTitle && el.title && !active) el.dataset.origTitle = el.title;
+function _disableButton(id, disabled, reason) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.disabled = disabled;
+  if (disabled) {
+    if (!el.dataset.origTitle) el.dataset.origTitle = el.title || "";
+    el.title = reason;
+  } else {
+    el.title = el.dataset.origTitle || "";
   }
+}
+
+function _refreshGuards() {
+  const sessionMsg = "Désactivé : session de grind en cours";
+  const chargingMsg = "Désactivé : téléphone en recharge";
+  const disabled = _sessionActive || _instanceCharging;
+  const reason = _instanceCharging ? chargingMsg : sessionMsg;
+  for (const id of SESSION_GUARDED_BUTTONS) _disableButton(id, disabled, reason);
+  for (const id of CHARGING_EXTRA_BUTTONS) _disableButton(id, _instanceCharging, chargingMsg);
   for (const id of SESSION_GUARDED_SELECTS) {
     const el = document.getElementById(id);
     if (!el) continue;
-    el.disabled = active;
-    el.title = active ? "Désactivé : session de grind en cours" : "";
+    el.disabled = disabled;
+    el.title = disabled ? reason : "";
   }
-  // Push Max button stays visible-but-disabled when active (Stop is shown).
+}
+
+function _applySessionGuards(active) {
+  _sessionActive = active;
+  _refreshGuards();
+}
+
+function _applyChargingGuard(charging) {
+  _instanceCharging = charging;
+  _refreshGuards();
 }
 
 async function refreshSessionState() {

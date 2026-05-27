@@ -384,6 +384,11 @@ main {
   box-shadow: 0 0 10px rgba(167,139,250,.6);
   animation: pulse 1.2s ease-in-out infinite;
 }
+.inst-dot.charging {
+  background: #f59e0b;
+  box-shadow: 0 0 10px rgba(245,158,11,.7);
+  animation: pulse 1.5s ease-in-out infinite;
+}
 .inst-dot.running::after {
   content: ""; position: absolute; inset: -4px;
   border-radius: 50%;
@@ -433,6 +438,14 @@ main {
   background: rgba(96,165,250,.15);
   color: var(--running);
   border-color: rgba(96,165,250,.35);
+}
+.inst-status-pill.charging {
+  background: rgba(245,158,11,.15);
+  color: #f59e0b;
+  border-color: rgba(245,158,11,.35);
+}
+.inst-status-pill.charging::before {
+  content: "🔌 ";
 }
 .inst-status-pill.stale {
   background: rgba(245,158,11,.12);

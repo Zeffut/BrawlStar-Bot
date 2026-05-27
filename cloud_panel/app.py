@@ -290,15 +290,23 @@ def api_instances() -> list[dict]:
         i["snapshot_age_s"] = snap_age
         i["snapshot_stale"] = snap_age is not None and snap_age > 120
         running = any(db.current_session(a["id"]) for a in accs)
+        # Battery-paused state is reported by the worker in its snapshot.
+        # It supersedes running/ready so the UI can lock actions until
+        # the phone recovers.
+        snap = (conn.last_snapshot if conn else None) or {}
+        battery_paused = bool(snap.get("battery_paused"))
         # Status taxonomy:
         #   offline    — no heartbeat for >120s
         #   booting    — heartbeat received but WS not yet connected
         #   preparing  — WS connected, no snapshot pushed yet (init in progress)
-        #   available  — WS + snapshot fresh
+        #   ready      — WS + snapshot fresh
         #   stale      — WS + snapshot >120s old
         #   running    — active session
+        #   charging   — battery paused (recharging / refusing to play)
         ws_connected = conn is not None
-        if running:
+        if battery_paused and ws_connected and not i["snapshot_stale"]:
+            i["status"] = "charging"
+        elif running:
             i["status"] = "running"
         elif i["snapshot_stale"]:
             i["status"] = "stale"
@@ -310,6 +318,8 @@ def api_instances() -> list[dict]:
             i["status"] = "ready"
         else:
             i["status"] = "offline"
+        i["battery_paused"] = battery_paused
+        i["battery_level"] = snap.get("battery_pct")
         out.append(i)
     return out
 
