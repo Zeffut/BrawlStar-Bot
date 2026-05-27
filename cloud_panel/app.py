@@ -143,6 +143,9 @@ def sync_match(payload: MatchPayload, authorization: str | None = Header(None)) 
         "brawler": payload.brawler,
         "result": payload.result,
         "delta": delta,
+        "trophies_before": payload.trophies_before,
+        "trophies_after": payload.trophies_after,
+        "account_trophies_after": payload.account_trophies_after,
         "timestamp": payload.timestamp or time.time(),
     })
     return {"ok": True, "match_id": mid}

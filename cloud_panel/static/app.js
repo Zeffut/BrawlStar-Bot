@@ -961,6 +961,13 @@ function startSSE() {
       _prependActivity(m);
       const acc = _lastAccounts.find(a => a.tag === m.tag);
       if (acc) {
+        // Live trophy update: the worker computed the new total from the
+        // match delta (no OCR re-read needed). Apply it immediately so
+        // the badge moves in sync with each match — brawlace refresh
+        // later confirms the authoritative value.
+        if (acc.id === selectedAccountId && m.account_trophies_after != null) {
+          _renderAuthoritativeTrophies(m.account_trophies_after);
+        }
         // Refresh brawler trophies via brawlace ~5s later.
         setTimeout(() => {
           fetch(`/api/accounts/${acc.id}/brawlers/refresh`, {method: "POST"})
