@@ -1419,12 +1419,14 @@ tr:hover td { background: rgba(255,255,255,.015); }
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
   padding: 20px;
 }
+.modal-backdrop[hidden] { display: none !important; }
 .modal-panel {
   background: var(--surface-1, #1a1d24);
   border-radius: 14px;
@@ -1517,8 +1519,48 @@ tr:hover td { background: rgba(255,255,255,.015); }
   border-bottom: 1px solid var(--surface-3, #2a2e36);
 }
 .cfg-events-table tr:last-child td { border-bottom: none; }
-.cfg-events-table input[type=checkbox] {
+/* Custom checkboxes — tighter and matches the dark theme */
+.cfg-events-table input[type=checkbox],
+.cfg-toggle input[type=checkbox] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--surface-3, #2a2e36);
+  background: var(--surface-1, #1a1d24);
   cursor: pointer;
-  width: 16px;
-  height: 16px;
+  transition: all 0.15s ease;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.cfg-events-table input[type=checkbox]:hover,
+.cfg-toggle input[type=checkbox]:hover {
+  border-color: var(--running, #60a5fa);
+}
+.cfg-events-table input[type=checkbox]:checked,
+.cfg-toggle input[type=checkbox]:checked {
+  background: var(--running, #60a5fa);
+  border-color: var(--running, #60a5fa);
+}
+.cfg-events-table input[type=checkbox]:checked::after,
+.cfg-toggle input[type=checkbox]:checked::after {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 1px;
+  width: 5px;
+  height: 10px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.cfg-events-table input[type=checkbox]:focus-visible,
+.cfg-toggle input[type=checkbox]:focus-visible {
+  outline: 2px solid var(--running, #60a5fa);
+  outline-offset: 2px;
+}
+.cfg-events-table tr:hover td {
+  background: rgba(255,255,255,0.02);
 }
