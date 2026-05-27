@@ -816,6 +816,61 @@ class GameAPI:
 
     # ---- match playing -------------------------------------------
 
+    def is_brawlstars_running(self) -> bool:
+        """Check via adb pidof whether Brawl Stars is currently running."""
+        try:
+            out = subprocess.run(
+                ["adb", "-s", device.adb_serial(), "shell", "pidof",
+                 "com.supercell.brawlstars"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            return bool(out.stdout.strip())
+        except Exception:
+            return False
+
+    def ensure_brawlstars_at_lobby(self, max_wait_s: float = 120) -> tuple[bool, str]:
+        """Pre-flight for any task launch.
+
+        1. If Brawl Stars isn't running, force-start it.
+        2. Wait until state=lobby (dismissing popups via goto_lobby).
+        Returns (ok, reason).
+        """
+        serial = device.adb_serial()
+        deadline = time.time() + max_wait_s
+        if not self.is_brawlstars_running():
+            log.info("ensure_at_lobby: Brawl Stars not running → launching")
+            try:
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "am", "start", "-n",
+                     "com.supercell.brawlstars/.GameApp"],
+                    timeout=15, check=False,
+                )
+            except Exception as exc:
+                return False, f"failed to start Brawl Stars: {exc}"
+            # Give the splash/loading screen time to advance before we
+            # start dismissing popups.
+            time.sleep(8)
+        # Drive popups → lobby. goto_lobby returns True when it sees lobby.
+        try:
+            reached = self.goto_lobby(max_attempts=30)
+            while not reached and time.time() < deadline:
+                if not self.is_brawlstars_running():
+                    log.warning("ensure_at_lobby: BS process died, relaunching")
+                    subprocess.run(
+                        ["adb", "-s", serial, "shell", "am", "start", "-n",
+                         "com.supercell.brawlstars/.GameApp"],
+                        timeout=15, check=False,
+                    )
+                    time.sleep(8)
+                reached = self.goto_lobby(max_attempts=15)
+            if not reached:
+                return False, "could not reach lobby within timeout"
+            log.info("ensure_at_lobby: lobby reached ✓")
+            return True, "lobby reached"
+        except Exception as exc:
+            log.exception("ensure_at_lobby failed")
+            return False, f"ensure_at_lobby crashed: {exc}"
+
     def play_one_match(self, brawler: str | None = None, timeout_s: float = 420,
                         required_mode: str | None = None) -> dict:
         """Play one match end-to-end, return result.
@@ -833,8 +888,11 @@ class GameAPI:
         ok_bat, bat_reason = self.can_play()
         if not ok_bat:
             return {"ok": False, "error": bat_reason}
-        # Ensure we're on the lobby before checking mode (dismiss popups).
-        self.goto_lobby(max_attempts=8)
+        # Make sure Brawl Stars is open and we're at the lobby before
+        # doing anything. Relaunches the app if it's not running.
+        ok_lobby, lobby_reason = self.ensure_brawlstars_at_lobby()
+        if not ok_lobby:
+            return {"ok": False, "error": lobby_reason}
         if required_mode:
             cur_mode = self.read_current_mode()
             log.info("mode check: current=%r required=%r", cur_mode, required_mode)

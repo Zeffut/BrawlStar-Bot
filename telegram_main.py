@@ -170,6 +170,17 @@ class BotRunner:
                         return False, f"Battery gate: {bat_reason}"
             except Exception:
                 log.exception("pre-session battery check failed")
+            # Make sure Brawl Stars is open and we're at the lobby
+            # before launching the runner thread. Relaunches BS if
+            # it's not running.
+            try:
+                if api is not None:
+                    ok_lobby, lobby_reason = api.ensure_brawlstars_at_lobby()
+                    if not ok_lobby:
+                        log.warning("start denied: %s", lobby_reason)
+                        return False, f"Lobby check: {lobby_reason}"
+            except Exception:
+                log.exception("pre-session lobby check failed")
             if mode == "push_max":
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
