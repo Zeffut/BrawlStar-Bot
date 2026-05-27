@@ -80,6 +80,28 @@ def _ocr_trophies(arr) -> int | None:
         return None
 
 
+def _load_lockscreen_pin() -> str | None:
+    """Read the screen-unlock PIN from cfg/lockscreen.toml.
+
+    The file is gitignored — secrets must never enter the repo.
+    Format:
+        pin = "1234"
+    """
+    try:
+        import tomllib
+        from pathlib import Path
+        p = Path(__file__).resolve().parent / "cfg" / "lockscreen.toml"
+        if not p.exists():
+            return None
+        with p.open("rb") as f:
+            cfg = tomllib.load(f)
+        pin = cfg.get("pin")
+        return str(pin) if pin else None
+    except Exception:
+        log.debug("could not read lockscreen pin", exc_info=True)
+        return None
+
+
 def _adb_screencap() -> Image.Image:
     """Capture a screenshot via `adb exec-out screencap -p`.
 
@@ -268,23 +290,44 @@ class GameAPI:
             log.exception("enter_power_save failed")
 
     def exit_power_save(self) -> None:
-        """Wake screen, unlock if needed, and relaunch Brawl Stars."""
+        """Wake screen, unlock (PIN if configured), relaunch Brawl Stars.
+
+        PIN is read from cfg/lockscreen.toml (gitignored).
+        """
         serial = device.adb_serial()
         try:
+            # 1. Wake the screen.
             ds = subprocess.run(["adb", "-s", serial, "shell", "dumpsys", "display"],
                                 capture_output=True, text=True, timeout=5, check=False).stdout
             if "mScreenState=OFF" in ds:
                 subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "26"],
                                 timeout=5, check=False)
-                time.sleep(0.5)
-            # Swipe up to unlock (no PIN expected on the bot phone).
-            subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "82"],
+                time.sleep(0.6)
+            # 2. Swipe up to reveal the lock screen PIN entry.
+            subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
+                            "540", "1500", "540", "500", "200"],
                             timeout=5, check=False)
-            time.sleep(0.3)
+            time.sleep(0.6)
+            # 3. Type PIN if configured.
+            pin = _load_lockscreen_pin()
+            if pin:
+                # `input text` types the digits in one shot.
+                subprocess.run(["adb", "-s", serial, "shell", "input", "text", pin],
+                                timeout=5, check=False)
+                time.sleep(0.3)
+                # Confirm via ENTER keyevent (works with most launchers).
+                subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "66"],
+                                timeout=5, check=False)
+                time.sleep(0.6)
+            else:
+                # No PIN: try dismiss-keyguard as a generic unlock.
+                subprocess.run(["adb", "-s", serial, "shell", "wm", "dismiss-keyguard"],
+                                timeout=5, check=False)
+            # 4. Relaunch Brawl Stars.
             subprocess.run(["adb", "-s", serial, "shell", "am", "start", "-n",
                             "com.supercell.brawlstars/.GameApp"],
                             timeout=10, check=False)
-            log.info("power-save exited: screen on + game launched")
+            log.info("power-save exited: screen on + unlocked + game launched")
         except Exception:
             log.exception("exit_power_save failed")
 

@@ -24,3 +24,4 @@ logs/
 # Local-only secrets
 cfg/cloud.toml
 venv/
+cfg/lockscreen.toml
