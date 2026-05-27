@@ -195,6 +195,7 @@ def api_push_max_state(account_id: int) -> dict:
         "current_total_trophies": worker.runner._account_trophies,
         "brawlers": [
             {"name": b.name, "trophies": b.trophies,
+             "tier": getattr(b, "tier", "B"),
              "defeat_streak": b.defeat_streak,
              "matches_played": b.matches_played,
              "exhausted": b.exhausted}

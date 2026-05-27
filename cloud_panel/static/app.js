@@ -511,9 +511,10 @@ async function refreshSessionState() {
         ? ` · target ${s.target_total_trophies} 🏆`
         : "";
       banner.hidden = false;
+      const tierTxt = current?.tier ? ` [${current.tier}]` : "";
       banner.innerHTML = `
         <span class="dot"></span>
-        <span><strong>Push Max running</strong> · ${current ? current.name + ' (' + current.trophies + ' 🏆)' : 'rotating'} · ${done}/${total} done${targetTxt}${s.summary ? ' · ' + s.summary : ''}</span>
+        <span><strong>Push Max running</strong> · ${current ? current.name + tierTxt + ' (' + current.trophies + ' 🏆)' : 'rotating'} · ${done}/${total} done${targetTxt}</span>
       `;
       btnPush.hidden = true;
       btnStop.hidden = false;
