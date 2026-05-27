@@ -244,22 +244,55 @@ async function refreshDetail() {
   );
   renderWinRate(acc.win_rate_by_brawler || []);
 
+  // Cap displayed rows to keep the page lightweight. The full history
+  // is still available via the API; tables also become scrollable
+  // (see .list-card max-height in style.css).
+  const MAX_MATCHES_DISPLAYED = 50;
+  const MAX_SESSIONS_DISPLAYED = 20;
+
   const mt = document.querySelector("#matches-table tbody"); mt.innerHTML = "";
-  for (const m of matches.slice(0, 30)) {
+  const shownMatches = matches.slice(0, MAX_MATCHES_DISPLAYED);
+  for (const m of shownMatches) {
     const d = (m.trophies_after ?? 0) - (m.trophies_before ?? 0);
     mt.innerHTML += `<tr><td>${fmtTime(m.timestamp)}</td><td>${m.brawler}</td>
       <td class="result-${m.result}">${m.result}</td>
       <td class="${deltaClass(d)}">${d>=0?'+':''}${d}</td>
       <td>${m.trophies_before} → ${m.trophies_after}</td></tr>`;
   }
+  _updateTableCount("matches-table", shownMatches.length, matches.length);
+
   const st = document.querySelector("#sessions-table tbody"); st.innerHTML = "";
-  for (const s of acc.sessions || []) {
+  const allSessions = acc.sessions || [];
+  const shownSessions = allSessions.slice(0, MAX_SESSIONS_DISPLAYED);
+  for (const s of shownSessions) {
     const d = (s.end_trophies!=null && s.start_trophies!=null) ? s.end_trophies - s.start_trophies : null;
     st.innerHTML += `<tr><td>${fmtDate(s.started_at)}</td><td>${s.brawler}</td>
       <td>${s.target_trophies}</td>
       <td class="${d!=null?deltaClass(d):''}">${d!=null ? (d>=0?'+':'')+d : '—'}</td>
       <td>${s.status}</td></tr>`;
   }
+  _updateTableCount("sessions-table", shownSessions.length, allSessions.length);
+}
+
+function _updateTableCount(tableId, shown, total) {
+  // Inject a small "showing N of M" caption above each table's parent
+  // list-card if there's something to say.
+  const tbl = document.getElementById(tableId);
+  if (!tbl) return;
+  const card = tbl.closest(".list-card");
+  if (!card) return;
+  let cap = card.querySelector(".table-count");
+  if (shown >= total) {
+    if (cap) cap.remove();
+    return;
+  }
+  if (!cap) {
+    cap = document.createElement("div");
+    cap.className = "table-count muted";
+    cap.style.cssText = "font-size:11px;margin:-6px 0 6px;padding:0 2px";
+    card.querySelector("h3")?.after(cap);
+  }
+  cap.textContent = `Affichage ${shown} sur ${total}`;
 }
 
 function renderProgression(labels, trophies, brawlers) {
