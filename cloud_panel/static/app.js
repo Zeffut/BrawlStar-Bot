@@ -72,7 +72,7 @@ async function refreshAll() {
   } catch (e) { return; }
 
   _lastAccounts = accounts;
-  const available = instances.filter(i => i.status === "available" || i.status === "running").length;
+  const available = instances.filter(i => i.status === "ready" || i.status === "running").length;
   document.getElementById("sidebar-meta").textContent =
     `${available}/${instances.length}`;
   // Fleet overview KPIs (one-shot aggregated endpoint).
@@ -83,7 +83,7 @@ async function refreshAll() {
       ? ` ${(b.booting||0)+(b.preparing||0)}⟳`
       : "";
     document.getElementById("fkpi-inst").textContent =
-      `${o.instances_total} (${b.running||0}▶ ${b.available||0}✓${initStr} ${b.stale||0}⚠ ${b.offline||0}○)`;
+      `${o.instances_total} (${b.running||0}▶ ${b.ready||0}✓${initStr} ${b.stale||0}⚠ ${b.offline||0}○)`;
     document.getElementById("fkpi-sess").textContent = o.active_sessions ?? "0";
     document.getElementById("fkpi-troph").textContent = (o.total_trophies ?? 0).toLocaleString();
     const t = o.today || {};
@@ -132,9 +132,7 @@ async function refreshAll() {
     // Head
     const head = document.createElement("div");
     head.className = "instance-head";
-    const statusLabel = inst.status === "running" ? "running"
-                      : inst.status === "available" ? "available"
-                      : "offline";
+    const statusLabel = inst.status;  // running/ready/preparing/booting/stale/offline
     head.innerHTML = `
       <span class="inst-dot ${inst.status}"></span>
       <div class="inst-main">

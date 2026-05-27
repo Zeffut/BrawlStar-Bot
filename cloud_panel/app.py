@@ -264,7 +264,7 @@ def api_instances() -> list[dict]:
         elif i["fresh"] and not ws_connected:
             i["status"] = "booting"
         elif i["fresh"]:
-            i["status"] = "available"
+            i["status"] = "ready"
         else:
             i["status"] = "offline"
         out.append(i)
@@ -333,7 +333,7 @@ def fleet_overview() -> dict:
     now = time.time()
     today_start = now - (now % 86400)
     insts = api_instances()  # reuses status logic
-    breakdown = {"running": 0, "available": 0, "preparing": 0, "booting": 0, "stale": 0, "offline": 0}
+    breakdown = {"running": 0, "ready": 0, "preparing": 0, "booting": 0, "stale": 0, "offline": 0}
     for i in insts:
         breakdown[i["status"]] = breakdown.get(i["status"], 0) + 1
     accs = db.list_accounts()
@@ -705,7 +705,7 @@ async def api_instance_screenshot(instance_db_id: int, refresh: bool = False) ->
                     "age_s": 0.0,
                 }
         except Exception:
-            pass  # fall through to cached
+            pass
     if not conn.last_screenshot_b64:
         return {"available": False}
     return {
