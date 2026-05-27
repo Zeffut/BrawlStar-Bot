@@ -829,7 +829,7 @@ async def api_account_game_select(account_id: int, payload: GameSelectBrawlerPay
 
 @app.post("/api/accounts/{account_id}/game/goto_lobby")
 async def api_account_game_goto_lobby(account_id: int) -> dict:
-    return await _cmd_for_account(account_id, "game_goto_lobby", {}, timeout_s=30)
+    return await _cmd_for_account(account_id, "game_goto_lobby", {}, timeout_s=150)
 
 
 class GamePlayOneMatchPayload(BaseModel):

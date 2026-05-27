@@ -395,7 +395,8 @@ def _cmd_game_tap(args: dict) -> dict:
 
 
 def _cmd_game_goto_lobby(args: dict) -> dict:
-    return _local_post("/api/game/goto_lobby")
+    # goto_lobby loops up to 20 iterations * ~5s each = 100s worst case
+    return _local_post("/api/game/goto_lobby", timeout=140)
 
 
 def _cmd_game_play_one_match(args: dict) -> dict:

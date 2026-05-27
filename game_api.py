@@ -532,6 +532,10 @@ class GameAPI:
                 self._tap_back()
             elif st == "star_drop":
                 self._long_press(0.5, 0.5, 4000)
+                # After long-press, a reward screen often appears that
+                # dismisses on tap-anywhere.
+                time.sleep(0.8)
+                self.tap(0.5, 0.5)
             elif st in ("end", "trophy_reward"):
                 self.tap(0.92, 0.94)
                 time.sleep(0.4)
@@ -584,13 +588,17 @@ class GameAPI:
                     if cx > 0 and cy > 0:
                         self.tap(cx / w, cy / h)
                         return f"tap CONTINUE at OCR {key!r}"
-            # 3. Reward title detected (CRÉDITS, etc.) but no CONTINUE text —
-            #    tap canonical bottom-right + bottom-center as fallback.
+            # 3. Reward title detected (CRÉDITS, etc.) but no CONTINUE text.
+            #    Star drop reward screens dismiss on tap-anywhere; tap
+            #    center first (universal), then canonical bottom positions
+            #    as fallback for other reward layouts.
             if any(t in joined for t in self._OCR_REWARD_TITLES):
-                self.tap(0.92, 0.94)
+                self.tap(0.5, 0.5)        # center — works for star-drop rewards
+                time.sleep(0.4)
+                self.tap(0.92, 0.94)      # bottom-right CONTINUER
                 time.sleep(0.3)
-                self.tap(0.5, 0.93)
-                return "tap canonical (reward title)"
+                self.tap(0.5, 0.93)       # bottom-center CONTINUE
+                return "tap multi (reward title)"
         except Exception:
             log.debug("_dismiss_via_ocr failed", exc_info=True)
         return None
