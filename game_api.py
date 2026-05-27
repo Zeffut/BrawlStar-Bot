@@ -526,13 +526,11 @@ class GameAPI:
                 same_state_count = 0
                 last_state = st
             # SHOTGUN: try multi-action dismiss for unknown / stuck states.
-            # Star drop = long-press; rewards = tap-center; popup with X
-            # = tap top-right corner; CONTINUE button = tap bottom-right
-            # or bottom-center; menu = BACK key.
             log.info("goto_lobby[%d]: SHOTGUN dismiss (state=%s, stuck=%d)",
                      i, st, same_state_count)
-            # 1. Long-press center (covers star-drop TAP AND HOLD).
-            self._long_press(0.5, 0.5, 2500)
+            # 1. Long-press center 5s — star drop "TOUCHEZ ET MAINTENEZ"
+            #    needs a full hold; anything <4s gets dismissed as a tap.
+            self._long_press(0.5, 0.5, 5000)
             time.sleep(0.5)
             # 2. Tap-anywhere center (covers most reward dismisses).
             self.tap(0.5, 0.5)
@@ -581,7 +579,7 @@ class GameAPI:
             h, w = arr.shape[:2]
             # 1. "TOUCHEZ ET MAINTENEZ" / "TAP AND HOLD" → long-press center
             if any(k in joined for k in self._OCR_HOLD_KEYWORDS):
-                self._long_press(0.5, 0.5, 4000)
+                self._long_press(0.5, 0.5, 5000)
                 return "long-press (HOLD keyword)"
             # 2. CONTINUER button — find its position and tap precisely.
             for key, val in text.items():
@@ -647,10 +645,12 @@ class GameAPI:
         dw, dh = device.device_size()
         x = int(x_ratio * dw)
         y = int(y_ratio * dh)
+        # Some Android versions treat swipe with start==end as a tap.
+        # Add 1px Y offset so the gesture is reliably a long-press.
         try:
             subprocess.run(
                 ["adb", "-s", device.adb_serial(), "shell", "input", "swipe",
-                 str(x), str(y), str(x), str(y), str(duration_ms)],
+                 str(x), str(y), str(x), str(y + 1), str(duration_ms)],
                 timeout=duration_ms / 1000 + 3, check=False,
             )
         except Exception:
