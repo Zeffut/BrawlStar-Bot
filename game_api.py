@@ -492,33 +492,31 @@ class GameAPI:
 
     # ---- navigation ----------------------------------------------
 
-    def goto_lobby(self, max_attempts: int = 20) -> bool:
+    def goto_lobby(self, max_attempts: int = 30) -> bool:
         """Aggressively close everything and reach the lobby.
 
-        Tries multiple dismissal strategies per attempt: tap likely
-        CONTINUE buttons (center-bottom, bottom-right), long-press for
-        star drops, BACK key, OK button. Loops until lobby or max_attempts.
-        Also auto-refuses team invitations.
+        Strategy: shotgun. Try every known dismissal in sequence per
+        iteration. One of them will work regardless of what screen we're
+        actually on. Logs every action so we can debug what worked.
         """
         last_state = None
         same_state_count = 0
         for i in range(max_attempts):
             st = self.state()
+            log.info("goto_lobby[%d] state=%s", i, st)
             if st == "lobby":
                 if self._dismiss_team_invite():
                     time.sleep(1.0)
                     continue
                 return True
-            # Check overlay popups (team invite, friend request).
             if self._dismiss_team_invite():
+                log.info("goto_lobby[%d]: dismissed team invite", i)
                 time.sleep(1.0)
                 continue
-            # OCR-based detection of star-drop / reward screens that the
-            # template matcher misses on phones (template was calibrated
-            # for BlueStacks 1920x1080).
+            # OCR-based detection of reward / star-drop screens.
             ocr_action = self._dismiss_via_ocr()
             if ocr_action:
-                log.debug("goto_lobby OCR action: %s", ocr_action)
+                log.info("goto_lobby[%d]: OCR action: %s", i, ocr_action)
                 time.sleep(1.5)
                 continue
             # Track stuck.
@@ -527,28 +525,32 @@ class GameAPI:
             else:
                 same_state_count = 0
                 last_state = st
-            # State-specific dismiss.
-            if st in ("popup", "shop", "brawler_selection"):
-                self._tap_back()
-            elif st == "star_drop":
-                self._long_press(0.5, 0.5, 4000)
-                # After long-press, a reward screen often appears that
-                # dismisses on tap-anywhere.
-                time.sleep(0.8)
-                self.tap(0.5, 0.5)
-            elif st in ("end", "trophy_reward"):
-                self.tap(0.92, 0.94)
-                time.sleep(0.4)
-                self.tap(0.5, 0.93)
-            else:
-                self.tap(0.92, 0.94)
-                time.sleep(0.3)
-                self.tap(0.5, 0.93)
-                if same_state_count >= 2:
-                    self._tap_back()
-                if same_state_count >= 4:
-                    self._long_press(0.5, 0.5, 4000)
+            # SHOTGUN: try multi-action dismiss for unknown / stuck states.
+            # Star drop = long-press; rewards = tap-center; popup with X
+            # = tap top-right corner; CONTINUE button = tap bottom-right
+            # or bottom-center; menu = BACK key.
+            log.info("goto_lobby[%d]: SHOTGUN dismiss (state=%s, stuck=%d)",
+                     i, st, same_state_count)
+            # 1. Long-press center (covers star-drop TAP AND HOLD).
+            self._long_press(0.5, 0.5, 2500)
+            time.sleep(0.5)
+            # 2. Tap-anywhere center (covers most reward dismisses).
+            self.tap(0.5, 0.5)
+            time.sleep(0.4)
+            # 3. CONTINUER bottom-right (Brawl Stars French).
+            self.tap(0.92, 0.94)
+            time.sleep(0.3)
+            # 4. CONTINUE bottom-center.
+            self.tap(0.5, 0.93)
+            time.sleep(0.3)
+            # 5. Close-X top-right (popups with X icon).
+            self.tap(0.96, 0.05)
+            time.sleep(0.3)
+            # 6. BACK key (menus).
+            self._tap_back()
             time.sleep(1.2)
+        log.warning("goto_lobby gave up after %d attempts (still on %s)",
+                    max_attempts, self.state())
         return self.state() == "lobby"
 
     # Keywords we recognize on post-match reward screens.
