@@ -601,9 +601,20 @@ main {
   border-color: var(--primary);
   color: var(--primary-2);
 }
-.header-btn:disabled {
-  opacity: .5;
-  cursor: wait;
+.header-btn:disabled,
+.ctl:disabled,
+.gc-inline select:disabled,
+.refresh-btn:disabled,
+.gc-capture-btn:disabled {
+  opacity: .4 !important;
+  cursor: not-allowed !important;
+  pointer-events: auto;
+}
+.header-btn:disabled:hover,
+.ctl:disabled:hover {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--border-2);
 }
 .header-btn.primary {
   background: linear-gradient(135deg, var(--primary), #3b6fd4);

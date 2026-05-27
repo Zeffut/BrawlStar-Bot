@@ -465,13 +465,41 @@ document.addEventListener("click", e => {
 
 // ----------------- bot session control -----------------
 
+// Tracks whether a grinding session is active for the selected account.
+let _sessionActive = false;
+
+// Buttons that mustn't run during a session (could derail the bot).
+const SESSION_GUARDED_BUTTONS = [
+  "gc-play-one", "gc-goto-lobby", "gc-refresh-state",
+  "gc-refresh-brawlers", "gc-capture",
+];
+const SESSION_GUARDED_SELECTS = ["gc-brawler-select"];
+
+function _applySessionGuards(active) {
+  _sessionActive = active;
+  for (const id of SESSION_GUARDED_BUTTONS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.disabled = active;
+    el.title = active ? "Désactivé : session de grind en cours" : el.dataset.origTitle || "";
+    if (!el.dataset.origTitle && el.title && !active) el.dataset.origTitle = el.title;
+  }
+  for (const id of SESSION_GUARDED_SELECTS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.disabled = active;
+    el.title = active ? "Désactivé : session de grind en cours" : "";
+  }
+  // Push Max button stays visible-but-disabled when active (Stop is shown).
+}
+
 async function refreshSessionState() {
   if (!selectedAccountId) return;
   const banner = document.getElementById("session-banner");
   const btnPush = document.getElementById("btn-push-max");
   const btnStop = document.getElementById("btn-stop");
   try {
-    const r = await api(`/api/accounts/${selectedAccountId}/session_state`);
+    const r = await api(`/api/accounts/${selectedAccountId}/session_state`, {silent: true});
     if (r.ok && r.data && r.data.ok && r.data.state && r.data.state.active) {
       const s = r.data.state;
       const brawlers = s.brawlers || [];
@@ -488,15 +516,18 @@ async function refreshSessionState() {
       `;
       btnPush.hidden = true;
       btnStop.hidden = false;
+      _applySessionGuards(true);
     } else {
       banner.hidden = true;
       btnPush.hidden = false;
       btnStop.hidden = true;
+      _applySessionGuards(false);
     }
   } catch (e) {
     banner.hidden = true;
     btnPush.hidden = false;
     btnStop.hidden = true;
+    _applySessionGuards(false);
   }
 }
 
@@ -886,6 +917,11 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
 
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();
+
+// Keep session-active guards fresh even when the user is idle on the panel.
+setInterval(() => {
+  if (selectedAccountId) refreshSessionState();
+}, 10000);
 
 // ----------------- SSE live stream -----------------
 //
