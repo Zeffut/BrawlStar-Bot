@@ -1088,64 +1088,59 @@ def main() -> int:
     from panel import app as panel_module
     panel_module.set_shared_runner(bot.runner)
     _start_panel_thread()
-    # Early heartbeat: register the instance in the cloud panel BEFORE
-    # host_bootstrap so the user sees a 'booting' card immediately
-    # instead of waiting up to 2 min.
+    # ---- Phase 1: bring the instance ONLINE as fast as possible ----
+    # Heartbeat + WS connection + account push BEFORE the slow init steps.
+    # The user sees "preparing" status until phase 2 completes.
     try:
         if cloud_sync.is_enabled():
-            cloud_sync.heartbeat(metadata={"booting": True})
+            cloud_sync.heartbeat(metadata={"preparing": True})
             cloud_sync.start_heartbeat_loop()
-            log.info("early heartbeat sent — instance visible in cloud panel as 'booting'")
+            cloud_sync.start_history_sync_loop()
+            cloud_sync.start_brawlers_refresh_loop()
+            for acc in db.list_accounts():
+                try:
+                    cloud_sync.account(acc["tag"], acc.get("name"))
+                except Exception: pass
+            log.info("Phase 1 ok — instance online (preparing)")
     except Exception:
-        log.exception("early heartbeat failed (non-fatal)")
-    # Host bootstrap — ensures BlueStacks + ADB + game package are ready
-    # before the bot starts playing. Runs once at startup, non-blocking
-    # on Mac/Linux. Errors surface via cloud_sync + Telegram automatically.
-    try:
-        import host_bootstrap
-        if not host_bootstrap.bootstrap_host():
-            log.warning("host_bootstrap reported a problem — bot will start anyway "
-                        "and rely on the user to fix manually")
-    except Exception:
-        log.exception("host_bootstrap raised")
-    # Eager-init the GameAPI: creates the shared WindowController + LobbyAutomation
-    # so the cloud panel can drive game primitives (state, screenshot, brawler list,
-    # play match) even before a session is started by the user.
-    try:
-        import game_api
-        from window_controller import WindowController
-        from lobby_automation import LobbyAutomation
-        _shared_wc = WindowController()
-        _shared_la = LobbyAutomation(_shared_wc)
-        _SHARED_RUNTIME["wc"] = _shared_wc
-        _SHARED_RUNTIME["la"] = _shared_la
-        game_api.init(_shared_wc, _shared_la).set_runner(bot.runner)
-        log.info("GameAPI ready — game primitives available remotely")
-    except Exception:
-        log.exception("GameAPI bootstrap failed — remote game control will be degraded")
-    # Cloud sync — pushes events to the central VPS panel if cfg/cloud.toml is enabled.
-    # WebSocket link to cloud panel (for device management commands +
-    # log/health/screenshot streams). Silent no-op when cloud disabled.
+        log.exception("phase 1 cloud_sync failed (non-fatal)")
+    # WS link — open BEFORE host_bootstrap so the cloud panel sees us
+    # as connected immediately. Commands targeting GameAPI will return
+    # 503 until phase 2 finishes; that's acceptable during preparing.
     try:
         import worker_link
         worker_link.start()
     except Exception:
         log.exception("worker_link failed to start")
-    if cloud_sync.is_enabled():
-        cloud_sync.start_heartbeat_loop()
-        cloud_sync.start_history_sync_loop()
-        cloud_sync.start_brawlers_refresh_loop()
-        # Push every known local account on startup so the cloud panel
-        # reflects them even if ADB-based redetection fails right now.
-        for acc in db.list_accounts():
+
+    # ---- Phase 2: heavy init (game launch + GameAPI) in background ----
+    # Keeps the WS / heartbeat / Telegram loop responsive during boot.
+    def _phase2_init():
+        try:
+            import host_bootstrap
+            if not host_bootstrap.bootstrap_host():
+                log.warning("host_bootstrap reported a problem; continuing")
+        except Exception:
+            log.exception("host_bootstrap raised")
+        try:
+            import game_api
+            from window_controller import WindowController
+            from lobby_automation import LobbyAutomation
+            _shared_wc = WindowController()
+            _shared_la = LobbyAutomation(_shared_wc)
+            _SHARED_RUNTIME["wc"] = _shared_wc
+            _SHARED_RUNTIME["la"] = _shared_la
+            game_api.init(_shared_wc, _shared_la).set_runner(bot.runner)
+            log.info("Phase 2 ok — GameAPI ready, instance fully online")
+            # Flip the heartbeat metadata to "ready" so the cloud
+            # transitions us out of 'preparing'.
             try:
-                cloud_sync.account(acc["tag"], acc.get("name"))
+                cloud_sync.heartbeat(metadata={"preparing": False, "ready": True})
             except Exception:
-                log.exception("cloud account push failed for %s", acc.get("tag"))
-        log.info("cloud sync enabled, heartbeat thread armed, %d accounts pushed",
-                 len(db.list_accounts()))
-    else:
-        log.info("cloud sync disabled (no cfg/cloud.toml or enabled=false)")
+                pass
+        except Exception:
+            log.exception("phase 2 (GameAPI) failed — remote control degraded")
+    threading.Thread(target=_phase2_init, daemon=True, name="phase2-init").start()
     # Best-effort: detect the connected account at startup so the panel
     # has something to show before the user runs /start. Silently skips
     # if the game isn't on the lobby screen.

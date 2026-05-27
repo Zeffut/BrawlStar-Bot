@@ -79,9 +79,11 @@ async function refreshAll() {
   api("/api/fleet/overview", {silent: true}).then(o => {
     if (!o) return;
     const b = o.instances_by_status || {};
-    const bootStr = b.booting ? ` ${b.booting}⟳` : "";
+    const initStr = (b.booting || b.preparing)
+      ? ` ${(b.booting||0)+(b.preparing||0)}⟳`
+      : "";
     document.getElementById("fkpi-inst").textContent =
-      `${o.instances_total} (${b.running||0}▶ ${b.available||0}✓${bootStr} ${b.stale||0}⚠ ${b.offline||0}○)`;
+      `${o.instances_total} (${b.running||0}▶ ${b.available||0}✓${initStr} ${b.stale||0}⚠ ${b.offline||0}○)`;
     document.getElementById("fkpi-sess").textContent = o.active_sessions ?? "0";
     document.getElementById("fkpi-troph").textContent = (o.total_trophies ?? 0).toLocaleString();
     const t = o.today || {};
