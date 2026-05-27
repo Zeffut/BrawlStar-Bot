@@ -136,7 +136,9 @@ class WorkerHub:
             conn = WorkerConnection(instance_id=instance_id, ws=ws)
             self._conns[instance_id] = conn
             log.info("worker connected: %s (total=%d)", instance_id, len(self._conns))
-            return conn
+        # Notify browsers (outside the lock to avoid re-entrant issues).
+        BUS.publish({"type": "instance_connected", "instance_id": instance_id})
+        return conn
 
     async def unregister(self, conn: WorkerConnection) -> None:
         async with self._lock:
@@ -149,6 +151,8 @@ class WorkerHub:
             for fut in conn.pending.values():
                 if not fut.done():
                     fut.set_exception(ConnectionError("worker disconnected"))
+        BUS.publish({"type": "instance_disconnected",
+                     "instance_id": conn.instance_id})
 
     def get(self, instance_id: str) -> WorkerConnection | None:
         return self._conns.get(instance_id)

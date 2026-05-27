@@ -994,6 +994,13 @@ function startSSE() {
           refreshDetail();
         }
       }
+    } else if (m.type === "instance_connected") {
+      // Worker just (re)connected — sidebar + KPIs need a refresh.
+      showToast(`Instance ${m.instance_id} connected`, "ok");
+      refreshAll();
+    } else if (m.type === "instance_disconnected") {
+      showToast(`Instance ${m.instance_id} disconnected`, "err");
+      refreshAll();
     }
   });
   _sse.addEventListener("error", () => {
