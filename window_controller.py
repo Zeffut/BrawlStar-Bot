@@ -119,14 +119,31 @@ class WindowController:
             print("cannot restart: No ADB device connected, manual restart is required")
 
     def screenshot(self, array=False):
-        # scrcpy frame stream is unreliable with PyAV>=10 on py3.12 (frames
-        # freeze after the first one). Fall back to adb exec-out screencap
-        # — slower (~400-600ms) but always returns the real-time frame.
-        # If scrcpy IS giving us a fresh frame (<2s old) we use it instead.
+        # Capture priority (each step is much faster than the next):
+        #   1. ScreenRecorder H264 pipe (~30 fps, hot frame in memory)
+        #   2. wc.last_frame if <2s old (legacy scrcpy or recent capture)
+        #   3. adb screencap -p (PNG, ~600ms, last resort)
         frame = None
-        with self.frame_lock:
-            if self.last_frame is not None and (time.time() - self.last_frame_time) < 2.0:
-                frame = self.last_frame.copy()
+        # 1. Continuous H264 pipe (lazy-init on first call).
+        try:
+            import screen_capture as _sc
+            rec = _sc.get()
+            if rec is not None:
+                f = rec.get_frame()
+                age = rec.get_frame_age()
+                if f is not None and age is not None and age < 1.0:
+                    frame = f
+                    with self.frame_lock:
+                        self.last_frame = f
+                        self.last_frame_time = rec.last_frame_time
+        except Exception:
+            pass
+        # 2. Cached frame from previous capture (any source).
+        if frame is None:
+            with self.frame_lock:
+                if self.last_frame is not None and (time.time() - self.last_frame_time) < 2.0:
+                    frame = self.last_frame.copy()
+        # 3. adb screencap -p fallback.
         if frame is None:
             import subprocess, io as _io
             import device as _device
@@ -137,8 +154,9 @@ class WindowController:
                 )
                 pil = Image.open(_io.BytesIO(out.stdout)).convert("RGB")
                 frame_rgb = cv2.cvtColor(np_from_pil(pil), cv2.COLOR_RGB2BGR)
-                self.last_frame = frame_rgb
-                self.last_frame_time = time.time()
+                with self.frame_lock:
+                    self.last_frame = frame_rgb
+                    self.last_frame_time = time.time()
                 frame = frame_rgb
             except Exception as exc:
                 raise ConnectionError(f"adb screencap failed: {exc}")

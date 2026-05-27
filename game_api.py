@@ -137,15 +137,27 @@ class GameAPI:
     def _grab(self) -> Image.Image:
         """Return a fresh PIL screenshot.
 
-        Priority order (avoids ADB contention while the bot is playing):
-        1. wc.last_frame if recent (<15s, since snapshot loop refreshes it)
-        2. spawn adb screencap (also writes back to wc.last_frame so the
-           next call hits the cache)
-        3. wc.last_frame at any age → last resort
+        Priority order:
+        1. ScreenRecorder H264 pipe (~30fps, frame age <1s in normal ops)
+        2. wc.last_frame if recent (<15s)
+        3. adb screencap (~600ms PNG fallback)
+        4. wc.last_frame at any age → last resort
         """
         import cv2
         wc = self.wc
-        # 1. Fresh shared frame.
+        # 1. ScreenRecorder pipe.
+        try:
+            import screen_capture as _sc
+            rec = _sc.get()
+            if rec is not None:
+                f = rec.get_frame()
+                age = rec.get_frame_age()
+                if f is not None and age is not None and age < 2.0:
+                    rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
+                    return Image.fromarray(rgb)
+        except Exception:
+            log.debug("screenrec grab failed", exc_info=True)
+        # 2. Shared frame.
         try:
             if wc is not None and getattr(wc, "last_frame", None) is not None:
                 age = time.time() - getattr(wc, "last_frame_time", 0)

@@ -338,16 +338,28 @@ async def game_snapshot() -> dict:
 
 @app.get("/api/game/diag")
 def game_diag() -> dict:
-    """Diagnostic: shows whether scrcpy is feeding fresh frames."""
+    """Diagnostic: capture pipeline stats."""
     import time as _t
     g = _game()
     wc = g.wc
-    age = round(_t.time() - getattr(wc, "last_frame_time", 0), 2) if getattr(wc, "last_frame_time", 0) else None
-    return {
-        "scrcpy_frame_age_s": age,
-        "scrcpy_alive": age is not None and age < 5,
+    out = {
+        "wc_frame_age_s": round(_t.time() - getattr(wc, "last_frame_time", 0), 2)
+            if getattr(wc, "last_frame_time", 0) else None,
         "resolution": [wc.width, wc.height] if wc.width else None,
     }
+    try:
+        import screen_capture as _sc
+        rec = _sc.get()
+        if rec is not None:
+            out["screenrec"] = {
+                "alive": rec.alive,
+                "frames_decoded": rec.frames_decoded,
+                "frame_age_s": round(rec.get_frame_age() or 0, 2),
+                "device_size": [rec._device_w, rec._device_h],
+            }
+    except Exception as exc:
+        out["screenrec"] = {"error": str(exc)}
+    return out
 
 
 @app.get("/api/game/screenshot")
