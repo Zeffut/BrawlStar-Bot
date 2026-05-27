@@ -99,6 +99,36 @@ def init() -> None:
             c.execute("ALTER TABLE accounts ADD COLUMN brawlers_json TEXT")
         if "brawlers_refreshed_at" not in existing:
             c.execute("ALTER TABLE accounts ADD COLUMN brawlers_refreshed_at REAL")
+        # Snapshot persistence on instances.
+        inst_cols = {r["name"] for r in c.execute("PRAGMA table_info(instances)").fetchall()}
+        if "last_snapshot_json" not in inst_cols:
+            c.execute("ALTER TABLE instances ADD COLUMN last_snapshot_json TEXT")
+        if "last_snapshot_at" not in inst_cols:
+            c.execute("ALTER TABLE instances ADD COLUMN last_snapshot_at REAL")
+
+
+def save_instance_snapshot(instance_id: str, snapshot: dict) -> None:
+    """Persist the latest snapshot for an instance so it survives DC."""
+    with _lock:
+        conn().execute(
+            "UPDATE instances SET last_snapshot_json = ?, last_snapshot_at = ? "
+            "WHERE instance_id = ?",
+            (json.dumps(snapshot), time.time(), instance_id),
+        )
+
+
+def load_instance_snapshot(instance_id: str) -> tuple[dict | None, float | None]:
+    with _lock:
+        r = conn().execute(
+            "SELECT last_snapshot_json, last_snapshot_at FROM instances WHERE instance_id = ?",
+            (instance_id,),
+        ).fetchone()
+    if not r or not r["last_snapshot_json"]:
+        return None, None
+    try:
+        return json.loads(r["last_snapshot_json"]), r["last_snapshot_at"]
+    except Exception:
+        return None, None
 
 
 def set_account_brawlers(account_id: int, brawlers: list[dict]) -> None:

@@ -976,7 +976,8 @@ function onSnapshot(snap) {
   // to this instance.
   const acc = _lastAccounts.find(a => a.id === selectedAccountId);
   if (acc && acc.instance_uid === snap.instance_id) {
-    if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state;
+    const staleTag = snap.stale ? " (last seen)" : "";
+    if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state + staleTag;
     if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
   }
 

@@ -225,6 +225,13 @@ async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = 
             elif mtype == "snapshot":
                 data = msg.get("data") or {}
                 conn.last_snapshot = {**data, "_pushed_at": time.time()}
+                # Persist to DB so the panel shows last-known data even
+                # when the worker disconnects.
+                try:
+                    import db as _db
+                    _db.save_instance_snapshot(instance_id, data)
+                except Exception:
+                    log.debug("snapshot persist failed", exc_info=True)
                 # Broadcast to SSE subscribers (browsers).
                 BUS.publish({
                     "type": "snapshot",

@@ -337,16 +337,49 @@ def _bootstrap_linux() -> bool:
             else:
                 same_state_count = 0
                 last_state = state
-            # In a menu/sub-screen for >=2 iterations -> safe BACK to escape.
-            if state in ("shop", "brawler_selection", "popup") and same_state_count >= 2:
-                log.info("stuck in state=%s for %d iters -> BACK key",
-                         state, same_state_count + 1)
-                subprocess.run(
-                    [adb, "-s", serial, "shell", "input", "keyevent", "4"],
-                    timeout=5,
-                )
-                time.sleep(1.5)
-                continue
+            # State-specific stuck recovery (>=2 iterations on the same screen).
+            if same_state_count >= 2:
+                if state in ("shop", "brawler_selection", "popup"):
+                    log.info("stuck in state=%s for %d iters -> BACK key",
+                             state, same_state_count + 1)
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "keyevent", "4"],
+                        timeout=5,
+                    )
+                    time.sleep(1.5)
+                    continue
+                elif state == "star_drop":
+                    log.info("stuck in star_drop -> long-press center")
+                    # 1080-height phone: center is (sw/2, sh/2). Use 4s long-press.
+                    sw = img.width
+                    sh = img.height
+                    cx, cy = sw // 2, sh // 2
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "swipe",
+                         str(cx), str(cy), str(cx), str(cy), "4000"],
+                        timeout=8,
+                    )
+                    time.sleep(1.5)
+                    continue
+                elif state in ("end", "trophy_reward", "match"):
+                    log.info("stuck in state=%s -> tap CONTINUE candidates",
+                             state)
+                    sw = img.width; sh = img.height
+                    # Bottom-right CONTINUER (Brawl Stars in French).
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "tap",
+                         str(int(sw * 0.92)), str(int(sh * 0.94))],
+                        timeout=5,
+                    )
+                    time.sleep(0.4)
+                    # Bottom-center CONTINUE (some reward screens).
+                    subprocess.run(
+                        [adb, "-s", serial, "shell", "input", "tap",
+                         str(int(sw * 0.5)), str(int(sh * 0.93))],
+                        timeout=5,
+                    )
+                    time.sleep(1.5)
+                    continue
             # Find X button via template matching. Tap it if found.
             pos = find_template_center(img, TPL) if TPL is not None else None
             if pos:

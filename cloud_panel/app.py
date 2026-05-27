@@ -427,13 +427,29 @@ async def events_stream(request: Request) -> StreamingResponse:
             for ev in BUS.replay_since(last_id):
                 yield f"id: {ev['_id']}\ndata: " + _json.dumps(ev) + "\n\n"
         # 2. Initial snapshot per instance (idempotent for new clients).
+        #    Prefer live in-memory, fall back to DB-persisted so the UI
+        #    shows last-known data even for offline instances.
+        seen_ids = set()
         for conn in HUB.list():
             if conn.last_snapshot:
+                seen_ids.add(conn.instance_id)
                 yield "data: " + _json.dumps({
                     "type": "snapshot",
                     "instance_id": conn.instance_id,
                     **{k: v for k, v in conn.last_snapshot.items() if k != "_pushed_at"},
                 }) + "\n\n"
+        for inst in db.list_instances():
+            if inst["instance_id"] in seen_ids:
+                continue
+            snap, ts = db.load_instance_snapshot(inst["instance_id"])
+            if not snap:
+                continue
+            yield "data: " + _json.dumps({
+                "type": "snapshot",
+                "instance_id": inst["instance_id"],
+                "stale": True,
+                **snap,
+            }) + "\n\n"
         yield "data: " + _json.dumps({"type": "ready"}) + "\n\n"
         # 3. Live stream.
         try:
@@ -454,12 +470,27 @@ async def events_stream(request: Request) -> StreamingResponse:
 
 @app.get("/api/instances/{instance_db_id}/snapshot")
 def api_instance_snapshot(instance_db_id: int) -> dict:
-    """Return the last cached snapshot (state, trophies, account_tag, ts)."""
+    """Return the last cached snapshot (state, trophies, account_tag, ts).
+
+    Prefers the in-memory snapshot (worker connected). Falls back to the
+    DB-persisted last-known snapshot when offline.
+    """
     inst_id = _resolve_instance(instance_db_id)
+    # 1. Live: in-memory snapshot from current WS connection.
     conn = HUB.get(inst_id) if inst_id else None
-    if conn is None or not conn.last_snapshot:
-        return {"available": False}
-    return {"available": True, **conn.last_snapshot}
+    if conn and conn.last_snapshot:
+        return {"available": True, "source": "live", **conn.last_snapshot}
+    # 2. Stale: last persisted snapshot from DB.
+    if inst_id:
+        snap, ts = db.load_instance_snapshot(inst_id)
+        if snap:
+            return {
+                "available": True, "source": "db",
+                "stale": True,
+                "_pushed_at": ts,
+                **snap,
+            }
+    return {"available": False}
 
 
 # ====================================================================
