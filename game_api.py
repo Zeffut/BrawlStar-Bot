@@ -408,12 +408,28 @@ class GameAPI:
         except Exception:
             pass
         bat = self.battery_status()
+        lvl = bat.get("level")
+        # Compute paused from level directly so the snapshot always
+        # reflects current battery state even when can_play() hasn't
+        # been called recently (e.g. a long match is in progress).
+        # Hysteresis: stay paused under RESUME if the flag is already set.
+        cached_paused = getattr(self, "_battery_paused", False)
+        if lvl is None:
+            paused = True  # unknown level = treat as paused
+        elif lvl < BATTERY_LOW_PCT:
+            paused = True
+        elif cached_paused and lvl < BATTERY_RESUME_PCT:
+            paused = True
+        else:
+            paused = False
+        # Keep the cached flag in sync so other paths agree.
+        self._battery_paused = paused
         return {
             "state": st,
             "trophies": trophies,
-            "battery_pct": bat.get("level"),
+            "battery_pct": lvl,
             "battery_charging": bat.get("charging"),
-            "battery_paused": getattr(self, "_battery_paused", False),
+            "battery_paused": paused,
             "ts": round(time.time(), 2),
         }
 
