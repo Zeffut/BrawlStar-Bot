@@ -1,8 +1,16 @@
 import unittest
 from unittest.mock import MagicMock, patch
-from PIL import Image
 
-from lobby_automation import LobbyAutomation
+import pytest
+
+# Skip cleanly if heavy bot deps aren't installed in this env (easyocr,
+# google_play_scraper, …). On the HP / CI with the full requirements,
+# these imports succeed and the tests run normally.
+try:
+    from PIL import Image  # noqa: F401
+    from lobby_automation import LobbyAutomation
+except ImportError as _exc:
+    pytest.skip(f"lobby_automation deps missing: {_exc}", allow_module_level=True)
 
 class TestLobbyAutomation(unittest.TestCase):
     

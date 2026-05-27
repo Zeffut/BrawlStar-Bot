@@ -41,7 +41,9 @@ def _startup() -> None:
 def _require_auth(authorization: str | None) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "missing Bearer token")
-    if authorization.removeprefix("Bearer ").strip() != AUTH_TOKEN:
+    import hmac as _hmac
+    token = authorization.removeprefix("Bearer ").strip()
+    if not _hmac.compare_digest(token, AUTH_TOKEN):
         raise HTTPException(403, "bad token")
 
 
