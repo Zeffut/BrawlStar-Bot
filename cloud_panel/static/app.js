@@ -591,10 +591,16 @@ document.getElementById("btn-push-max").addEventListener("click", async (e) => {
   await withLoader("btn-push-max", async () => {
     const r = await postSession("/push_max", {target_total_trophies: target});
     if (!r.ok || (r.data && !r.data.ok)) {
-      showToast("Push Max failed: " + (r.data?.error || r.error || "unknown"), "err");
-      // Roll back optimistic hide on failure.
-      document.getElementById("btn-push-max").hidden = false;
-      document.getElementById("btn-stop").hidden = true;
+      const reason = r.data?.msg || r.data?.error || r.error || "unknown";
+      showToast("Push Max failed: " + reason, "err");
+      // If the bot says a session is already running, keep Stop visible
+      // and let the session_state poll confirm. Otherwise, roll back.
+      const alreadyRunning = /already running/i.test(reason);
+      if (!alreadyRunning) {
+        document.getElementById("btn-push-max").hidden = false;
+        document.getElementById("btn-stop").hidden = true;
+      }
+      refreshSessionState();
     } else {
       showToast(`Push Max démarré — objectif ${target} 🏆`, "ok");
       // Poll session_state aggressively for ~30s so the banner appears
@@ -840,15 +846,8 @@ async function gcLoadBrawlers() {
 function _renderAuthoritativeTrophies(cloudTotal) {
   const el = document.getElementById("gc-trophies");
   if (!el) return;
-  // Find current OCR-read value if displayed.
-  const ocrText = el.textContent;
-  const m = ocrText.match(/(\d+)/);
-  const ocrVal = m ? parseInt(m[1]) : null;
-  if (ocrVal != null && Math.abs(ocrVal - cloudTotal) > 5) {
-    el.innerHTML = `${cloudTotal} 🏆 <span style="color:var(--muted);font-size:12px">(OCR: ${ocrVal})</span>`;
-  } else {
-    el.textContent = `${cloudTotal} 🏆`;
-  }
+  el.textContent = `${cloudTotal} 🏆`;
+  el.dataset.fromBrawlace = "1";  // tells SSE handler not to override
 }
 
 async function gcRefreshBrawlers() {
@@ -1005,7 +1004,15 @@ function onSnapshot(snap) {
   if (acc && acc.instance_uid === snap.instance_id) {
     const staleTag = snap.stale ? " (last seen)" : "";
     if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state + staleTag;
-    if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
+    // Trophies: brawlace cache is the authoritative source (set by
+    // _renderAuthoritativeTrophies). The OCR-read snap.trophies is only
+    // a fallback when brawlace has no data yet.
+    if (snap.trophies != null) {
+      const el = document.getElementById("gc-trophies");
+      if (!el.dataset.fromBrawlace) {
+        el.textContent = snap.trophies + " 🏆 (OCR)";
+      }
+    }
   }
 
   // Update sidebar pills (running/available transitions) — cheap.
