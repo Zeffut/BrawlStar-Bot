@@ -41,9 +41,10 @@ _LOCK = threading.Lock()
 # ~15-20 min of grinding before the phone hits 5% (where Android starts
 # throttling and refusing to launch apps). Safer to over-pause than to
 # let the phone die.
-BATTERY_LOW_PCT = 35       # stop grinding below this (any state)
-BATTERY_CRITICAL_PCT = 25  # force-pause even an active session below this
-BATTERY_RESUME_PCT = 75    # resume grinding once above this
+BATTERY_LOW_PCT = 35              # stop grinding below this (any state)
+BATTERY_CRITICAL_PCT = 25         # force-pause even an active session below this
+BATTERY_RESUME_PCT = 75           # resume grinding once above this (unplugged)
+BATTERY_CHARGING_PLAYABLE = 50    # when plugged in, allow grinding ≥ this
 
 
 def _is_brawlball_label(s: str) -> bool:
@@ -291,10 +292,15 @@ class GameAPI:
         if lvl is None:
             self._battery_paused = True
             return False, "battery level unknown (ADB failure) — refusing to play"
-        # Cable plugged in: pause regardless of level. Lets the phone
-        # recharge undisturbed and matches the panel "charging" status.
+        # Cable plugged in: allow grinding once we've recharged past
+        # CHARGING_PLAYABLE (50%). Below that, stay paused so the phone
+        # gets enough juice before we drain it again.
         if chg:
-            return False, f"phone is charging ({lvl}%) — unplug to grind"
+            if lvl < BATTERY_CHARGING_PLAYABLE:
+                self._battery_paused = True
+                return False, f"charging ({lvl}%, will resume at {BATTERY_CHARGING_PLAYABLE}%)"
+            self._battery_paused = False
+            return True, f"battery OK ({lvl}%, charging)"
         if lvl < BATTERY_LOW_PCT:
             self._battery_paused = True
             return False, f"battery too low ({lvl}%) — plug in, will resume at {BATTERY_RESUME_PCT}%"
@@ -407,13 +413,16 @@ class GameAPI:
             pass
         bat = self.battery_status()
         lvl = bat.get("level")
-        # Compute paused from level directly so the snapshot always
-        # reflects current battery state even when can_play() hasn't
-        # been called recently (e.g. a long match is in progress).
-        # Hysteresis: stay paused under RESUME if the flag is already set.
+        chg = bat.get("charging")
+        # Compute paused from level + charging state directly so the
+        # snapshot always reflects current battery state even when
+        # can_play() hasn't been called recently (e.g. a long match).
         cached_paused = getattr(self, "_battery_paused", False)
         if lvl is None:
             paused = True  # unknown level = treat as paused
+        elif chg:
+            # Charging branch: paused until we hit CHARGING_PLAYABLE (50%).
+            paused = lvl < BATTERY_CHARGING_PLAYABLE
         elif lvl < BATTERY_LOW_PCT:
             paused = True
         elif cached_paused and lvl < BATTERY_RESUME_PCT:
@@ -426,7 +435,7 @@ class GameAPI:
             "state": st,
             "trophies": trophies,
             "battery_pct": lvl,
-            "battery_charging": bat.get("charging"),
+            "battery_charging": chg,
             "battery_paused": paused,
             "ts": round(time.time(), 2),
         }

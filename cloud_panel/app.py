@@ -290,13 +290,12 @@ def api_instances() -> list[dict]:
         i["snapshot_age_s"] = snap_age
         i["snapshot_stale"] = snap_age is not None and snap_age > 120
         running = any(db.current_session(a["id"]) for a in accs)
-        # The worker reports both whether the phone is on the charger
-        # (battery_charging) and whether the gate has paused it
-        # (battery_paused for low-battery recovery). Either makes the
-        # instance unavailable for action.
+        # battery_paused is the single source of truth: the worker
+        # already combines charging + level + thresholds and only
+        # reports paused when the bot actually refuses to play. Plugged
+        # in at >=50% is NOT paused → status stays ready/running.
         snap = (conn.last_snapshot if conn else None) or {}
         battery_paused = bool(snap.get("battery_paused"))
-        battery_charging = bool(snap.get("battery_charging"))
         # Status taxonomy:
         #   offline    — no heartbeat for >120s
         #   booting    — heartbeat received but WS not yet connected
@@ -304,9 +303,9 @@ def api_instances() -> list[dict]:
         #   ready      — WS + snapshot fresh
         #   stale      — WS + snapshot >120s old
         #   running    — active session
-        #   charging   — cable plugged in (any level) OR low-battery pause
+        #   charging   — battery paused (low, or charging below 50%)
         ws_connected = conn is not None
-        if (battery_paused or battery_charging) and ws_connected and not i["snapshot_stale"]:
+        if battery_paused and ws_connected and not i["snapshot_stale"]:
             i["status"] = "charging"
         elif running:
             i["status"] = "running"
