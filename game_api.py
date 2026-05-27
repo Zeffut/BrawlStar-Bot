@@ -37,7 +37,8 @@ _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
 # Battery gate thresholds (configurable later via cfg).
-BATTERY_LOW_PCT = 30      # stop grinding below this
+BATTERY_LOW_PCT = 30      # stop grinding below this (post-match gate)
+BATTERY_CRITICAL_PCT = 20 # force-pause even mid-session below this
 BATTERY_RESUME_PCT = 75   # resume grinding once above this
 
 
@@ -939,10 +940,20 @@ def _start_power_saver(api: "GameAPI") -> None:
                 chg = bat.get("charging")
                 if lvl is None:
                     continue
-                # Don't disturb an active session.
                 session_active = (api._runner is not None and api._runner.is_running())
                 if not in_power_save:
-                    if not session_active and lvl < BATTERY_LOW_PCT and not chg:
+                    # Critical: force-pause even an active session — the
+                    # post-match gate is too late if the bot is stuck
+                    # mid-match or on a reward screen.
+                    if lvl < BATTERY_CRITICAL_PCT and not chg:
+                        log.warning("power-saver: battery=%d%% CRITICAL → "
+                                    "force-stopping session + entering power save", lvl)
+                        if session_active and api._runner is not None:
+                            try: api._runner.force_stop()
+                            except Exception: log.exception("force_stop failed")
+                        api.enter_power_save()
+                        in_power_save = True
+                    elif not session_active and lvl < BATTERY_LOW_PCT and not chg:
                         log.info("power-saver: battery=%d%% idle → entering power save", lvl)
                         api.enter_power_save()
                         in_power_save = True
