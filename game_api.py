@@ -275,36 +275,34 @@ class GameAPI:
         return {"level": None, "charging": None}
 
     def can_play(self) -> tuple[bool, str]:
-        """Return (ok, reason) — refuses to play if battery is too low.
+        """Return (ok, reason) — refuses to play if battery is too low
+        OR if the phone is currently on the charger.
 
         Rules:
           - level unknown (ADB failed): refuse — never assume safe.
-          - level < LOW_PCT (any state): refuse, set paused flag.
-          - paused AND level < RESUME_PCT: stay paused (wait for charge).
-          - level >= RESUME_PCT: clear pause, OK to play.
+          - charging (cable plugged in, any level): refuse — user's
+            policy is "don't grind while charging".
+          - level < LOW_PCT: refuse, set paused flag.
+          - paused AND level < RESUME_PCT: stay paused.
+          - level >= RESUME_PCT AND not charging: OK to play.
         """
         bat = self.battery_status()
         lvl, chg = bat.get("level"), bat.get("charging")
-        # Safety: if we can't read battery, assume worst case rather than
-        # proceeding blind. The bot grinding while ADB is broken could
-        # drain the phone to 0%.
         if lvl is None:
             self._battery_paused = True
             return False, "battery level unknown (ADB failure) — refusing to play"
-        # Hard floor: any level under LOW triggers pause regardless of
-        # charging state. The phone needs to recharge to RESUME before
-        # we let the bot drain it again.
+        # Cable plugged in: pause regardless of level. Lets the phone
+        # recharge undisturbed and matches the panel "charging" status.
+        if chg:
+            return False, f"phone is charging ({lvl}%) — unplug to grind"
         if lvl < BATTERY_LOW_PCT:
             self._battery_paused = True
-            chg_txt = ", charging" if chg else " — plug in"
-            return False, f"battery too low ({lvl}%{chg_txt}, will resume at {BATTERY_RESUME_PCT}%)"
-        # Hysteresis: once paused, stay paused until RESUME_PCT.
+            return False, f"battery too low ({lvl}%) — plug in, will resume at {BATTERY_RESUME_PCT}%"
         if getattr(self, "_battery_paused", False) and lvl < BATTERY_RESUME_PCT:
-            chg_txt = ", charging" if chg else ""
-            return False, f"recharging ({lvl}%{chg_txt}, will resume at {BATTERY_RESUME_PCT}%)"
+            return False, f"recharging ({lvl}%, will resume at {BATTERY_RESUME_PCT}%)"
         if lvl >= BATTERY_RESUME_PCT:
             self._battery_paused = False
-        return True, f"battery OK ({lvl}%{', charging' if chg else ''})"
+        return True, f"battery OK ({lvl}%)"
 
     # ---- Power saver (idle low-battery handling) -----------------
 
