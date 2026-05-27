@@ -1076,6 +1076,16 @@ def main() -> int:
     from panel import app as panel_module
     panel_module.set_shared_runner(bot.runner)
     _start_panel_thread()
+    # Early heartbeat: register the instance in the cloud panel BEFORE
+    # host_bootstrap so the user sees a 'booting' card immediately
+    # instead of waiting up to 2 min.
+    try:
+        if cloud_sync.is_enabled():
+            cloud_sync.heartbeat(metadata={"booting": True})
+            cloud_sync.start_heartbeat_loop()
+            log.info("early heartbeat sent — instance visible in cloud panel as 'booting'")
+    except Exception:
+        log.exception("early heartbeat failed (non-fatal)")
     # Host bootstrap — ensures BlueStacks + ADB + game package are ready
     # before the bot starts playing. Runs once at startup, non-blocking
     # on Mac/Linux. Errors surface via cloud_sync + Telegram automatically.

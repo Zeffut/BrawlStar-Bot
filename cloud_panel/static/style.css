@@ -403,6 +403,11 @@ main {
   background: var(--yellow);
   box-shadow: 0 0 10px rgba(245,158,11,.6);
 }
+.inst-dot.booting {
+  background: var(--cyan);
+  box-shadow: 0 0 10px rgba(34,211,238,.6);
+  animation: pulse 1s ease-in-out infinite;
+}
 .inst-dot.running::after {
   content: ""; position: absolute; inset: -4px;
   border-radius: 50%;
@@ -457,6 +462,22 @@ main {
   background: rgba(245,158,11,.12);
   color: var(--yellow);
   border-color: rgba(245,158,11,.35);
+}
+.inst-status-pill.booting {
+  background: rgba(34,211,238,.12);
+  color: var(--cyan);
+  border-color: rgba(34,211,238,.35);
+}
+.inst-status-pill.booting::before {
+  content: "";
+  display: inline-block;
+  width: 8px; height: 8px;
+  margin-right: 4px;
+  border: 1.5px solid currentColor;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -1px;
 }
 
 /* ----- instance activity */

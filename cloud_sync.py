@@ -300,6 +300,9 @@ def start_heartbeat_loop(interval_s: float = 30.0) -> None:
     Also re-pushes every known local account every cycle so the cloud
     DB recovers automatically after Dokploy redeploys (which wipe the
     SQLite volume).
+
+    Idempotent: safe to call multiple times — only the first call
+    actually spawns the thread.
     """
     global _heartbeat_thread
     if _heartbeat_thread is not None or not is_enabled():

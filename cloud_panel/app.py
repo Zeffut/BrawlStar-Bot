@@ -247,10 +247,15 @@ def api_instances() -> list[dict]:
         i["snapshot_age_s"] = snap_age
         i["snapshot_stale"] = snap_age is not None and snap_age > 120
         running = any(db.current_session(a["id"]) for a in accs)
+        # Worker is fresh (heartbeat <120s) but no snapshot has ever
+        # been pushed → still booting (host_bootstrap, GameAPI init…).
+        booting = i["fresh"] and snap_age is None
         if running:
             i["status"] = "running"
         elif i["snapshot_stale"]:
             i["status"] = "stale"
+        elif booting:
+            i["status"] = "booting"
         elif i["fresh"]:
             i["status"] = "available"
         else:
@@ -321,7 +326,7 @@ def fleet_overview() -> dict:
     now = time.time()
     today_start = now - (now % 86400)
     insts = api_instances()  # reuses status logic
-    breakdown = {"running": 0, "available": 0, "stale": 0, "offline": 0}
+    breakdown = {"running": 0, "available": 0, "booting": 0, "stale": 0, "offline": 0}
     for i in insts:
         breakdown[i["status"]] = breakdown.get(i["status"], 0) + 1
     accs = db.list_accounts()
