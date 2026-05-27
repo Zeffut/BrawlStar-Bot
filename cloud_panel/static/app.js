@@ -998,6 +998,14 @@ function startSSE() {
       // Worker just (re)connected — sidebar + KPIs need a refresh.
       showToast(`Instance ${m.instance_id} connected`, "ok");
       refreshAll();
+      // Auto-fetch a fresh capture for the selected account if it
+      // belongs to this instance (wait 3s so the worker's capture
+      // pipeline is warm).
+      const acc = _lastAccounts.find(a => a.id === selectedAccountId);
+      if (acc && acc.instance_uid === m.instance_id) {
+        _previewFetched.delete(selectedAccountId);
+        setTimeout(() => gcCaptureScreenshot(), 3000);
+      }
     } else if (m.type === "instance_disconnected") {
       showToast(`Instance ${m.instance_id} disconnected`, "err");
       refreshAll();
