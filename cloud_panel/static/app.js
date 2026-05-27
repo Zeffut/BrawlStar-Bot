@@ -562,9 +562,9 @@ async function askPushMaxTarget() {
     overlay.innerHTML = `
       <div class="confirm-dialog">
         <h3 class="confirm-title">Push Max — Objectif</h3>
-        <p class="confirm-body">Le bot va rotater les brawlers et s'arrêter quand l'objectif est atteint OU quand tous les brawlers sont au max.</p>
+        <p class="confirm-body">Le bot pousse un brawler à la fois (S → A → B → C selon affinité Pyla) jusqu'à stagnation, puis passe au suivant. Il s'arrête à l'objectif global OU quand tous les brawlers stagnent.</p>
         <div style="margin-bottom:18px">
-          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Total trophies cible</label>
+          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Total trophies cible (compte)</label>
           <input type="number" id="pm-target" min="1" value="${suggested}" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px" />
         </div>
         <div class="confirm-actions">
