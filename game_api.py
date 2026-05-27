@@ -493,44 +493,95 @@ class GameAPI:
         for i in range(max_attempts):
             st = self.state()
             if st == "lobby":
-                # Even on the lobby, an invite popup can be sitting on top.
                 if self._dismiss_team_invite():
                     time.sleep(1.0)
                     continue
                 return True
-            # Check for known overlay popups (team invite, friend request).
+            # Check overlay popups (team invite, friend request).
             if self._dismiss_team_invite():
                 time.sleep(1.0)
                 continue
-            # Track how long we've been stuck on the same screen.
+            # OCR-based detection of star-drop / reward screens that the
+            # template matcher misses on phones (template was calibrated
+            # for BlueStacks 1920x1080).
+            ocr_action = self._dismiss_via_ocr()
+            if ocr_action:
+                log.debug("goto_lobby OCR action: %s", ocr_action)
+                time.sleep(1.5)
+                continue
+            # Track stuck.
             if st == last_state:
                 same_state_count += 1
             else:
                 same_state_count = 0
                 last_state = st
-            # State-specific dismiss strategies.
+            # State-specific dismiss.
             if st in ("popup", "shop", "brawler_selection"):
                 self._tap_back()
             elif st == "star_drop":
-                # TOUCHEZ ET MAINTENEZ: long-press center for 4s.
                 self._long_press(0.5, 0.5, 4000)
             elif st in ("end", "trophy_reward"):
-                # Try several candidate locations for CONTINUE button.
-                self.tap(0.92, 0.94)   # bottom-right (Continuer)
+                self.tap(0.92, 0.94)
                 time.sleep(0.4)
-                self.tap(0.5, 0.93)    # center-bottom (Continue)
+                self.tap(0.5, 0.93)
             else:
-                # Unknown state: try the universal dismiss sequence.
                 self.tap(0.92, 0.94)
                 time.sleep(0.3)
                 self.tap(0.5, 0.93)
                 if same_state_count >= 2:
                     self._tap_back()
                 if same_state_count >= 4:
-                    # Long-press in case there's a hidden tap-and-hold.
                     self._long_press(0.5, 0.5, 4000)
             time.sleep(1.2)
         return self.state() == "lobby"
+
+    # Keywords we recognize on post-match reward screens.
+    _OCR_HOLD_KEYWORDS = (
+        "touchez et maintenez", "touchez maintenez", "tap and hold",
+        "appuyez et maintenez", "tap & hold", "appuyez maintenez",
+    )
+    _OCR_CONTINUE_KEYWORDS = (
+        "continuer", "continue", "ok",
+    )
+    _OCR_REWARD_TITLES = (
+        "credits", "crédits", "victoires du jour", "puissance",
+        "pieces", "pièces", "coins", "power points", "points de pouvoir",
+        "star drop", "star drops",
+    )
+
+    def _dismiss_via_ocr(self) -> str | None:
+        """OCR-based fallback for unhandled reward / star-drop screens.
+
+        Returns a short label of the action taken, or None if no relevant
+        UI was found.
+        """
+        try:
+            img = self._grab()
+            arr = np.array(img)
+            text = extract_text_and_positions(arr)
+            joined = " ".join(text.keys()).lower()
+            h, w = arr.shape[:2]
+            # 1. "TOUCHEZ ET MAINTENEZ" / "TAP AND HOLD" → long-press center
+            if any(k in joined for k in self._OCR_HOLD_KEYWORDS):
+                self._long_press(0.5, 0.5, 4000)
+                return "long-press (HOLD keyword)"
+            # 2. CONTINUER button — find its position and tap precisely.
+            for key, val in text.items():
+                if any(k == key.lower().strip() for k in self._OCR_CONTINUE_KEYWORDS):
+                    cx, cy = val.get("center", [0, 0])
+                    if cx > 0 and cy > 0:
+                        self.tap(cx / w, cy / h)
+                        return f"tap CONTINUE at OCR {key!r}"
+            # 3. Reward title detected (CRÉDITS, etc.) but no CONTINUE text —
+            #    tap canonical bottom-right + bottom-center as fallback.
+            if any(t in joined for t in self._OCR_REWARD_TITLES):
+                self.tap(0.92, 0.94)
+                time.sleep(0.3)
+                self.tap(0.5, 0.93)
+                return "tap canonical (reward title)"
+        except Exception:
+            log.debug("_dismiss_via_ocr failed", exc_info=True)
+        return None
 
     def _dismiss_team_invite(self) -> bool:
         """Detect 'INVITATION D'ÉQUIPE' popup and tap REFUSER.
