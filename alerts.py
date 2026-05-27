@@ -16,6 +16,23 @@ from typing import Any
 log = logging.getLogger("alerts")
 
 CFG_PATH = Path(__file__).resolve().parent / "cfg" / "alerts.toml"
+CFG_EXAMPLE = Path(__file__).resolve().parent / "cfg" / "alerts.toml.example"
+
+
+def _ensure_cfg_exists() -> None:
+    """Create cfg/alerts.toml from the example if missing.
+
+    The user-edited file is gitignored so it survives auto-deploys.
+    The example ships in the repo with safe defaults.
+    """
+    if CFG_PATH.exists():
+        return
+    if CFG_EXAMPLE.exists():
+        try:
+            CFG_PATH.write_text(CFG_EXAMPLE.read_text())
+            log.info("alerts.toml created from example")
+        except Exception:
+            log.exception("alerts.toml init from example failed")
 
 _lock = threading.Lock()
 _cache: dict | None = None
@@ -25,6 +42,7 @@ _cache_mtime: float = 0.0
 def _load() -> dict:
     """Reload config if the file changed on disk; return parsed dict."""
     global _cache, _cache_mtime
+    _ensure_cfg_exists()
     with _lock:
         try:
             mtime = CFG_PATH.stat().st_mtime

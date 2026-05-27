@@ -25,3 +25,4 @@ logs/
 cfg/cloud.toml
 venv/
 cfg/lockscreen.toml
+cfg/alerts.toml

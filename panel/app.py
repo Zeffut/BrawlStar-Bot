@@ -249,6 +249,7 @@ def api_put_alert(event: str, payload: AlertUpdate) -> dict:
     next send so the change takes effect immediately.
     """
     import tomllib
+    alerts_mod._ensure_cfg_exists()
     try:
         with alerts_mod.CFG_PATH.open("rb") as f:
             cfg = tomllib.load(f)
