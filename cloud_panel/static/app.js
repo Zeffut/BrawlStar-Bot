@@ -75,28 +75,6 @@ async function refreshAll() {
   const available = instances.filter(i => i.status === "ready" || i.status === "running").length;
   document.getElementById("sidebar-meta").textContent =
     `${available}/${instances.length}`;
-  // Fleet overview KPIs (one-shot aggregated endpoint).
-  api("/api/fleet/overview", {silent: true}).then(o => {
-    if (!o) return;
-    const b = o.instances_by_status || {};
-    const initStr = (b.booting || b.preparing)
-      ? ` ${(b.booting||0)+(b.preparing||0)}⟳`
-      : "";
-    document.getElementById("fkpi-inst").textContent =
-      `${o.instances_total} (${b.running||0}▶ ${b.ready||0}✓${initStr} ${b.stale||0}⚠ ${b.offline||0}○)`;
-    document.getElementById("fkpi-sess").textContent = o.active_sessions ?? "0";
-    document.getElementById("fkpi-troph").textContent = (o.total_trophies ?? 0).toLocaleString();
-    const t = o.today || {};
-    document.getElementById("fkpi-wld").textContent =
-      `${t.victory||0}/${t.defeat||0}/${t.draw||0}`;
-    const wrEl = document.getElementById("fkpi-wr");
-    if (t.win_rate_pct != null) {
-      wrEl.textContent = t.win_rate_pct + "%";
-      wrEl.className = "fkpi-v " + (t.win_rate_pct >= 50 ? "green" : "red");
-    } else {
-      wrEl.textContent = "—"; wrEl.className = "fkpi-v muted";
-    }
-  }).catch(() => {});
 
   // Build a tree: instances → accounts
   const accountsByInstance = {};

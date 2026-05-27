@@ -223,12 +223,19 @@ class WindowController:
     def click(self, x, y, delay=0.05, already_include_ratio=True):
         if not already_include_ratio:
             x, y = x * self.width_ratio, y * self.height_ratio
-        # Prefer adb shell input tap (works even when scrcpy.control is
-        # broken). For long presses (delay > 0.1) use input swipe with
-        # same start/end + duration in ms.
+        # IMPORTANT: x/y here are in FRAME coordinates (recorded resolution).
+        # ADB input takes DEVICE coordinates. Rescale.
         import subprocess
         import device as _device
         serial = _device.adb_serial()
+        try:
+            dw, dh = _device.device_size()
+            fw, fh = self.width or dw, self.height or dh
+            if fw and fh and (fw != dw or fh != dh):
+                x = x * dw / fw
+                y = y * dh / fh
+        except Exception:
+            pass
         try:
             if delay > 0.1:
                 ms = int(delay * 1000)

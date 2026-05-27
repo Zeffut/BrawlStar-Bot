@@ -68,6 +68,38 @@ def adb_serial() -> str:
     return val
 
 
+_device_size_cache: tuple[int, int] | None = None
+
+
+def device_size() -> tuple[int, int]:
+    """Return (width, height) in LANDSCAPE orientation.
+
+    ADB `input tap` takes coordinates in DEVICE pixel space (not the
+    downscaled frame from screenrecord). Use this for any tap/swipe.
+    Cached.
+    """
+    global _device_size_cache
+    if _device_size_cache is not None:
+        return _device_size_cache
+    try:
+        out = subprocess.run(
+            ["adb", "-s", adb_serial(), "shell", "wm", "size"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout
+        for line in out.splitlines():
+            if "size:" in line.lower():
+                a, b = line.split(":")[-1].strip().split("x")
+                a, b = int(a), int(b)
+                _device_size_cache = (max(a, b), min(a, b))  # landscape
+                log.info("device size resolved → %dx%d (landscape)",
+                         *_device_size_cache)
+                return _device_size_cache
+    except Exception:
+        log.exception("device_size failed; falling back to 2340x1080")
+    _device_size_cache = (2340, 1080)
+    return _device_size_cache
+
+
 def account_override() -> tuple[str | None, str | None]:
     """Return (tag, name) override from cfg/device.toml if set, else (None, None).
 

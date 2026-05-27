@@ -173,41 +173,7 @@ header {
 .conn-status.offline { color: var(--red); border-color: rgba(239,68,68,.3); }
 .conn-status.offline .conn-dot { background: var(--red); }
 
-.fleet-overview {
-  display: flex;
-  gap: 8px;
-  align-items: stretch;
-}
-.fkpi {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  min-width: 90px;
-}
-.fkpi-l {
-  font-size: 9.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-.fkpi-v {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 14px;
-  color: var(--text);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.fkpi-v.green { color: var(--green); }
-.fkpi-v.red { color: var(--red); }
-.fkpi-v.muted { color: var(--muted); }
-@media (max-width: 900px) {
-  .fleet-overview { display: none; }
-}
+/* fleet-overview / .fkpi removed — KPIs moved out of the header */
 
 /* -------- Skeleton shimmer (loading placeholders) -------- */
 .skel {

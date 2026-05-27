@@ -642,10 +642,9 @@ class GameAPI:
         return False
 
     def _long_press(self, x_ratio: float, y_ratio: float, duration_ms: int) -> None:
-        if not self.wc.width or not self.wc.height:
-            self.wc.screenshot()
-        x = int(x_ratio * self.wc.width)
-        y = int(y_ratio * self.wc.height)
+        dw, dh = device.device_size()
+        x = int(x_ratio * dw)
+        y = int(y_ratio * dh)
         try:
             subprocess.run(
                 ["adb", "-s", device.adb_serial(), "shell", "input", "swipe",
@@ -728,10 +727,12 @@ class GameAPI:
     # ---- raw input ------------------------------------------------
 
     def tap(self, x_ratio: float, y_ratio: float) -> dict:
-        if not self.wc.width or not self.wc.height:
-            self.wc.screenshot()  # ensure dims known
-        x = int(x_ratio * self.wc.width)
-        y = int(y_ratio * self.wc.height)
+        # ADB input tap takes DEVICE pixel coordinates, not frame coords.
+        # screenrec downscales to 1280x720 — using wc.width would tap at
+        # half the intended position on a 2336x1080 device.
+        dw, dh = device.device_size()
+        x = int(x_ratio * dw)
+        y = int(y_ratio * dh)
         serial = device.adb_serial()
         try:
             subprocess.run(["adb", "-s", serial, "shell", "input", "tap", str(x), str(y)],
