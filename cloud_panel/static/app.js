@@ -1251,13 +1251,16 @@ async function openGlobalConfig() {
       tbody.appendChild(tr);
     }
     modal.hidden = false;
+    modal.style.display = "flex";
   } catch (e) {
     showToast("Failed to load config: " + e.message, "err");
   }
 }
 
 function closeGlobalConfig() {
-  document.getElementById("global-config-modal").hidden = true;
+  const modal = document.getElementById("global-config-modal");
+  modal.hidden = true;
+  modal.style.display = "none";
 }
 
 async function saveGlobalConfig() {
@@ -1307,3 +1310,14 @@ document.getElementById("gc-modal-cancel")?.addEventListener("click", closeGloba
 document.getElementById("gc-modal-save")?.addEventListener("click", saveGlobalConfig);
 document.getElementById("cfg-tg-test")?.addEventListener("click", () => testNotifChannel("telegram"));
 document.getElementById("cfg-dc-test")?.addEventListener("click", () => testNotifChannel("discord"));
+// Close on backdrop click (clicking outside the panel).
+document.getElementById("global-config-modal")?.addEventListener("click", (e) => {
+  if (e.target.id === "global-config-modal") closeGlobalConfig();
+});
+// Close on Escape key.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const m = document.getElementById("global-config-modal");
+    if (m && !m.hidden) closeGlobalConfig();
+  }
+});
