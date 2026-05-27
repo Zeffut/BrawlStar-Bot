@@ -603,10 +603,20 @@ class BotRunner:
             # Global trophy target (push_max mode): stop when account total
             # reaches the user-set objective.
             if (runner._target_total_trophies is not None
-                    and runner._account_trophies >= runner._target_total_trophies):
+                    and runner._account_trophies >= runner._target_total_trophies
+                    and (runner._account_trophies - delta) < runner._target_total_trophies):
                 log.info("target_total_trophies=%d reached (current=%d) — stopping",
                          runner._target_total_trophies, runner._account_trophies)
                 main_instance.time_to_stop = True
+                tmsg = alerts.format_alert(
+                    "target_reached",
+                    brawler=current_brawler,
+                    trophies=runner._account_trophies,
+                    target=runner._target_total_trophies,
+                )
+                if tmsg and runner.notify:
+                    try: runner.notify(tmsg)
+                    except Exception as exc: log.warning("target notify failed: %s", exc)
 
             # push_max: record match, swap brawler if current one is exhausted.
             if runner._push_max is not None:

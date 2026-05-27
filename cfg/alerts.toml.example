@@ -11,8 +11,8 @@ defeat = true
 draw = true
 
 [target_reached]
-enabled = false
-template = "🎯 Target reached for {brawler}: {trophies}/{target}"
+enabled = true
+template = "🎯 Cible atteinte : {trophies}/{target} 🏆 (dernier brawler joué : {brawler})"
 
 [cycle_started]
 enabled = false
