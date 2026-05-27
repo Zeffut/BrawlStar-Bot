@@ -34,7 +34,7 @@ class ScreenRecorder:
 
     def __init__(self, serial: str, *,
                  max_width: int = 1280,
-                 bitrate: int = 4_000_000,
+                 bitrate: int = 8_000_000,
                  time_limit_s: int = 175,
                  ) -> None:
         self.serial = serial

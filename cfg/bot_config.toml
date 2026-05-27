@@ -9,4 +9,4 @@ gadget_pixels_minimum = 2000.0
 hypercharge_pixels_minimum = 2000.0
 super_pixels_minimum = 2400.0
 wall_detection_confidence = 0.9
-entity_detection_confidence = 0.6
+entity_detection_confidence = 0.72
