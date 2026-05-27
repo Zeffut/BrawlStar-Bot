@@ -530,8 +530,13 @@ class GameAPI:
                      i, st, same_state_count)
             # 1. Long-press center 5s — star drop "TOUCHEZ ET MAINTENEZ"
             #    needs a full hold; anything <4s gets dismissed as a tap.
+            #    Try multiple slightly different positions to handle the
+            #    case where Android caps swipe duration on first try.
             self._long_press(0.5, 0.5, 5000)
-            time.sleep(0.5)
+            time.sleep(0.3)
+            # Some MIUI builds cap swipe duration; chain two presses if so.
+            self._long_press(0.5, 0.5, 4000)
+            time.sleep(0.4)
             # 2. Tap-anywhere center (covers most reward dismisses).
             self.tap(0.5, 0.5)
             time.sleep(0.4)
@@ -642,19 +647,25 @@ class GameAPI:
         return False
 
     def _long_press(self, x_ratio: float, y_ratio: float, duration_ms: int) -> None:
+        """Reliable long-press via `input touchscreen swipe`.
+
+        `input swipe` is sometimes treated as a tap when start==end.
+        `input touchscreen swipe` is explicit about the input source
+        and handles long durations correctly on modern Android.
+        We add a small movement (2px) so the gesture is unambiguous.
+        """
         dw, dh = device.device_size()
         x = int(x_ratio * dw)
         y = int(y_ratio * dh)
-        # Some Android versions treat swipe with start==end as a tap.
-        # Add 1px Y offset so the gesture is reliably a long-press.
+        serial = device.adb_serial()
         try:
             subprocess.run(
-                ["adb", "-s", device.adb_serial(), "shell", "input", "swipe",
-                 str(x), str(y), str(x), str(y + 1), str(duration_ms)],
-                timeout=duration_ms / 1000 + 3, check=False,
+                ["adb", "-s", serial, "shell", "input", "touchscreen", "swipe",
+                 str(x), str(y), str(x + 2), str(y + 2), str(duration_ms)],
+                timeout=duration_ms / 1000 + 5, check=False,
             )
         except Exception:
-            pass
+            log.exception("long_press failed")
 
     def _tap_back(self) -> None:
         serial = device.adb_serial()
