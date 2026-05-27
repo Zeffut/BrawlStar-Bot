@@ -149,10 +149,19 @@ def api_start(account_id: int, payload: StartPayload) -> dict:
     return {"ok": ok, "msg": msg}
 
 
+class PushMaxPayload(BaseModel):
+    target_total_trophies: int | None = None
+
+
 @app.post("/api/accounts/{account_id}/push_max")
-def api_push_max(account_id: int) -> dict:
-    """Start the smart-rotation push-max mode for this account."""
-    log.info("PANEL push_max account=%d", account_id)
+def api_push_max(account_id: int, payload: PushMaxPayload | None = None) -> dict:
+    """Start the smart-rotation push-max mode for this account.
+
+    Optional `target_total_trophies` stops the bot once the account
+    total reaches the goal (or when all brawlers exhausted).
+    """
+    log.info("PANEL push_max account=%d target=%s", account_id,
+             payload.target_total_trophies if payload else None)
     worker = _get_or_create_worker(account_id)
     if not worker:
         raise HTTPException(404, "no worker for that account")
@@ -161,13 +170,15 @@ def api_push_max(account_id: int) -> dict:
     profile = fetch_account_profile(acc["tag"])
     if not profile["brawlers"]:
         raise HTTPException(503, "Could not fetch brawler list from brawlace")
+    target = payload.target_total_trophies if payload else None
     ok, msg = worker.runner.start(
         brawler=profile["brawlers"][0]["name"],  # placeholder, strategy overrides
         trophies=99999, wins=0,
         mode="push_max", owned_brawlers=profile["brawlers"],
+        target_total_trophies=target,
     )
     log.info("push_max start result: ok=%s msg=%s", ok, msg)
-    return {"ok": ok, "msg": msg}
+    return {"ok": ok, "msg": msg, "target_total_trophies": target}
 
 
 @app.get("/api/accounts/{account_id}/push_max_state")
@@ -180,6 +191,8 @@ def api_push_max_state(account_id: int) -> dict:
     return {
         "active": True,
         "summary": s.summary(),
+        "target_total_trophies": worker.runner._target_total_trophies,
+        "current_total_trophies": worker.runner._account_trophies,
         "brawlers": [
             {"name": b.name, "trophies": b.trophies,
              "defeat_streak": b.defeat_streak,

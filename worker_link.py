@@ -298,7 +298,10 @@ def _cmd_session_push_max(args: dict) -> dict:
     aid = _resolve_local_account_id(tag)
     if aid is None:
         return {"ok": False, "error": f"account {tag} not found locally"}
-    return _local_post(f"/api/accounts/{aid}/push_max")
+    body = {}
+    if args.get("target_total_trophies") is not None:
+        body["target_total_trophies"] = int(args["target_total_trophies"])
+    return _local_post(f"/api/accounts/{aid}/push_max", body)
 
 
 def _cmd_session_start(args: dict) -> dict:

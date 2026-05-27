@@ -712,9 +712,16 @@ async def _cmd_for_account(account_id: int, name: str, args: dict, timeout_s: fl
         return {"ok": False, "error": str(exc)}
 
 
+class PushMaxBody(BaseModel):
+    target_total_trophies: int | None = None
+
+
 @app.post("/api/accounts/{account_id}/push_max")
-async def api_account_push_max(account_id: int) -> dict:
-    return await _cmd_for_account(account_id, "session_push_max", {}, timeout_s=20)
+async def api_account_push_max(account_id: int, payload: PushMaxBody | None = None) -> dict:
+    args = {}
+    if payload and payload.target_total_trophies is not None:
+        args["target_total_trophies"] = payload.target_total_trophies
+    return await _cmd_for_account(account_id, "session_push_max", args, timeout_s=20)
 
 
 @app.post("/api/accounts/{account_id}/start")

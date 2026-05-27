@@ -478,10 +478,13 @@ async function refreshSessionState() {
       const total = brawlers.length;
       const done = brawlers.filter(b => b.exhausted).length;
       const current = brawlers.find(b => !b.exhausted);
+      const targetTxt = s.target_total_trophies
+        ? ` · target ${s.target_total_trophies} 🏆`
+        : "";
       banner.hidden = false;
       banner.innerHTML = `
         <span class="dot"></span>
-        <span><strong>Push Max running</strong> · ${current ? current.name + ' (' + current.trophies + ' 🏆)' : 'rotating'} · ${done}/${total} done${s.summary ? ' · ' + s.summary : ''}</span>
+        <span><strong>Push Max running</strong> · ${current ? current.name + ' (' + current.trophies + ' 🏆)' : 'rotating'} · ${done}/${total} done${targetTxt}${s.summary ? ' · ' + s.summary : ''}</span>
       `;
       btnPush.hidden = true;
       btnStop.hidden = false;
@@ -506,15 +509,65 @@ async function postSession(path, body) {
   return r.json();
 }
 
-document.getElementById("btn-push-max").addEventListener("click", () =>
-  withLoader("btn-push-max", async () => {
-    if (!selectedAccountId) return;
-    const r = await postSession("/push_max");
+async function askPushMaxTarget() {
+  // Suggest current total + 200 as a reasonable next goal.
+  let suggested = 0;
+  try {
+    const r = await api(`/api/accounts/${selectedAccountId}/brawlers`, {silent: true});
+    suggested = (r?.total_trophies || 0) + 200;
+  } catch (e) {}
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "confirm-overlay";
+    overlay.innerHTML = `
+      <div class="confirm-dialog">
+        <h3 class="confirm-title">Push Max — Objectif</h3>
+        <p class="confirm-body">Le bot va rotater les brawlers et s'arrêter quand l'objectif est atteint OU quand tous les brawlers sont au max.</p>
+        <div style="margin-bottom:18px">
+          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Total trophies cible</label>
+          <input type="number" id="pm-target" min="1" value="${suggested}" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px" />
+        </div>
+        <div class="confirm-actions">
+          <button class="confirm-btn" data-act="cancel">Annuler</button>
+          <button class="confirm-btn primary" data-act="ok">▶ Lancer</button>
+        </div>
+      </div>`;
+    const close = (val) => { overlay.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
+    const onKey = (e) => {
+      if (e.key === "Escape") close(null);
+      if (e.key === "Enter") {
+        const v = parseInt(overlay.querySelector("#pm-target").value, 10);
+        close(Number.isFinite(v) && v > 0 ? v : null);
+      }
+    };
+    overlay.addEventListener("click", e => {
+      if (e.target === overlay) close(null);
+      else if (e.target.dataset.act === "cancel") close(null);
+      else if (e.target.dataset.act === "ok") {
+        const v = parseInt(overlay.querySelector("#pm-target").value, 10);
+        close(Number.isFinite(v) && v > 0 ? v : null);
+      }
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(overlay);
+    setTimeout(() => overlay.querySelector("#pm-target").select(), 50);
+  });
+}
+
+document.getElementById("btn-push-max").addEventListener("click", async () => {
+  if (!selectedAccountId) return;
+  const target = await askPushMaxTarget();
+  if (!target) return;
+  await withLoader("btn-push-max", async () => {
+    const r = await postSession("/push_max", {target_total_trophies: target});
     if (!r.ok || (r.data && !r.data.ok)) {
-      alert("Push Max failed: " + (r.data?.error || r.error || "unknown"));
+      showToast("Push Max failed: " + (r.data?.error || r.error || "unknown"), "err");
+    } else {
+      showToast(`Push Max démarré — objectif ${target} 🏆`, "ok");
     }
     refreshSessionState();
-  }));
+  });
+});
 
 document.getElementById("btn-stop").addEventListener("click", () =>
   withLoader("btn-stop", async () => {

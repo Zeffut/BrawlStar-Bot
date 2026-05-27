@@ -121,6 +121,7 @@ class BotRunner:
         self._draw_count: int = 0
         self._target_trophies: int = 0
         self._max_matches: int | None = None
+        self._target_total_trophies: int | None = None
         self._account_id: int | None = None
         self._session_id: int | None = None
         # When non-None we're in "push max" mode and this controls
@@ -137,7 +138,8 @@ class BotRunner:
     def start(self, brawler: str, trophies: int, wins: int,
               mode: str = "single",
               owned_brawlers: list[dict] | None = None,
-              max_matches: int | None = None) -> tuple[bool, str]:
+              max_matches: int | None = None,
+              target_total_trophies: int | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
         mode = "single"   → push one brawler to a fixed target (current behaviour)
@@ -177,6 +179,7 @@ class BotRunner:
             }]
             self._target_trophies = trophies
             self._max_matches = max_matches
+            self._target_total_trophies = target_total_trophies
             try:
                 save_brawler_data(data)
             except Exception as exc:
@@ -544,6 +547,13 @@ class BotRunner:
             # max_matches cap: stop the runner cleanly after N matches.
             if runner._max_matches is not None and runner._match_count >= runner._max_matches:
                 log.info("max_matches=%d reached — stopping bot", runner._max_matches)
+                main_instance.time_to_stop = True
+            # Global trophy target (push_max mode): stop when account total
+            # reaches the user-set objective.
+            if (runner._target_total_trophies is not None
+                    and runner._account_trophies >= runner._target_total_trophies):
+                log.info("target_total_trophies=%d reached (current=%d) — stopping",
+                         runner._target_total_trophies, runner._account_trophies)
                 main_instance.time_to_stop = True
 
             # push_max: record match, swap brawler if current one is exhausted.
