@@ -118,7 +118,48 @@ def get_in_game_state(image):
     if is_in_trophy_reward(image):
         return "trophy_reward"
 
+    # OCR-based fallback for screens the templates miss (templates were
+    # calibrated for 1920x1080 BlueStacks; phones use different layouts).
+    ocr_state = _ocr_state_fallback(image)
+    if ocr_state:
+        return ocr_state
+
     return "match"
+
+
+# Text keywords that uniquely identify post-match reward screens.
+_OCR_STAR_DROP_KEYS = ("touchez et maintenez", "tap and hold",
+                       "appuyez et maintenez", "tap & hold",
+                       "touchez maintenez", "appuyez maintenez")
+_OCR_TROPHY_REWARD_KEYS = ("victoires du jour", "credits", "crédits",
+                          "puissance", "power points", "points de pouvoir",
+                          "continuer", "continue", "star drop", "star drops")
+_OCR_END_KEYS = ("victoire", "défaite", "defaite", "victory", "defeat",
+                "match nul", "draw")
+
+
+def _ocr_state_fallback(image) -> str | None:
+    """OCR-based screen identification. Last-resort, slow (~200ms).
+
+    Used when template matching fails — e.g. on phones whose screens
+    don't match the BlueStacks-calibrated templates.
+    """
+    try:
+        # Quick OCR — feed a downscaled image for speed.
+        small = cv2.resize(image, (image.shape[1] // 2, image.shape[0] // 2))
+        text_items = extract_text_and_positions(small)
+        joined = " ".join(text_items.keys()).lower()
+        if not joined:
+            return None
+        if any(k in joined for k in _OCR_STAR_DROP_KEYS):
+            return "star_drop"
+        if any(k in joined for k in _OCR_END_KEYS):
+            return "end"
+        if any(k in joined for k in _OCR_TROPHY_REWARD_KEYS):
+            return "trophy_reward"
+    except Exception:
+        pass
+    return None
 
 def is_in_shop(image) -> bool:
     return is_template_in_region(image, os.path.join('state_finder', 'images_to_detect', 'powerpoint.png'), region_data["powerpoint"])
