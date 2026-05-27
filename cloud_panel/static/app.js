@@ -594,18 +594,36 @@ async function askPushMaxTarget() {
   });
 }
 
-document.getElementById("btn-push-max").addEventListener("click", async () => {
+document.getElementById("btn-push-max").addEventListener("click", async (e) => {
   if (!selectedAccountId) return;
+  const btn = e.currentTarget;
+  // Hard double-click guard: if already disabled (inflight or session
+  // active) → ignore. session-active toggles `hidden`, not `disabled`,
+  // so cover both cases.
+  if (btn.disabled || btn.hidden) return;
   const target = await askPushMaxTarget();
   if (!target) return;
+  // Optimistic UI: hide Push Max immediately + show Stop, so a second
+  // click is impossible during the 10s window before session_state
+  // catches up.
+  document.getElementById("btn-push-max").hidden = true;
+  document.getElementById("btn-stop").hidden = false;
   await withLoader("btn-push-max", async () => {
     const r = await postSession("/push_max", {target_total_trophies: target});
     if (!r.ok || (r.data && !r.data.ok)) {
       showToast("Push Max failed: " + (r.data?.error || r.error || "unknown"), "err");
+      // Roll back optimistic hide on failure.
+      document.getElementById("btn-push-max").hidden = false;
+      document.getElementById("btn-stop").hidden = true;
     } else {
       showToast(`Push Max démarré — objectif ${target} 🏆`, "ok");
+      // Poll session_state aggressively for ~30s so the banner appears
+      // as soon as pick_next sets _push_max on the runner.
+      for (let i = 0; i < 15; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        await refreshSessionState();
+      }
     }
-    refreshSessionState();
   });
 });
 
