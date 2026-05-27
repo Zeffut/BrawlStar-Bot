@@ -927,9 +927,12 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();
 
-// Keep session-active guards fresh even when the user is idle on the panel.
+// Keep session-active guards + detail charts fresh even when idle.
 setInterval(() => {
-  if (selectedAccountId) refreshSessionState();
+  if (selectedAccountId) {
+    refreshSessionState();
+    refreshDetail();   // re-pull matches/sessions → updates charts + tables
+  }
 }, 10000);
 
 // ----------------- SSE live stream -----------------
@@ -959,14 +962,17 @@ function startSSE() {
       if (acc && acc.id === selectedAccountId) gcLoadBrawlers();
     } else if (m.type === "match") {
       _prependActivity(m);
-      // Trigger brawler list refresh ~5s later (let the bot's match
-      // hook + brawlace itself catch up). Background, silent.
       const acc = _lastAccounts.find(a => a.tag === m.tag);
       if (acc) {
+        // Refresh brawler trophies via brawlace ~5s later.
         setTimeout(() => {
           fetch(`/api/accounts/${acc.id}/brawlers/refresh`, {method: "POST"})
             .catch(() => {});
         }, 5000);
+        // If user is viewing this account, refresh charts/tables now.
+        if (acc.id === selectedAccountId) {
+          refreshDetail();
+        }
       }
     }
   });
