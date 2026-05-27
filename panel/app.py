@@ -357,12 +357,16 @@ async def game_snapshot() -> dict:
                 elif line.startswith("status:"):
                     try: chg = int(line.split(":", 1)[1].strip()) in (2, 5)
                     except Exception: pass
+            # Mirror game_api's policy (LOW=30, PLAYABLE=50): paused
+            # whenever level is unknown or under 50%. No hard_lock
+            # tracking here — game_api takes over once initialized.
+            paused = level is None or level < 50
             return {
                 "state": "booting",
                 "trophies": None,
                 "battery_pct": level,
                 "battery_charging": chg,
-                "battery_paused": bool(chg) or (level is not None and level < 35),
+                "battery_paused": paused,
                 "ts": round(__import__("time").time(), 2),
             }
         except Exception:
