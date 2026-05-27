@@ -163,12 +163,17 @@ class WindowController:
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        if not self.width or not self.height:
-            self.width, self.height = frame.shape[1], frame.shape[0]
+        # Always sync width/height with the CURRENT frame size — sources
+        # may swap mid-session (screencap=2340x1080 → screenrec=1280x576).
+        # If we kept the first-frame dims, click() would rescale wrong.
+        fw, fh = frame.shape[1], frame.shape[0]
+        if self.width != fw or self.height != fh:
+            self.width, self.height = fw, fh
             self.width_ratio = self.width / brawl_stars_width
             self.height_ratio = self.height / brawl_stars_height
             self.scale_factor = self.width_ratio
-            self.joystick_x, self.joystick_y = 220 * self.width_ratio, 870 * self.height_ratio
+            self.joystick_x = 220 * self.width_ratio
+            self.joystick_y = 870 * self.height_ratio
 
         return frame_rgb if array else Image.fromarray(frame_rgb)
 
