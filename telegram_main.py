@@ -669,6 +669,36 @@ class BotRunner:
                 if tmsg and runner.notify:
                     try: runner.notify(tmsg)
                     except Exception: pass
+            # Battery gate: post-match is the only safe place to pause —
+            # we're between matches with the bot at the lobby. If battery
+            # is too low, force-stop BS + screen off and block here until
+            # it recharges past the resume threshold.
+            try:
+                import game_api as _gapi
+                api = _gapi.get()
+                if api is not None and not main_instance.time_to_stop:
+                    ok_bat, reason = api.can_play()
+                    if not ok_bat:
+                        log.info("battery gate hit post-match: %s — entering power save", reason)
+                        bmsg = alerts.format_alert("battery_low")
+                        if bmsg and runner.notify:
+                            try: runner.notify(bmsg)
+                            except Exception: pass
+                        api.enter_power_save()
+                        # Block until battery recovers (or 2h cap).
+                        recovered = api.wait_for_battery(max_wait_s=7200, poll_s=60)
+                        api.exit_power_save()
+                        if recovered:
+                            log.info("battery recovered — resuming grind")
+                            rmsg = alerts.format_alert("battery_resumed")
+                            if rmsg and runner.notify:
+                                try: runner.notify(rmsg)
+                                except Exception: pass
+                        else:
+                            log.warning("battery did not recover within 2h — stopping bot")
+                            main_instance.time_to_stop = True
+            except Exception:
+                log.exception("post-match battery gate failed")
             return ret
 
         observer.add_trophies = wrapped
