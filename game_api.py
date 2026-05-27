@@ -848,9 +848,64 @@ def init(window_controller, lobby_automation) -> GameAPI:
                 log.info("GameAPI initialized (wc.last_frame warmed)")
             except Exception:
                 log.info("GameAPI initialized (warm-up failed, will fetch on demand)")
-            # Start the background power-saver loop.
+            # Start the background loops.
             _start_power_saver(_API)
+            _start_idle_watchdog(_API)
     return _API
+
+
+def _start_idle_watchdog(api: "GameAPI") -> None:
+    """Background loop: keep the bot at the lobby when idle.
+
+    Every 30s, if no session is active AND the game is not on the lobby,
+    try goto_lobby. If that fails 3 times in a row, force-restart
+    Brawl Stars. Makes the worker self-healing — the user shouldn't
+    have to click 'goto lobby' from the panel.
+    """
+    def loop():
+        time.sleep(60)  # let phase 2 init finish
+        consecutive_failures = 0
+        while True:
+            try:
+                time.sleep(30)
+                # Skip if a session is running — runner owns the screen.
+                if api._runner is not None and api._runner.is_running():
+                    consecutive_failures = 0
+                    continue
+                st = api.state()
+                if st == "lobby":
+                    consecutive_failures = 0
+                    continue
+                # Not at lobby + no session → try to recover.
+                log.info("idle watchdog: state=%s, attempting goto_lobby", st)
+                ok = api.goto_lobby(max_attempts=20)
+                if ok:
+                    log.info("idle watchdog: back to lobby")
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    log.warning("idle watchdog: goto_lobby failed (%d/3)",
+                                consecutive_failures)
+                    if consecutive_failures >= 3:
+                        log.warning("idle watchdog: force-restarting Brawl Stars")
+                        try:
+                            serial = device.adb_serial()
+                            subprocess.run(["adb", "-s", serial, "shell",
+                                            "am", "force-stop",
+                                            "com.supercell.brawlstars"],
+                                            timeout=5, check=False)
+                            time.sleep(2)
+                            subprocess.run(["adb", "-s", serial, "shell",
+                                            "am", "start", "-n",
+                                            "com.supercell.brawlstars/.GameApp"],
+                                            timeout=10, check=False)
+                            consecutive_failures = 0
+                        except Exception:
+                            log.exception("Brawl Stars restart failed")
+            except Exception:
+                log.exception("idle watchdog iteration crashed")
+    threading.Thread(target=loop, daemon=True, name="idle-watchdog").start()
+    log.info("idle watchdog armed (checks every 30s)")
 
 
 def _start_power_saver(api: "GameAPI") -> None:
