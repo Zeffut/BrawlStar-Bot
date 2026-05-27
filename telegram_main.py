@@ -991,9 +991,11 @@ def _bootstrap_account(bot: "TelegramBot") -> None:
 
     Resolution order:
       1. cfg/device.toml override (account_tag + account_name)
-      2. OCR-based detection via detect_player_tag()
+      2. Local DB: a previous run already validated this device's account
+      3. OCR-based detection via detect_player_tag() (last resort — slow)
     """
     try:
+        serial = device.adb_serial()
         # 1. Manual override (cfg/device.toml)
         override_tag, override_name = device.account_override()
         if override_tag:
@@ -1002,7 +1004,6 @@ def _bootstrap_account(bot: "TelegramBot") -> None:
             tag = override_tag
             name = override_name
             brawlers: list[dict] = []
-            # Try brawlace for richer data, but don't block on it.
             try:
                 profile = fetch_account_profile(tag)
                 brawlers = profile.get("brawlers") or []
@@ -1010,19 +1011,30 @@ def _bootstrap_account(bot: "TelegramBot") -> None:
             except Exception:
                 log.warning("brawlace unreachable; using override values as-is")
         else:
-            # 2. OCR-based detection
-            tag = detect_player_tag()
-            if not tag:
-                log.info("bootstrap: no tag detected (game not in lobby?)")
-                return
-            profile = fetch_account_profile(tag)
-            brawlers = profile.get("brawlers") or []
-            name = profile.get("name")
-            if not brawlers and not override_tag:
-                # OCR'd tag + no brawlace confirmation → likely wrong
-                log.warning("bootstrap: tag #%s returned no brawlers from brawlace — skipping",
-                            tag)
-                return
+            # 2. Fast path: previous run for this device already validated
+            #    an account → skip the expensive OCR + flaresolverr loop.
+            existing = next((a for a in db.list_accounts()
+                             if a.get("device_serial") == serial), None)
+            if existing:
+                log.info("bootstrap: reusing known account from local DB "
+                         "(tag=%s device=%s) — skipping OCR validation",
+                         existing["tag"], serial)
+                tag = existing["tag"]
+                name = existing.get("name")
+                brawlers = []  # let the worker's brawler refresh loop fill this
+            else:
+                # 3. OCR-based detection (slow: 2-3 min in the worst case)
+                tag = detect_player_tag()
+                if not tag:
+                    log.info("bootstrap: no tag detected (game not in lobby?)")
+                    return
+                profile = fetch_account_profile(tag)
+                brawlers = profile.get("brawlers") or []
+                name = profile.get("name")
+                if not brawlers:
+                    log.warning("bootstrap: tag #%s returned no brawlers from brawlace — skipping",
+                                tag)
+                    return
         account_id = db.upsert_account(
             tag, name=name,
             device_serial=device.adb_serial(),
