@@ -810,7 +810,14 @@ async function gcCaptureScreenshot() {
   await withLoader("gc-capture", async () => {
     const r = await gcCall("GET", "/screenshot");
     if (r?.ok && r.data?.b64) {
-      document.getElementById("gc-screenshot").src = `data:${r.data.mime};base64,${r.data.b64}`;
+      const img = document.getElementById("gc-screenshot");
+      img.src = `data:${r.data.mime};base64,${r.data.b64}`;
+      // Force landscape: rotate via CSS class if the capture came back
+      // portrait (screen-off, locked, wrong rotation, …).
+      const frame = document.querySelector(".gc-screen-frame");
+      if (frame && r.data.w && r.data.h) {
+        frame.classList.toggle("portrait", r.data.h > r.data.w);
+      }
       const cap = r.data.capture_ms ?? "?";
       document.getElementById("gc-screen-meta").textContent =
         `${r.data.w}×${r.data.h} · capture ${cap}ms · ${new Date().toLocaleTimeString()}`;

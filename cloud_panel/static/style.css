@@ -738,6 +738,27 @@ main {
   display: block;
   min-height: 180px;
 }
+/* Force landscape: if the captured frame is portrait (screen off /
+   lock screen / wrong orientation), rotate it so it always reads
+   left-to-right. The JS adds .portrait when h > w on image load. */
+.gc-screen-frame.portrait {
+  aspect-ratio: 16/9;
+  container-type: inline-size;
+}
+.gc-screen-frame.portrait img {
+  position: absolute;
+  top: 50%; left: 50%;
+  /* After rotate(90deg), the visual width = pre-rotation height. So
+     setting height = container width (100cqw) makes the rotated image
+     exactly fill the container horizontally. width:auto preserves the
+     aspect ratio. */
+  width: auto;
+  height: 100cqw;
+  min-height: 0;
+  max-width: none;
+  transform: translate(-50%, -50%) rotate(90deg);
+  transform-origin: center center;
+}
 .gc-screen-frame img:not([src]),
 .gc-screen-frame img[src=""] { opacity: 0; }
 .gc-capture-btn {
