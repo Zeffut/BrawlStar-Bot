@@ -1397,3 +1397,115 @@ tr:hover td { background: rgba(255,255,255,.015); }
   .gc-grid { grid-template-columns: 1fr !important; }
   .header-actions { width: 100%; flex-wrap: wrap; }
 }
+
+/* ============================================================
+   Global Config modal
+   ============================================================ */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+.modal-panel {
+  background: var(--surface-1, #1a1d24);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 520px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+  border: 1px solid var(--surface-3, #2a2e36);
+}
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--surface-3, #2a2e36);
+}
+.modal-header h2 { margin: 0; font-size: 18px; }
+.modal-body {
+  padding: 18px 22px;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-footer {
+  padding: 14px 22px;
+  border-top: 1px solid var(--surface-3, #2a2e36);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.cfg-section {
+  border: 1px solid var(--surface-3, #2a2e36);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: var(--surface-2, #20242c);
+}
+.cfg-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.cfg-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cfg-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted, #888);
+}
+.cfg-fields input {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--surface-3, #2a2e36);
+  background: var(--surface-1, #1a1d24);
+  color: var(--text, #ddd);
+  font-family: inherit;
+  font-size: 13px;
+}
+.cfg-fields input:focus {
+  outline: none;
+  border-color: var(--primary, #4a9eff);
+}
+.cfg-fields button { align-self: flex-start; margin-top: 2px; }
+
+.cfg-events-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cfg-events-table th {
+  text-align: left;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--surface-3, #2a2e36);
+  color: var(--muted, #888);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cfg-events-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--surface-3, #2a2e36);
+}
+.cfg-events-table tr:last-child td { border-bottom: none; }
+.cfg-events-table input[type=checkbox] {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}

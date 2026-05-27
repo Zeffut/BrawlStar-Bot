@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import db
+import notif
 from ws import HUB, BUS, worker_ws_endpoint
 from fastapi.responses import StreamingResponse
 import asyncio as _asyncio
@@ -150,6 +151,11 @@ def sync_match(payload: MatchPayload, authorization: str | None = Header(None)) 
         "account_trophies_after": payload.account_trophies_after,
         "timestamp": payload.timestamp or time.time(),
     })
+    notif.dispatch("match", {
+        "instance_id": payload.instance_id, "tag": payload.tag,
+        "brawler": payload.brawler, "result": payload.result, "delta": delta,
+        "account_trophies_after": payload.account_trophies_after,
+    })
     return {"ok": True, "match_id": mid}
 
 
@@ -220,7 +226,39 @@ def sync_event(payload: EventPayload, authorization: str | None = Header(None)) 
     inst = db.upsert_instance(payload.instance_id)
     acc = db.upsert_account(inst, payload.tag, None) if payload.tag else None
     db.log_event(inst, payload.type, payload.payload, acc, payload.timestamp)
+    # Bridge into the notif dispatcher (panel decides what to send).
+    p = dict(payload.payload or {})
+    p.setdefault("instance_id", payload.instance_id)
+    if payload.tag: p.setdefault("tag", payload.tag)
+    try: notif.dispatch(payload.type, p)
+    except Exception: log.exception("notif dispatch failed for %s", payload.type)
     return {"ok": True}
+
+
+# ---- Global config endpoints --------------------------------------
+
+
+@app.get("/api/config/notif")
+def get_notif_config() -> dict:
+    return notif.get_config()
+
+
+class NotifConfigPayload(BaseModel):
+    telegram: dict | None = None
+    discord: dict | None = None
+    events: dict | None = None
+
+
+@app.put("/api/config/notif")
+def set_notif_config(payload: NotifConfigPayload) -> dict:
+    body = {k: v for k, v in payload.dict().items() if v is not None}
+    return notif.set_config(body)
+
+
+@app.post("/api/config/notif/test/{channel}")
+def test_notif(channel: str) -> dict:
+    ok, msg = notif.send_test(channel)
+    return {"ok": ok, "message": msg}
 
 
 # ====================================================================

@@ -245,6 +245,16 @@ class BotRunner:
                         if msg and self.notify:
                             try: self.notify(msg)
                             except Exception: log.exception("stuck alert send failed")
+                        # Panel notif (cloud-side).
+                        try:
+                            cloud_sync.event("bot_stuck", {
+                                "minutes": int(elapsed / 60),
+                                "brawler": (self.brawler_data[0]["brawler"]
+                                            if self.brawler_data else "?"),
+                                "matches": self._match_count,
+                            })
+                        except Exception:
+                            log.exception("cloud_sync.event(bot_stuck) failed")
                         # Best-effort recovery: try to dismiss any popup back to lobby
                         try:
                             import game_api as _ga
@@ -628,15 +638,14 @@ class BotRunner:
                 if (runner._account_trophies - delta) < runner._target_total_trophies \
                         and not runner._target_reached_notified:
                     runner._target_reached_notified = True
-                    tmsg = alerts.format_alert(
-                        "target_reached",
-                        brawler=current_brawler,
-                        trophies=runner._account_trophies,
-                        target=runner._target_total_trophies,
-                    )
-                    if tmsg and runner.notify:
-                        try: runner.notify(tmsg)
-                        except Exception as exc: log.warning("target notify failed: %s", exc)
+                    try:
+                        cloud_sync.event("target_reached", {
+                            "brawler": current_brawler,
+                            "account_trophies": runner._account_trophies,
+                            "target": runner._target_total_trophies,
+                        })
+                    except Exception:
+                        log.exception("cloud_sync.event(target_reached) failed")
 
             # push_max: record match, swap brawler if current one is exhausted.
             if runner._push_max is not None:
@@ -676,12 +685,12 @@ class BotRunner:
                 except Exception as exc: log.warning("notify failed: %s", exc)
             # Target-reached notification (single-brawler mode only).
             if runner._push_max is None and after >= target > 0 and before < target:
-                tmsg = alerts.format_alert(
-                    "target_reached", brawler=brawler, trophies=after, target=target,
-                )
-                if tmsg and runner.notify:
-                    try: runner.notify(tmsg)
-                    except Exception: pass
+                try:
+                    cloud_sync.event("target_reached", {
+                        "brawler": brawler, "account_trophies": after, "target": target,
+                    })
+                except Exception:
+                    log.exception("cloud_sync.event(target_reached) failed")
             # Battery gate: post-match is the only safe place to pause —
             # we're between matches with the bot at the lobby. If battery
             # is too low, force-stop BS + screen off and block here until
@@ -693,20 +702,22 @@ class BotRunner:
                     ok_bat, reason = api.can_play()
                     if not ok_bat:
                         log.info("battery gate hit post-match: %s — entering power save", reason)
-                        bmsg = alerts.format_alert("battery_low")
-                        if bmsg and runner.notify:
-                            try: runner.notify(bmsg)
-                            except Exception: pass
+                        try:
+                            bat = api.battery_status()
+                            cloud_sync.event("battery_low", {"level": bat.get("level")})
+                        except Exception:
+                            log.exception("cloud_sync.event(battery_low) failed")
                         api.enter_power_save()
                         # Block until battery recovers (or 2h cap).
                         recovered = api.wait_for_battery(max_wait_s=7200, poll_s=60)
                         api.exit_power_save()
                         if recovered:
                             log.info("battery recovered — resuming grind")
-                            rmsg = alerts.format_alert("battery_resumed")
-                            if rmsg and runner.notify:
-                                try: runner.notify(rmsg)
-                                except Exception: pass
+                            try:
+                                bat = api.battery_status()
+                                cloud_sync.event("battery_resumed", {"level": bat.get("level")})
+                            except Exception:
+                                log.exception("cloud_sync.event(battery_resumed) failed")
                         else:
                             log.warning("battery did not recover within 2h — stopping bot")
                             main_instance.time_to_stop = True
@@ -773,8 +784,11 @@ class TelegramBot:
         self.poll_timeout = poll_timeout_s
         self.api = f"https://api.telegram.org/bot{token}"
         self.runner = BotRunner()
-        # Send match results / target-reached events as Telegram messages.
-        self.runner.notify = lambda text: self.send(text)
+        # Worker-side Telegram notifs disabled — panel owns notifications.
+        # The runner emits events via cloud_sync.event() which the panel
+        # dispatches based on its global config. The TelegramBot here is
+        # kept for legacy /start /stop /status commands only.
+        self.runner.notify = None
         self.offset: int | None = None
         # Conversation state: stores partial /start args between button taps.
         # Key = chat_id (only one user, so single entry).

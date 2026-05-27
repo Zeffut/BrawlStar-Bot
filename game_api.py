@@ -999,15 +999,13 @@ def _start_power_saver(api: "GameAPI") -> None:
                             except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
                         in_power_save = True
-                        if not critical_notified and api._runner is not None and api._runner.notify:
+                        if not critical_notified:
                             try:
-                                import alerts as _alerts
-                                msg = _alerts.format_alert("battery_low") or \
-                                      f"🪫 Batterie CRITIQUE ({lvl}%) — bot en pause."
-                                api._runner.notify(msg)
+                                import cloud_sync as _cs
+                                _cs.event("battery_low", {"level": lvl, "critical": True})
                                 critical_notified = True
                             except Exception:
-                                log.exception("critical battery notif failed")
+                                log.exception("cloud_sync.event(battery_low) failed")
                     elif lvl < BATTERY_LOW_PCT:
                         # Below LOW: pause even if session active. The
                         # session's post-match hook will catch this too,

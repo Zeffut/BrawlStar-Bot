@@ -138,6 +138,11 @@ class WorkerHub:
             log.info("worker connected: %s (total=%d)", instance_id, len(self._conns))
         # Notify browsers (outside the lock to avoid re-entrant issues).
         BUS.publish({"type": "instance_connected", "instance_id": instance_id})
+        try:
+            import notif as _notif
+            _notif.dispatch("instance_connected", {"instance_id": instance_id})
+        except Exception:
+            log.exception("notif dispatch instance_connected failed")
         return conn
 
     async def unregister(self, conn: WorkerConnection) -> None:
@@ -153,6 +158,11 @@ class WorkerHub:
                     fut.set_exception(ConnectionError("worker disconnected"))
         BUS.publish({"type": "instance_disconnected",
                      "instance_id": conn.instance_id})
+        try:
+            import notif as _notif
+            _notif.dispatch("instance_disconnected", {"instance_id": conn.instance_id})
+        except Exception:
+            log.exception("notif dispatch instance_disconnected failed")
 
     def get(self, instance_id: str) -> WorkerConnection | None:
         return self._conns.get(instance_id)

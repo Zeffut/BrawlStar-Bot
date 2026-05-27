@@ -86,7 +86,38 @@ CREATE TABLE IF NOT EXISTS events (
     timestamp   REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp);
+
+-- Global panel config (notifs, future panel-wide settings).
+-- Single-row table keyed by `name`; payload is JSON.
+CREATE TABLE IF NOT EXISTS config (
+    name      TEXT PRIMARY KEY,
+    payload   TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
+
+
+def get_config(name: str) -> dict:
+    with _lock:
+        row = conn().execute(
+            "SELECT payload FROM config WHERE name = ?", (name,)
+        ).fetchone()
+    if row is None:
+        return {}
+    try:
+        return json.loads(row["payload"])
+    except Exception:
+        return {}
+
+
+def set_config(name: str, payload: dict) -> None:
+    with _lock:
+        conn().execute(
+            "INSERT INTO config (name, payload, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET payload = excluded.payload, "
+            "updated_at = excluded.updated_at",
+            (name, json.dumps(payload), time.time()),
+        )
 
 
 def init() -> None:

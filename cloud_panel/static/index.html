@@ -24,8 +24,58 @@
       </div>
     </div>
   </div>
-  <button id="sidebar-toggle" class="sidebar-toggle" title="Show/hide instances" aria-label="toggle sidebar">☰</button>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button id="btn-global-config" class="header-btn" title="Global panel configuration">⚙️ Global Config</button>
+    <button id="sidebar-toggle" class="sidebar-toggle" title="Show/hide instances" aria-label="toggle sidebar">☰</button>
+  </div>
 </header>
+
+<!-- Global Config modal -->
+<div id="global-config-modal" class="modal-backdrop" hidden>
+  <div class="modal-panel" style="max-width:680px">
+    <div class="modal-header">
+      <h2>Global Config</h2>
+      <button class="modal-close" id="gc-modal-close" aria-label="close">×</button>
+    </div>
+    <div class="modal-body">
+      <h3 style="margin-top:0">Notifications</h3>
+      <p class="muted" style="margin-top:0">Le panel gère désormais toutes les notifications. Les workers n'envoient plus rien — seuls les événements bruts sont relayés ici.</p>
+
+      <!-- Telegram -->
+      <div class="cfg-section">
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-tg-enabled"> <strong>Telegram</strong>
+        </label>
+        <div class="cfg-fields">
+          <label>Bot token<input type="password" id="cfg-tg-token" placeholder="123456:ABC-DEF..."></label>
+          <label>Chat ID<input type="text" id="cfg-tg-chat" placeholder="-100123456 ou 123456789"></label>
+          <button class="header-btn" id="cfg-tg-test">Send test</button>
+        </div>
+      </div>
+
+      <!-- Discord -->
+      <div class="cfg-section">
+        <label class="cfg-toggle">
+          <input type="checkbox" id="cfg-dc-enabled"> <strong>Discord webhook</strong>
+        </label>
+        <div class="cfg-fields">
+          <label>Webhook URL<input type="password" id="cfg-dc-url" placeholder="https://discord.com/api/webhooks/..."></label>
+          <button class="header-btn" id="cfg-dc-test">Send test</button>
+        </div>
+      </div>
+
+      <h4 style="margin-bottom:6px">Événements</h4>
+      <table id="cfg-events-table" class="cfg-events-table">
+        <thead><tr><th>Événement</th><th style="text-align:center">Telegram</th><th style="text-align:center">Discord</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="header-btn" id="gc-modal-cancel">Cancel</button>
+      <button class="header-btn primary" id="gc-modal-save">Save</button>
+    </div>
+  </div>
+</div>
 
 <main>
   <aside id="account-list">

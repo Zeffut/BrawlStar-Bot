@@ -1178,3 +1178,97 @@ document.addEventListener("keydown", e => {
     }
   }
 });
+
+// ============================================================
+// Global Config modal — panel-side notifications
+// ============================================================
+
+const EVENT_LABELS = {
+  match: "Chaque match",
+  target_reached: "Cible de trophées atteinte",
+  battery_low: "Batterie faible",
+  battery_resumed: "Batterie OK (reprise)",
+  bot_stuck: "Bot bloqué",
+  instance_connected: "Instance connectée",
+  instance_disconnected: "Instance déconnectée",
+  session_ended: "Session terminée",
+};
+
+async function openGlobalConfig() {
+  const modal = document.getElementById("global-config-modal");
+  if (!modal) return;
+  try {
+    const cfg = await api("/api/config/notif");
+    document.getElementById("cfg-tg-enabled").checked = !!cfg.telegram?.enabled;
+    document.getElementById("cfg-tg-token").value = cfg.telegram?.bot_token || "";
+    document.getElementById("cfg-tg-chat").value = cfg.telegram?.chat_id || "";
+    document.getElementById("cfg-dc-enabled").checked = !!cfg.discord?.enabled;
+    document.getElementById("cfg-dc-url").value = cfg.discord?.webhook_url || "";
+    const tbody = document.querySelector("#cfg-events-table tbody");
+    tbody.innerHTML = "";
+    for (const [evt, label] of Object.entries(EVENT_LABELS)) {
+      const r = cfg.events?.[evt] || {};
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${label}</td>
+        <td style="text-align:center"><input type="checkbox" data-evt="${evt}" data-ch="telegram" ${r.telegram ? "checked" : ""}></td>
+        <td style="text-align:center"><input type="checkbox" data-evt="${evt}" data-ch="discord" ${r.discord ? "checked" : ""}></td>`;
+      tbody.appendChild(tr);
+    }
+    modal.hidden = false;
+  } catch (e) {
+    showToast("Failed to load config: " + e.message, "err");
+  }
+}
+
+function closeGlobalConfig() {
+  document.getElementById("global-config-modal").hidden = true;
+}
+
+async function saveGlobalConfig() {
+  const events = {};
+  for (const cb of document.querySelectorAll("#cfg-events-table input[type=checkbox]")) {
+    const evt = cb.dataset.evt, ch = cb.dataset.ch;
+    events[evt] = events[evt] || {};
+    events[evt][ch] = cb.checked;
+  }
+  const payload = {
+    telegram: {
+      enabled: document.getElementById("cfg-tg-enabled").checked,
+      bot_token: document.getElementById("cfg-tg-token").value.trim(),
+      chat_id: document.getElementById("cfg-tg-chat").value.trim(),
+    },
+    discord: {
+      enabled: document.getElementById("cfg-dc-enabled").checked,
+      webhook_url: document.getElementById("cfg-dc-url").value.trim(),
+    },
+    events,
+  };
+  try {
+    await api("/api/config/notif", {method: "PUT", body: payload});
+    showToast("Config saved", "ok");
+    closeGlobalConfig();
+  } catch (e) {
+    showToast("Save failed: " + e.message, "err");
+  }
+}
+
+async function testNotifChannel(channel) {
+  try {
+    // Save first so the test uses current form values.
+    await saveGlobalConfig();
+  } catch (e) {}
+  try {
+    const r = await api(`/api/config/notif/test/${channel}`, {method: "POST"});
+    showToast(r.ok ? r.message : `Failed: ${r.message}`, r.ok ? "ok" : "err");
+  } catch (e) {
+    showToast("Test failed: " + e.message, "err");
+  }
+}
+
+document.getElementById("btn-global-config")?.addEventListener("click", openGlobalConfig);
+document.getElementById("gc-modal-close")?.addEventListener("click", closeGlobalConfig);
+document.getElementById("gc-modal-cancel")?.addEventListener("click", closeGlobalConfig);
+document.getElementById("gc-modal-save")?.addEventListener("click", saveGlobalConfig);
+document.getElementById("cfg-tg-test")?.addEventListener("click", () => testNotifChannel("telegram"));
+document.getElementById("cfg-dc-test")?.addEventListener("click", () => testNotifChannel("discord"));
