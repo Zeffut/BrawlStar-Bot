@@ -94,7 +94,49 @@ CREATE TABLE IF NOT EXISTS config (
     payload   TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+
+-- Per-instance state managed by the cloud (resume sessions, etc).
+-- Workers are treated as stateless executors — anything that should
+-- survive a worker restart lives here.
+CREATE TABLE IF NOT EXISTS instance_state (
+    instance_id INTEGER PRIMARY KEY REFERENCES instances(id) ON DELETE CASCADE,
+    payload     TEXT NOT NULL,
+    updated_at  REAL NOT NULL
+);
 """
+
+
+def get_instance_state(instance_db_id: int) -> dict:
+    with _lock:
+        row = conn().execute(
+            "SELECT payload FROM instance_state WHERE instance_id = ?",
+            (instance_db_id,),
+        ).fetchone()
+    if row is None:
+        return {}
+    try:
+        return json.loads(row["payload"])
+    except Exception:
+        return {}
+
+
+def set_instance_state(instance_db_id: int, payload: dict) -> None:
+    with _lock:
+        conn().execute(
+            "INSERT INTO instance_state (instance_id, payload, updated_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(instance_id) DO UPDATE SET payload = excluded.payload, "
+            "updated_at = excluded.updated_at",
+            (instance_db_id, json.dumps(payload), time.time()),
+        )
+
+
+def clear_instance_state(instance_db_id: int) -> None:
+    with _lock:
+        conn().execute(
+            "DELETE FROM instance_state WHERE instance_id = ?",
+            (instance_db_id,),
+        )
 
 
 def get_config(name: str) -> dict:

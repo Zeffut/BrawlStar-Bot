@@ -261,6 +261,42 @@ def test_notif(channel: str) -> dict:
     return {"ok": ok, "message": msg}
 
 
+# ---- Per-instance state (resume sessions, etc.) --------------------
+# Workers are stateless executors: anything that should survive a
+# worker restart, redeploy or wipe must live on the panel.
+
+
+class InstanceStatePayload(BaseModel):
+    instance_id: str
+    state: dict
+
+
+@app.get("/api/sync/instance_state")
+def get_instance_state(instance_id: str,
+                       authorization: str | None = Header(None)) -> dict:
+    _require_auth(authorization)
+    inst = db.upsert_instance(instance_id)
+    return db.get_instance_state(inst)
+
+
+@app.put("/api/sync/instance_state")
+def set_instance_state(payload: InstanceStatePayload,
+                       authorization: str | None = Header(None)) -> dict:
+    _require_auth(authorization)
+    inst = db.upsert_instance(payload.instance_id)
+    db.set_instance_state(inst, payload.state)
+    return {"ok": True}
+
+
+@app.delete("/api/sync/instance_state")
+def clear_instance_state(instance_id: str,
+                         authorization: str | None = Header(None)) -> dict:
+    _require_auth(authorization)
+    inst = db.upsert_instance(instance_id)
+    db.clear_instance_state(inst)
+    return {"ok": True}
+
+
 # ====================================================================
 # READ: dashboard / aggregate
 # ====================================================================

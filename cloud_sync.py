@@ -132,6 +132,46 @@ def event(type_: str, payload: dict | None = None, tag: str | None = None) -> No
     })
 
 
+# ---- Per-instance state (cloud-owned) -------------------------------
+# The worker is stateless. Anything that must survive a restart goes
+# through these helpers. Used by the resume-session mechanism.
+
+def set_instance_state(state: dict) -> None:
+    cfg = _load_cfg()
+    if not is_enabled():
+        return
+    _post("/api/sync/instance_state", {
+        "instance_id": cfg.get("instance_id"),
+        "state": state,
+    })
+
+
+def get_instance_state() -> dict | None:
+    cfg = _load_cfg()
+    if not is_enabled():
+        return None
+    iid = cfg.get("instance_id")
+    if not iid:
+        return None
+    return _cloud_get(f"/api/sync/instance_state?instance_id={iid}")
+
+
+def clear_instance_state() -> None:
+    import requests as _r
+    cfg = _load_cfg()
+    if not is_enabled():
+        return
+    iid = cfg.get("instance_id")
+    if not iid:
+        return
+    url = cfg["url"].rstrip("/") + f"/api/sync/instance_state?instance_id={iid}"
+    headers = {"Authorization": f"Bearer {cfg['token']}"}
+    try:
+        _r.delete(url, headers=headers, timeout=10)
+    except Exception as exc:
+        log.warning("clear_instance_state failed: %s", exc)
+
+
 # --------------------------------------------------- background heartbeat
 
 

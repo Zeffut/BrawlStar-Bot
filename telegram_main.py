@@ -103,17 +103,16 @@ _SHARED_RUNTIME: dict = {}
 # ----------------------------- Resume-state persistence ------------
 # When a session is active and the bot restarts (self-update, crash,
 # reboot…), we want to resume the same task automatically. The state
-# is a tiny JSON file dropped at session start and cleared at end.
-_RESUME_STATE_PATH = Path(__file__).resolve().parent / "data" / "session_state.json"
+# now lives entirely on the cloud panel — workers are stateless so a
+# disk wipe / fresh deploy / different machine all pick up the same
+# session if the user had one running.
 _RESUME_MAX_AGE_S = 2 * 3600  # don't auto-resume sessions older than 2h
 
 
 def _save_resume_state(state: dict) -> None:
     try:
-        _RESUME_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with _RESUME_STATE_PATH.open("w", encoding="utf-8") as f:
-            json.dump(state, f)
-        log.info("resume state saved: mode=%s brawler=%s target=%s",
+        cloud_sync.set_instance_state(state)
+        log.info("resume state saved (cloud): mode=%s brawler=%s target=%s",
                  state.get("mode"), state.get("brawler"),
                  state.get("target_total_trophies"))
     except Exception:
@@ -121,27 +120,25 @@ def _save_resume_state(state: dict) -> None:
 
 
 def _load_resume_state() -> dict | None:
-    if not _RESUME_STATE_PATH.exists():
-        return None
     try:
-        with _RESUME_STATE_PATH.open("r", encoding="utf-8") as f:
-            state = json.load(f)
-        age = time.time() - state.get("started_at", 0)
-        if age > _RESUME_MAX_AGE_S:
-            log.info("resume state too old (%.0fs) — discarding", age)
-            _clear_resume_state()
-            return None
-        return state
+        state = cloud_sync.get_instance_state()
     except Exception:
         log.exception("load_resume_state failed")
         return None
+    if not state:
+        return None
+    age = time.time() - state.get("started_at", 0)
+    if age > _RESUME_MAX_AGE_S:
+        log.info("resume state too old (%.0fs) — discarding", age)
+        _clear_resume_state()
+        return None
+    return state
 
 
 def _clear_resume_state() -> None:
     try:
-        if _RESUME_STATE_PATH.exists():
-            _RESUME_STATE_PATH.unlink()
-            log.info("resume state cleared")
+        cloud_sync.clear_instance_state()
+        log.info("resume state cleared (cloud)")
     except Exception:
         log.exception("clear_resume_state failed")
 

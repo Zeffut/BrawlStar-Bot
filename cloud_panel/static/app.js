@@ -353,6 +353,29 @@ function _formatTimeTick(ts, rangeSpan) {
          " " + d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
 }
 
+// Crosshair plugin: draws a vertical line at the cursor X position
+// across the entire chart area. Independent of point hover detection.
+const _crosshairPlugin = {
+  id: "verticalCrosshair",
+  afterDatasetsDraw(chart) {
+    const tooltip = chart.tooltip;
+    if (!tooltip || tooltip.opacity === 0 || !tooltip.dataPoints?.length) return;
+    const ctx = chart.ctx;
+    const x = tooltip.dataPoints[0].element.x;
+    const top = chart.chartArea.top;
+    const bottom = chart.chartArea.bottom;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, top);
+    ctx.lineTo(x, bottom);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
 function renderProgression(rows) {
   // Points carry their actual timestamp so the X axis is temporally
   // proportional — long idle gaps now show as wide empty stretches,
@@ -363,6 +386,7 @@ function renderProgression(rows) {
   if (!progressionChart) {
     progressionChart = new Chart(document.getElementById("chart-progression"), {
       type: "line",
+      plugins: [_crosshairPlugin],
       data: { datasets: [{ label: "Trophies", data: points,
         borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.12)",
         borderWidth: 2, tension: 0.3, pointRadius: 0, pointHoverRadius: 6,
@@ -370,10 +394,10 @@ function renderProgression(rows) {
         pointHoverBorderColor: "#fff", pointHoverBorderWidth: 2,
         fill: true, parsing: false }] },
       options: { responsive: true, maintainAspectRatio: false, animation: false,
-        // Tooltip fires at the nearest point on the X axis without
-        // requiring the cursor to land directly on the dot. Vertical
-        // hairline shows where the user is reading.
-        interaction: { mode: "index", intersect: false, axis: "x" },
+        // Tooltip fires wherever the cursor hovers — picks the closest
+        // point on the X axis. Vertical line + hover ring make the
+        // current reading position obvious.
+        interaction: { mode: "nearest", intersect: false, axis: "x" },
         plugins: {
           legend: { display: false },
           tooltip: {
