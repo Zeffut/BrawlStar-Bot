@@ -36,6 +36,28 @@ log = logging.getLogger(__name__)
 _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
+def _is_emulator_serial() -> bool:
+    """Detect whether cfg/device.toml points at an emulator.
+
+    Reading the file directly (instead of going through
+    device.adb_serial()) means this works even when the emulator's
+    ADB is temporarily unreachable — XAPK install, BlueStacks boot,
+    etc. Used by every code path that should skip the battery /
+    pause logic for emulators.
+    """
+    try:
+        import tomllib as _t
+        from pathlib import Path as _P
+        p = _P(__file__).resolve().parent / "cfg" / "device.toml"
+        if not p.exists():
+            return False
+        with p.open("rb") as f:
+            s = (_t.load(f).get("serial") or "").strip()
+        return s.startswith("emulator-") or s.startswith("127.0.0.1:")
+    except Exception:
+        return False
+
+
 # Battery gate — single hysteresis: pause when level drops below LOW,
 # stay paused until level reaches RESUME. No intermediate threshold.
 # Stops the yo-yo of pausing/resuming around a single boundary while
@@ -243,22 +265,26 @@ class GameAPI:
         """Read battery level + charging state via adb dumpsys battery.
 
         Emulators (BlueStacks, AVD, …) don't have a real battery and
-        often refuse dumpsys battery. We detect those by serial prefix
-        and short-circuit to {level: 100, charging: True} so the
-        battery gate never blocks emulator-based instances.
+        often refuse dumpsys battery. We detect those from the
+        configured serial in cfg/device.toml — independent of whether
+        the device is currently reachable — and short-circuit to
+        {level: 100, charging: True} so the battery gate never
+        applies. Without this, a transient ADB hiccup during XAPK
+        install would flip the bot into 'paused' mode.
 
         For real phones: retries on ADB transient errors. Returns
         level=None only after all retries fail — callers must treat
         unknown level as a danger signal (assume LOW), never as OK
         to play.
         """
+        # Emulator detection FIRST, from config (doesn't depend on a
+        # live ADB connection).
+        if _is_emulator_serial():
+            return {"level": 100, "charging": True}
         try:
             serial = device.adb_serial()
         except Exception:
             return {"level": None, "charging": None}
-        # Emulator shortcut.
-        if serial.startswith("emulator-") or serial.startswith("127.0.0.1:"):
-            return {"level": 100, "charging": True}
         last_exc = None
         for attempt in range(retries):
             try:
