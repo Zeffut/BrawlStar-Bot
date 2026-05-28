@@ -272,15 +272,35 @@ def _ensure_adb(adb: str) -> bool:
 
 
 def _is_package_installed(adb: str, package: str) -> bool:
-    """Retry a few times — `pm list packages` can fail during BS boot."""
+    """Retry a few times — `pm list packages` can fail during BS boot.
+
+    Tries the configured device serial first (from cfg/device.toml or
+    adb devices), then falls back to ADB_HOST. BlueStacks sometimes
+    exposes the same emulator under both `emulator-5554` and
+    `127.0.0.1:5555` — pm only responds reliably on one.
+    """
+    candidates = []
+    try:
+        import device as _device
+        s = _device.adb_serial()
+        if s and s not in candidates:
+            candidates.append(s)
+    except Exception:
+        pass
+    if ADB_HOST not in candidates:
+        candidates.append(ADB_HOST)
     for attempt in range(5):
-        code, out = _adb(adb, "-s", ADB_HOST, "shell", "pm", "list", "packages", timeout=15)
-        if code == 0 and "package:" in out:
-            return package in out
-        log.debug("pm list packages attempt %d failed (code=%d), retrying", attempt + 1, code)
+        for serial in candidates:
+            code, out = _adb(adb, "-s", serial, "shell", "pm", "list", "packages",
+                             timeout=15)
+            if code == 0 and "package:" in out:
+                return package in out
+        log.debug("pm list packages attempt %d failed on %s, retrying",
+                  attempt + 1, candidates)
         time.sleep(5)
-    log.warning("pm list packages never succeeded; assuming package IS installed to skip auto-install")
-    return True  # safer: don't auto-reinstall when state is unknown
+    log.warning("pm list packages never succeeded; assuming package is MISSING "
+                "to trigger auto-install (BlueStacks compatibility)")
+    return False
 
 
 def _download_xapk(url: str, dst: Path) -> bool:
