@@ -485,7 +485,28 @@ main {
   padding: 10px 14px;
   background: var(--bg-2);
   border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  transition: max-height 0.18s ease, padding 0.18s ease, opacity 0.18s ease;
+  max-height: 200px;
 }
+.inst-activity.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+  border-bottom: 0;
+}
+.inst-chevron {
+  color: var(--muted);
+  font-size: 10px;
+  margin-right: 6px;
+  transition: transform 0.18s ease, color 0.18s ease;
+  transform: rotate(-90deg);
+  display: inline-block;
+  line-height: 1;
+}
+.inst-chevron.expanded { transform: rotate(0deg); }
+.instance-head:hover .inst-chevron { color: var(--text-2); }
 .inst-activity-row {
   display: flex;
   justify-content: space-between;

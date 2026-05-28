@@ -119,22 +119,30 @@ async function refreshAll() {
     const head = document.createElement("div");
     head.className = "instance-head";
     const statusLabel = inst.status;  // running/ready/preparing/booting/stale/offline
+    const expandedKey = `inst-expanded:${inst.instance_id}`;
+    const isExpandedNow = localStorage.getItem(expandedKey) === "1";
     head.innerHTML = `
       <span class="inst-dot ${inst.status}"></span>
       <div class="inst-main">
         <div class="inst-name">${inst.name || inst.instance_id}</div>
         <div class="inst-id">${inst.instance_id} · ${ago(inst.last_seen_at)}</div>
       </div>
+      <span class="inst-chevron ${isExpandedNow ? 'expanded' : ''}" aria-hidden="true">▾</span>
       <span class="inst-status-pill ${inst.status}">
         ${statusLabel}
       </span>
     `;
     card.appendChild(head);
 
-    // Activity (only if WS connected)
+    // Activity details are now collapsed by default — click the
+    // instance head to expand. Keeps the sidebar compact when you
+    // just want to see who's running. Persisted per-instance in
+    // localStorage so the user's preference sticks.
     if (health.connected) {
+      const storageKey = `inst-expanded:${inst.instance_id}`;
+      const expanded = localStorage.getItem(storageKey) === "1";
       const act = document.createElement("div");
-      act.className = "inst-activity";
+      act.className = "inst-activity" + (expanded ? "" : " collapsed");
       act.innerHTML = `
         <div class="inst-activity-row">
           <span class="label">📱 ${health.model || 'device'}</span>
@@ -154,6 +162,18 @@ async function refreshAll() {
         </div>
       `;
       card.appendChild(act);
+      // Make the header clickable to toggle.
+      head.style.cursor = "pointer";
+      head.title = expanded ? "Click to hide details" : "Click to show details";
+      head.addEventListener("click", (e) => {
+        if (e.target.closest("button")) return;  // ignore inner buttons
+        const isExpanded = !act.classList.contains("collapsed");
+        act.classList.toggle("collapsed", isExpanded);
+        localStorage.setItem(storageKey, isExpanded ? "0" : "1");
+        head.title = isExpanded ? "Click to show details" : "Click to hide details";
+        const chev = head.querySelector(".inst-chevron");
+        if (chev) chev.classList.toggle("expanded", !isExpanded);
+      });
     }
 
     // Accounts list
