@@ -82,25 +82,17 @@ def _report(event: str, msg: str, level: str = "info") -> None:
 
 
 def _alert(text: str) -> None:
-    """Send a one-off Telegram message via the alerts plumbing.
+    """Boot-time alerts: log only.
 
-    We don't go through alerts.format_alert because that requires a
-    pre-defined template. Instead, send directly via the bot token if
-    we can read it from cfg.
+    The panel owns all user-visible notifications (Telegram, Discord).
+    Boot warnings rarely warrant interrupting the user — they show up
+    in the cloud event log when needed.
     """
+    log.warning("[BOOT] %s", text)
     try:
-        import tomllib
-        cfg_path = Path(__file__).resolve().parent / "cfg" / "telegram.toml"
-        with cfg_path.open("rb") as f:
-            cfg = tomllib.load(f)
-        import requests
-        requests.post(
-            f"https://api.telegram.org/bot{cfg['bot_token']}/sendMessage",
-            data={"chat_id": cfg["chat_id"], "text": f"[BOOT] {text}"},
-            timeout=5,
-        )
+        cloud_sync.event("boot_warning", {"msg": text})
     except Exception:
-        log.exception("alert post failed")
+        pass
 
 
 # ------------------------------------------------------------- steps
