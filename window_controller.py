@@ -67,32 +67,44 @@ class WindowController:
                     self.device = dev
                     break
 
-            # --- fix for pyinstaller ---
-            jar_path = resource_path("scrcpy/scrcpy-server.jar")
-            scrcpy.SCRCPY_SERVER_PATH = jar_path
+            # scrcpy init is optional — emulators like BlueStacks don't
+            # implement enough of the ADB sync protocol for `scrcpy
+            # server.jar` to land. When that happens we degrade
+            # gracefully: capture goes through ScreenRecorder (adb
+            # exec-out screenrecord) and input goes through `adb shell
+            # input tap/swipe`. None of the bot's required features
+            # depend on the scrcpy touch socket — only legacy
+            # joystick/attack helpers do.
+            self.scrcpy_client = None
+            try:
+                jar_path = resource_path("scrcpy/scrcpy-server.jar")
+                scrcpy.SCRCPY_SERVER_PATH = jar_path
 
-            self.scrcpy_client = scrcpy.Client(
-                device=self.device, 
-                max_width=0, 
-                bitrate=0
-            )
-            
-            def on_frame(frame):
-                if frame is not None:
-                    with self.frame_lock:
-                        self.last_frame = frame
-                        self.last_frame_time = time.time()
+                self.scrcpy_client = scrcpy.Client(
+                    device=self.device,
+                    max_width=0,
+                    bitrate=0
+                )
 
-            self.scrcpy_client.add_listener(scrcpy.EVENT_FRAME, on_frame)
-            self.scrcpy_client.start(threaded=True)
+                def on_frame(frame):
+                    if frame is not None:
+                        with self.frame_lock:
+                            self.last_frame = frame
+                            self.last_frame_time = time.time()
 
-            # --- linux socket fix: Wait for control attribute to initialize
-            timeout = time.time() + 5
-            while not hasattr(self.scrcpy_client, 'control') or self.scrcpy_client.control is None:
-                if time.time() > timeout:
-                    print("Warning: Touch control failed to bind. Check 'USB Debugging (Security Settings)'.")
-                    break
-                time.sleep(0.1)
+                self.scrcpy_client.add_listener(scrcpy.EVENT_FRAME, on_frame)
+                self.scrcpy_client.start(threaded=True)
+
+                # Wait briefly for the control socket to initialize.
+                timeout = time.time() + 5
+                while not hasattr(self.scrcpy_client, 'control') or self.scrcpy_client.control is None:
+                    if time.time() > timeout:
+                        print("Warning: Touch control failed to bind. Check 'USB Debugging (Security Settings)'.")
+                        break
+                    time.sleep(0.1)
+            except Exception as scrcpy_exc:
+                print(f"Warning: scrcpy init failed ({scrcpy_exc}); falling back to ADB-only mode.")
+                self.scrcpy_client = None
 
             atexit.register(self.close)
 
@@ -177,24 +189,43 @@ class WindowController:
 
         return frame_rgb if array else Image.fromarray(frame_rgb)
 
+    def _scrcpy_ok(self) -> bool:
+        return (self.scrcpy_client is not None
+                and getattr(self.scrcpy_client, "control", None) is not None)
+
     def touch_down(self, x, y, pointer_id=0):
-        if self.scrcpy_client.control:
+        if self._scrcpy_ok():
             self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_DOWN, pointer_id)
 
     def touch_move(self, x, y, pointer_id=0):
-        if self.scrcpy_client.control:
+        if self._scrcpy_ok():
             self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_MOVE, pointer_id)
 
     def touch_up(self, x, y, pointer_id=0):
-        if self.scrcpy_client.control:
+        if self._scrcpy_ok():
             self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_UP, pointer_id)
 
     # --- new swipe methood ---
     def swipe(self, start_x, start_y, end_x, end_y, duration=0.5, steps=20):
         """
         Simulates a swipe gesture from (start_x, start_y) to (end_x, end_y).
+        Falls back to `adb shell input swipe` when scrcpy is not bound.
         """
-        if not self.scrcpy_client.control:
+        if not self._scrcpy_ok():
+            # ADB fallback: native swipe gesture on the device.
+            try:
+                import subprocess
+                import device as _device
+                serial = _device.adb_serial()
+                ms = max(int(duration * 1000), 1)
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "input", "swipe",
+                     str(int(start_x)), str(int(start_y)),
+                     str(int(end_x)), str(int(end_y)), str(ms)],
+                    timeout=max(duration + 3, 5), check=False,
+                )
+            except Exception:
+                pass
             return
 
         self.touch_down(start_x, start_y, pointer_id=self.PID_ATTACK)
@@ -269,5 +300,6 @@ class WindowController:
             self.click(x * self.width_ratio, y * self.height_ratio, delay)
 
     def close(self):
-        if hasattr(self, 'scrcpy_client'):
-            self.scrcpy_client.stop()
+        if getattr(self, "scrcpy_client", None) is not None:
+            try: self.scrcpy_client.stop()
+            except Exception: pass
