@@ -153,6 +153,22 @@ class PushMaxPayload(BaseModel):
     target_total_trophies: int | None = None
 
 
+def _wait_for_game_api(max_wait_s: float = 90) -> bool:
+    """Block until the GameAPI singleton is initialized, or timeout.
+
+    Called by start-session endpoints (push_max, play_one_match) so
+    a click that arrives during the post-bootstrap init window doesn't
+    fail with 503 — it just waits a bit longer for game_api to come up.
+    """
+    import time as _t
+    deadline = _t.time() + max_wait_s
+    while _t.time() < deadline:
+        if game_api_mod.get() is not None:
+            return True
+        _t.sleep(1.0)
+    return False
+
+
 @app.post("/api/accounts/{account_id}/push_max")
 def api_push_max(account_id: int, payload: PushMaxPayload | None = None) -> dict:
     """Start the smart-rotation push-max mode for this account.
@@ -162,6 +178,8 @@ def api_push_max(account_id: int, payload: PushMaxPayload | None = None) -> dict
     """
     log.info("PANEL push_max account=%d target=%s", account_id,
              payload.target_total_trophies if payload else None)
+    if not _wait_for_game_api():
+        raise HTTPException(503, "game API not initialized after 90s — bot still booting")
     worker = _get_or_create_worker(account_id)
     if not worker:
         raise HTTPException(404, "no worker for that account")
@@ -463,6 +481,8 @@ class PlayMatchPayload(BaseModel):
 
 @app.post("/api/game/play_one_match")
 async def game_play_one_match(payload: PlayMatchPayload) -> dict:
+    if not _wait_for_game_api():
+        raise HTTPException(503, "game API not initialized after 90s — bot still booting")
     return await asyncio.get_event_loop().run_in_executor(
         None, lambda: _game().play_one_match(
             brawler=payload.brawler, timeout_s=payload.timeout_s,
