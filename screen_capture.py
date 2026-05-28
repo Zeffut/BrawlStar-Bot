@@ -127,6 +127,7 @@ class ScreenRecorder:
         # thousands of times per second, burning CPU for nothing.
         backoff_s = 2
         spawn_started_at = 0.0
+        consecutive_fast_deaths = 0
         while not self._stop:
             try:
                 size = self._record_size()
@@ -173,12 +174,25 @@ class ScreenRecorder:
                 # device is unreachable; grow the wait up to 30s.
                 if run_duration >= 5:
                     backoff_s = 2
+                    consecutive_fast_deaths = 0
                     log.info("screenrec respawn after %ds (frames=%d)",
                              self.time_limit_s, self.frames_decoded)
                 else:
+                    consecutive_fast_deaths += 1
                     log.warning("screenrec died after %.1fs (frames=%d) — "
                                 "device likely disconnected, backoff %ds",
                                 run_duration, self.frames_decoded, backoff_s)
+                    # Permanent disable after 10 fast deaths in a row:
+                    # the device probably doesn't support screenrecord
+                    # at all (BlueStacks and most emulators don't have
+                    # a real screen). Fall back to adb screencap polls.
+                    if consecutive_fast_deaths >= 10:
+                        log.warning("screenrec gave up after %d fast deaths — "
+                                    "ScreenRecorder disabled, falling back to "
+                                    "adb screencap polls",
+                                    consecutive_fast_deaths)
+                        self._stop = True
+                        return
                     time.sleep(backoff_s)
                     backoff_s = min(backoff_s * 2, 30)
             except Exception:
