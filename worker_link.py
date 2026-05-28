@@ -55,7 +55,12 @@ def _adb_serial() -> str:
 
 def _adb(*args, timeout: float = 10.0) -> tuple[int, str]:
     """Run an adb command targeted at the resolved device serial."""
-    serial = _adb_serial()
+    try:
+        serial = _adb_serial()
+    except Exception as exc:
+        # Phone unplugged / device.toml override unreachable. Fail
+        # cleanly rather than crashing the WS command handler.
+        return -1, f"NO_DEVICE: {exc}"
     cmd = ["adb", "-s", serial, *args]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,

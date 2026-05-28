@@ -17,7 +17,10 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 CFG_PATH = Path(__file__).resolve().parent / "cfg" / "device.toml"
-DEFAULT_FALLBACK = "emulator-5554"
+# Re-resolve the serial periodically — phones get unplugged, ADB
+# reboots, sleeves get knocked. We don't want to cache a stale value
+# forever.
+_CACHE_TTL_S = 30.0
 
 
 def _from_env() -> str | None:
@@ -55,17 +58,66 @@ def _from_adb() -> str | None:
 
 
 _cached: str | None = None
+_cached_at: float = 0.0
+
+
+def _cached_serial_alive(serial: str) -> bool:
+    """Return True if `serial` still appears as 'device' in adb devices."""
+    try:
+        import time as _t
+        out = subprocess.check_output(
+            ["adb", "devices"], stderr=subprocess.DEVNULL, timeout=5
+        ).decode("utf-8", errors="replace")
+        for line in out.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[0] == serial and parts[1] == "device":
+                return True
+    except Exception:
+        pass
+    return False
+
+
+class DeviceNotConnected(RuntimeError):
+    """Raised when no ADB device is currently authorized."""
 
 
 def adb_serial() -> str:
-    """Return the device serial the bot should use. Cached after first call."""
-    global _cached
-    if _cached:
+    """Return the device serial the bot should use.
+
+    Re-resolves periodically (every 30 s) and re-resolves immediately
+    if the previously cached serial is no longer reachable. Raises
+    DeviceNotConnected if no device can be found — callers should
+    treat that as 'wait for the phone to be plugged back in' instead
+    of falling back to a phantom 'emulator-5554'.
+    """
+    import time as _t
+    global _cached, _cached_at
+    now = _t.time()
+    # Env + cfg overrides win, but still validate they're reachable.
+    forced = _from_env() or _from_cfg()
+    if forced:
+        if _cached == forced and (now - _cached_at) < _CACHE_TTL_S:
+            return _cached
+        if _cached_serial_alive(forced):
+            if _cached != forced:
+                log.info("adb device serial resolved → %s (forced)", forced)
+            _cached, _cached_at = forced, now
+            return forced
+        # Forced but not reachable: still return it (caller will know
+        # to surface the error), but don't cache so we re-check soon.
+        raise DeviceNotConnected(f"forced serial {forced!r} not reachable")
+    # No override: check cache validity.
+    if _cached and (now - _cached_at) < _CACHE_TTL_S and _cached_serial_alive(_cached):
         return _cached
-    val = _from_env() or _from_cfg() or _from_adb() or DEFAULT_FALLBACK
-    log.info("adb device serial resolved → %s", val)
-    _cached = val
-    return val
+    val = _from_adb()
+    if val:
+        if _cached != val:
+            log.info("adb device serial resolved → %s", val)
+        _cached, _cached_at = val, now
+        return val
+    # Invalidate cache so next call re-checks.
+    _cached, _cached_at = None, 0.0
+    raise DeviceNotConnected("no ADB device authorized — plug in the phone")
 
 
 _device_size_cache: tuple[int, int] | None = None

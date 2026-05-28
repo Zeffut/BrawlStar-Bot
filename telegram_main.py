@@ -1200,31 +1200,40 @@ def main() -> int:
 
     # ---- Phase 2: heavy init (game launch + GameAPI) in background ----
     # Keeps the WS / heartbeat / Telegram loop responsive during boot.
+    # Retries every 60s on failure so the bot self-heals when the phone
+    # gets plugged back in (or BlueStacks restarted, etc.).
     def _phase2_init():
-        try:
-            import host_bootstrap
-            if not host_bootstrap.bootstrap_host():
-                log.warning("host_bootstrap reported a problem; continuing")
-        except Exception:
-            log.exception("host_bootstrap raised")
-        try:
-            import game_api
-            from window_controller import WindowController
-            from lobby_automation import LobbyAutomation
-            _shared_wc = WindowController()
-            _shared_la = LobbyAutomation(_shared_wc)
-            _SHARED_RUNTIME["wc"] = _shared_wc
-            _SHARED_RUNTIME["la"] = _shared_la
-            game_api.init(_shared_wc, _shared_la).set_runner(bot.runner)
-            log.info("Phase 2 ok — GameAPI ready, instance fully online")
-            # Flip the heartbeat metadata to "ready" so the cloud
-            # transitions us out of 'preparing'.
+        import game_api
+        attempt = 0
+        while game_api.get() is None:
+            attempt += 1
             try:
-                cloud_sync.heartbeat(metadata={"preparing": False, "ready": True})
+                import host_bootstrap
+                if not host_bootstrap.bootstrap_host():
+                    log.warning("host_bootstrap reported a problem; continuing")
             except Exception:
-                pass
-        except Exception:
-            log.exception("phase 2 (GameAPI) failed — remote control degraded")
+                log.exception("host_bootstrap raised")
+            try:
+                from window_controller import WindowController
+                from lobby_automation import LobbyAutomation
+                _shared_wc = WindowController()
+                _shared_la = LobbyAutomation(_shared_wc)
+                _SHARED_RUNTIME["wc"] = _shared_wc
+                _SHARED_RUNTIME["la"] = _shared_la
+                game_api.init(_shared_wc, _shared_la).set_runner(bot.runner)
+                log.info("Phase 2 ok — GameAPI ready, instance fully online (attempt %d)",
+                         attempt)
+                # Flip the heartbeat metadata to "ready" so the cloud
+                # transitions us out of 'preparing'.
+                try:
+                    cloud_sync.heartbeat(metadata={"preparing": False, "ready": True})
+                except Exception:
+                    pass
+                return
+            except Exception as exc:
+                log.warning("phase 2 (attempt %d) failed: %s — retrying in 60s",
+                            attempt, exc)
+                time.sleep(60)
     threading.Thread(target=_phase2_init, daemon=True, name="phase2-init").start()
     # Best-effort: detect the connected account at startup so the panel
     # has something to show before the user runs /start. Silently skips

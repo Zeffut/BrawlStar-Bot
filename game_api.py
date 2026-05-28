@@ -992,7 +992,53 @@ def init(window_controller, lobby_automation) -> GameAPI:
             # Start the background loops.
             _start_power_saver(_API)
             _start_idle_watchdog(_API)
+            _start_adb_reconnect_loop()
     return _API
+
+
+def _start_adb_reconnect_loop() -> None:
+    """Background loop: try to recover from a phone disconnect.
+
+    Polls `adb devices` every 15 s. If no authorized device is
+    present, runs `adb reconnect offline` then re-tries to detect a
+    device. Logs once per state change to avoid spamming the journal.
+    """
+    def loop():
+        last_state = None  # "connected" | "missing"
+        while True:
+            try:
+                time.sleep(15)
+                try:
+                    serial = device.adb_serial()
+                    state = "connected"
+                    if state != last_state:
+                        log.info("adb reconnect loop: device online (%s)", serial)
+                        last_state = state
+                except device.DeviceNotConnected:
+                    if last_state != "missing":
+                        log.warning("adb reconnect loop: no device — trying recovery")
+                        last_state = "missing"
+                    # Best-effort recovery sequence.
+                    try:
+                        subprocess.run(["adb", "reconnect", "offline"],
+                                       timeout=5, check=False,
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+                    # Also try `adb start-server` in case the daemon died.
+                    try:
+                        subprocess.run(["adb", "start-server"],
+                                       timeout=5, check=False,
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                    except Exception:
+                        pass
+            except Exception:
+                log.exception("adb reconnect loop iter crashed")
+                time.sleep(10)
+    threading.Thread(target=loop, daemon=True, name="adb-reconnect").start()
+    log.info("adb reconnect loop started")
 
 
 def _start_idle_watchdog(api: "GameAPI") -> None:
