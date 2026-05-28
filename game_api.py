@@ -36,19 +36,13 @@ log = logging.getLogger(__name__)
 _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
-# Battery gate thresholds — two-layer policy:
-#   1. HARD LOCK: below LOW_PCT (30%) the bot must recharge all the way
-#      to HARD_RESUME_PCT (80%) before grinding can resume. Locks the
-#      bot into a full recharge cycle once it drops too low.
-#   2. SOFT GATE: above PLAYABLE_PCT (50%) the bot can grind (charging
-#      cable irrelevant). Between 30-50% (with no hard-lock active)
-#      the bot is paused but can resume as soon as level reaches 50%.
-BATTERY_LOW_PCT = 30          # entering hard-lock below this
+# Battery gate — single hysteresis: pause when level drops below LOW,
+# stay paused until level reaches RESUME. No intermediate threshold.
+# Stops the yo-yo of pausing/resuming around a single boundary while
+# the bot's own activity briefly nudges the level back and forth.
+BATTERY_LOW_PCT = 30          # pause grinding when level drops below this
 BATTERY_CRITICAL_PCT = 20     # background safety net: force-stop active session
-BATTERY_RESUME_PCT = 80       # exit hard-lock once level reaches this
-BATTERY_PLAYABLE_PCT = 50     # soft-gate: can play at/above this level
-# Back-compat alias (older code refs).
-BATTERY_CHARGING_PLAYABLE = BATTERY_PLAYABLE_PCT
+BATTERY_RESUME_PCT = 80       # release the pause once level reaches this
 
 
 def _is_brawlball_label(s: str) -> bool:
@@ -280,39 +274,29 @@ class GameAPI:
         return {"level": None, "charging": None}
 
     def can_play(self) -> tuple[bool, str]:
-        """Return (ok, reason) — two-layer battery policy.
+        """Return (ok, reason) — single hysteresis gate (30% / 80%).
 
-        HARD LOCK (engaged below LOW_PCT, released at HARD_RESUME_PCT):
-          Once the phone falls below 30% the bot is locked into a full
-          recharge cycle until 80%. Charging cable irrelevant — the
-          lock is purely level-driven.
-
-        SOFT GATE (when no hard-lock):
-          Above 50% the bot can play. Between LOW_PCT and PLAYABLE_PCT
-          it's paused but can resume as soon as it reaches 50%.
+        - Drop below LOW_PCT (30%) → paused.
+        - Once paused, stay paused until level reaches RESUME_PCT (80%).
+        - In between (e.g. 50% climbing) the bot keeps doing whatever
+          it was doing: paused if it was paused, playing if it was
+          playing. No mid-level toggle.
         """
         bat = self.battery_status()
         lvl = bat.get("level")
         if lvl is None:
             self._battery_paused = True
             return False, "battery level unknown (ADB failure) — refusing to play"
-        # Engage hard-lock once below LOW.
+        was_paused = getattr(self, "_battery_paused", False)
+        # Engage pause when we drop below LOW.
         if lvl < BATTERY_LOW_PCT:
-            self._battery_hard_lock = True
-        # Hard-lock: must reach HARD_RESUME to release.
-        if getattr(self, "_battery_hard_lock", False):
-            if lvl >= BATTERY_RESUME_PCT:
-                self._battery_hard_lock = False
-            else:
-                self._battery_paused = True
-                return False, (f"hard recharge required: {lvl}% < "
-                               f"{BATTERY_RESUME_PCT}% (entered at <{BATTERY_LOW_PCT}%)")
-        # Soft gate: can play at/above PLAYABLE.
-        if lvl >= BATTERY_PLAYABLE_PCT:
-            self._battery_paused = False
-            return True, f"battery OK ({lvl}%)"
-        self._battery_paused = True
-        return False, f"battery {lvl}% — will resume at {BATTERY_PLAYABLE_PCT}%"
+            self._battery_paused = True
+            return False, f"battery {lvl}% — will resume at {BATTERY_RESUME_PCT}%"
+        # Release pause only when we reach RESUME.
+        if was_paused and lvl < BATTERY_RESUME_PCT:
+            return False, f"recharging ({lvl}%) — will resume at {BATTERY_RESUME_PCT}%"
+        self._battery_paused = False
+        return True, f"battery OK ({lvl}%)"
 
     # ---- Power saver (idle low-battery handling) -----------------
 
@@ -418,33 +402,23 @@ class GameAPI:
         bat = self.battery_status()
         lvl = bat.get("level")
         chg = bat.get("charging")
-        # Mirror can_play()'s two-layer policy so the snapshot is
-        # always coherent with what the bot would actually do, even
-        # if can_play() hasn't been called since the last drop.
+        # Mirror can_play()'s single-gate hysteresis (30% / 80%).
+        was_paused = getattr(self, "_battery_paused", False)
         if lvl is None:
             paused = True
-            hard_lock = True
+        elif lvl < BATTERY_LOW_PCT:
+            paused = True
+        elif was_paused and lvl < BATTERY_RESUME_PCT:
+            paused = True  # hysteresis: still recharging
         else:
-            hard_lock = getattr(self, "_battery_hard_lock", False)
-            if lvl < BATTERY_LOW_PCT:
-                hard_lock = True
-            elif hard_lock and lvl >= BATTERY_RESUME_PCT:
-                hard_lock = False
-            if hard_lock:
-                paused = True
-            elif lvl >= BATTERY_PLAYABLE_PCT:
-                paused = False
-            else:
-                paused = True
+            paused = False
         self._battery_paused = paused
-        self._battery_hard_lock = hard_lock
         return {
             "state": st,
             "trophies": trophies,
             "battery_pct": lvl,
             "battery_charging": chg,
             "battery_paused": paused,
-            "battery_hard_lock": hard_lock,
             "ts": round(time.time(), 2),
         }
 
@@ -1088,7 +1062,6 @@ def _start_power_saver(api: "GameAPI") -> None:
                             except Exception: log.exception("force_stop failed")
                         api.enter_power_save()
                         api._battery_paused = True
-                        api._battery_hard_lock = True
                         in_power_save = True
                         if not critical_notified:
                             try:
@@ -1114,14 +1087,12 @@ def _start_power_saver(api: "GameAPI") -> None:
                         # recharging up to HARD_RESUME (80%) instead of
                         # resuming as soon as it crosses 50%.
                         api._battery_paused = True
-                        api._battery_hard_lock = True
                         in_power_save = True
                 else:
                     if lvl >= BATTERY_RESUME_PCT:
                         log.info("power-saver: battery=%d%% → exiting power save", lvl)
                         api.exit_power_save()
                         api._battery_paused = False
-                        api._battery_hard_lock = False
                         in_power_save = False
                         critical_notified = False
                 time.sleep(poll_interval)
