@@ -226,13 +226,18 @@ def _ensure_bluestacks(bs_path: str) -> bool:
         log.info("BlueStacks already running")
         return True
     log.info("BlueStacks not running — scheduling one-shot launch task")
-    # Schedule via PowerShell — Register-ScheduledTask runs as Dev,
-    # LogonType=Interactive guarantees user session.
+    # Resolve the interactive user dynamically (Dev on HP, but-info on
+    # PC_Upec, whatever on the next host). USERNAME env is reliable
+    # because the bot service is configured to run as that user.
+    target_user = os.environ.get("USERNAME") or os.environ.get("USER") or "Dev"
+    log.info("BS launcher target user: %s", target_user)
+    # Schedule via PowerShell — Register-ScheduledTask runs as the
+    # current user, LogonType=Interactive guarantees user session.
     ps_cmd = (
         '$t = Register-ScheduledTask -TaskName "BotLaunchBS" '
         '-Action (New-ScheduledTaskAction -Execute "' + bs_path + '") '
         '-Trigger (New-ScheduledTaskTrigger -At (Get-Date).AddSeconds(3) -Once) '
-        '-Principal (New-ScheduledTaskPrincipal -UserId "Dev" '
+        '-Principal (New-ScheduledTaskPrincipal -UserId "' + target_user + '" '
         '-RunLevel Limited -LogonType Interactive) -Force; '
         'Start-Sleep 8; '
         'Unregister-ScheduledTask -TaskName "BotLaunchBS" -Confirm:$false'
