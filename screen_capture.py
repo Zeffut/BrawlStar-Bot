@@ -121,6 +121,12 @@ class ScreenRecorder:
     def _loop(self) -> None:
         import av
         codec = av.CodecContext.create("h264", "r")
+        # Exponential backoff for the device-disconnected case: when
+        # the cable is pulled, screenrecord exits immediately (no
+        # device). Without a backoff we'd respawn the process tens of
+        # thousands of times per second, burning CPU for nothing.
+        backoff_s = 2
+        spawn_started_at = 0.0
         while not self._stop:
             try:
                 size = self._record_size()
@@ -131,6 +137,7 @@ class ScreenRecorder:
                        f"--time-limit={self.time_limit_s}",
                        "-"]
                 log.info("screenrec spawn: %s", " ".join(cmd[-5:]))
+                spawn_started_at = time.time()
                 self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                               stderr=subprocess.DEVNULL)
                 self.alive = True
@@ -160,12 +167,24 @@ class ScreenRecorder:
                 # Subprocess ended (time limit or crash). Loop respawns.
                 self._proc.wait(timeout=5)
                 self.alive = False
-                log.info("screenrec respawn after %ds (frames=%d)",
-                         self.time_limit_s, self.frames_decoded)
+                run_duration = time.time() - spawn_started_at
+                # If screenrecord lasted at least 5s we consider the
+                # device healthy — reset the backoff. Otherwise the
+                # device is unreachable; grow the wait up to 30s.
+                if run_duration >= 5:
+                    backoff_s = 2
+                    log.info("screenrec respawn after %ds (frames=%d)",
+                             self.time_limit_s, self.frames_decoded)
+                else:
+                    log.warning("screenrec died after %.1fs (frames=%d) — "
+                                "device likely disconnected, backoff %ds",
+                                run_duration, self.frames_decoded, backoff_s)
+                    time.sleep(backoff_s)
+                    backoff_s = min(backoff_s * 2, 30)
             except Exception:
-                log.exception("screenrec loop crashed — restarting in 2s")
+                log.exception("screenrec loop crashed — restarting in 5s")
                 self.alive = False
-                time.sleep(2)
+                time.sleep(5)
 
 
 # ---- module-level singleton (one device per host) -----------------
