@@ -802,15 +802,43 @@ class GameAPI:
         except Exception:
             return False
 
+    def _screen_is_locked(self) -> bool:
+        """Return True if the screen is off OR the keyguard is up."""
+        serial = device.adb_serial()
+        try:
+            disp = subprocess.run(
+                ["adb", "-s", serial, "shell", "dumpsys", "display"],
+                capture_output=True, text=True, timeout=5, check=False,
+            ).stdout
+            if "mScreenState=OFF" in disp:
+                return True
+            win = subprocess.run(
+                ["adb", "-s", serial, "shell", "dumpsys", "window", "windows"],
+                capture_output=True, text=True, timeout=5, check=False,
+            ).stdout.lower()
+            for line in win.splitlines():
+                if "mcurrentfocus" in line or "mfocusedapp" in line:
+                    if "keyguard" in line or "lockscreen" in line:
+                        return True
+        except Exception:
+            pass
+        return False
+
     def ensure_brawlstars_at_lobby(self, max_wait_s: float = 120) -> tuple[bool, str]:
         """Pre-flight for any task launch.
 
-        1. If Brawl Stars isn't running, force-start it.
-        2. Wait until state=lobby (dismissing popups via goto_lobby).
+        1. If the screen is locked / off, wake + unlock (PIN).
+        2. If Brawl Stars isn't running OR isn't on top, force-start it.
+        3. Wait until state=lobby (dismissing popups via goto_lobby).
         Returns (ok, reason).
         """
         serial = device.adb_serial()
         deadline = time.time() + max_wait_s
+        # 1. Wake & unlock if needed — exit_power_save handles wake + PIN.
+        if self._screen_is_locked():
+            log.info("ensure_at_lobby: screen locked → wake + unlock")
+            self.exit_power_save()
+            time.sleep(2)
         if not self.is_brawlstars_running():
             log.info("ensure_at_lobby: Brawl Stars not running → launching")
             try:

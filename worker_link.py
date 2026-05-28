@@ -252,7 +252,43 @@ def _collect_health() -> dict:
                 out["ram_total_mb"] = kb // 1024
     # Brawl Stars running?
     rc, ps = _adb("shell", "pidof", BS_PACKAGE, timeout=4)
-    out["brawlstars_pid"] = ps.strip() if rc == 0 and ps.strip() else None
+    bs_pid = ps.strip() if rc == 0 and ps.strip() else None
+    out["brawlstars_pid"] = bs_pid
+    # Foreground/lock detection: a running PID doesn't mean the user
+    # actually sees BS — the phone may be locked or the user may have
+    # swiped to another app. Determine the actual foreground state.
+    foreground = False
+    locked = False
+    try:
+        rc2, win = _adb("shell", "dumpsys", "window", "windows", timeout=5)
+        if rc2 == 0:
+            # mCurrentFocus / mFocusedApp lines tell us what's on top.
+            focus_text = ""
+            for line in win.splitlines():
+                if "mCurrentFocus" in line or "mFocusedApp" in line:
+                    focus_text += line + "\n"
+            lf = focus_text.lower()
+            if "keyguard" in lf or "statusbar" in lf or "lockscreen" in lf:
+                locked = True
+            elif BS_PACKAGE.lower() in lf:
+                foreground = True
+    except Exception:
+        pass
+    # Screen state via dumpsys display.
+    screen_on = None
+    try:
+        rc3, disp = _adb("shell", "dumpsys", "display", timeout=4)
+        if rc3 == 0:
+            if "mScreenState=ON" in disp:
+                screen_on = True
+            elif "mScreenState=OFF" in disp:
+                screen_on = False
+                locked = True  # screen off implies user can't interact
+    except Exception:
+        pass
+    out["brawlstars_foreground"] = bool(bs_pid) and foreground and not locked
+    out["screen_locked"] = locked
+    out["screen_on"] = screen_on
     return out
 
 

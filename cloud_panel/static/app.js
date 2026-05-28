@@ -103,7 +103,15 @@ async function refreshAll() {
     if (isSelected) card.classList.add("selected");
 
     const health = healths[inst.id] || {};
-    const liveBrawl = health.brawlstars_pid ? "running" : "off";
+    // Distinguish "process alive" from "actually playable":
+    //  - foreground = BS app on top, screen unlocked → "running"
+    //  - locked     = screen off or keyguard up        → "locked"
+    //  - pid only   = process exists in background     → "background"
+    //  - no pid                                         → "off"
+    let liveBrawl = "off";
+    if (health.brawlstars_foreground) liveBrawl = "running";
+    else if (health.screen_locked && health.brawlstars_pid) liveBrawl = "locked";
+    else if (health.brawlstars_pid) liveBrawl = "background";
     const battery = health.battery != null ? `${health.battery}%` : "—";
     const ramFree = health.ram_free_mb != null ? `${Math.round(health.ram_free_mb/1024*10)/10} GB` : "—";
 
@@ -138,7 +146,7 @@ async function refreshAll() {
         </div>
         <div class="inst-activity-row">
           <span class="label">🎮 Brawl Stars</span>
-          <span class="value ${liveBrawl === 'running' ? 'delta-pos' : ''}">${liveBrawl}</span>
+          <span class="value ${liveBrawl === 'running' ? 'delta-pos' : (liveBrawl === 'off' ? '' : 'delta-neg')}">${liveBrawl}</span>
         </div>
         <div class="inst-activity-row">
           <span class="label">🧠 RAM free</span>
