@@ -251,11 +251,10 @@ async function refreshDetail() {
   document.getElementById("kpi-seen").textContent = ago(acc.last_seen_at);
 
   const ordered = [...matches].reverse().filter(m=>m.account_trophies_after!=null);
-  renderProgression(
-    ordered.map(m => fmtTime(m.timestamp)),
-    ordered.map(m => m.account_trophies_after),
-    ordered.map(m => m.brawler),
-  );
+  // Cache for the range filter — re-render on button click without
+  // re-hitting the API.
+  _progressionFullData = ordered;
+  renderProgression(_filterByRange(_progressionFullData, _progressionRange));
   renderWinRate(acc.win_rate_by_brawler || []);
 
   // Cap displayed rows to keep the page lightweight. The full history
@@ -309,24 +308,105 @@ function _updateTableCount(tableId, shown, total) {
   cap.textContent = `Affichage ${shown} sur ${total}`;
 }
 
-function renderProgression(labels, trophies, brawlers) {
+let _progressionFullData = [];        // [{timestamp, account_trophies_after, brawler, result, …}]
+let _progressionRange = "24h";        // active filter: 1h | 6h | 24h | 7d | all
+
+function _rangeSeconds(r) {
+  return {"1h":3600, "6h":21600, "24h":86400, "7d":604800, "all":null}[r];
+}
+
+function _filterByRange(data, range) {
+  const span = _rangeSeconds(range);
+  if (span == null) return data;
+  const cutoff = Date.now()/1000 - span;
+  return data.filter(m => m.timestamp >= cutoff);
+}
+
+function _formatTimeTick(ts, rangeSpan) {
+  const d = new Date(ts * 1000);
+  if (rangeSpan != null && rangeSpan <= 86400) {
+    return d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  }
+  return d.toLocaleDateString([], {day:"2-digit", month:"2-digit"}) +
+         " " + d.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+}
+
+function renderProgression(rows) {
+  // Points carry their actual timestamp so the X axis is temporally
+  // proportional — long idle gaps now show as wide empty stretches,
+  // dense grind clusters as packed lines. Previous version used
+  // evenly-spaced string labels and lost all temporal nuance.
+  const points = rows.map(m => ({x: m.timestamp, y: m.account_trophies_after}));
+  const span = _rangeSeconds(_progressionRange);
   if (!progressionChart) {
     progressionChart = new Chart(document.getElementById("chart-progression"), {
       type: "line",
-      data: { labels: [], datasets: [{ label: "Trophies", data: [],
+      data: { datasets: [{ label: "Trophies", data: points,
         borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.12)",
         borderWidth: 2, tension: 0.3, pointRadius: 0, pointHoverRadius: 5,
-        pointHoverBackgroundColor: "#6ea4ff", fill: true }] },
+        pointHoverBackgroundColor: "#6ea4ff", fill: true,
+        parsing: false }] },
       options: { responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: false }, tooltip: { backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1, titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10, displayColors: false } },
-        scales: { x: {grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10},maxRotation:0,autoSkipPadding:20},border:{display:false}},
-                  y: {grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10}},border:{display:false}} } }
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1,
+            titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10,
+            displayColors: false,
+            callbacks: {
+              title: (items) => {
+                if (!items.length) return "";
+                const ts = items[0].parsed.x;
+                return new Date(ts * 1000).toLocaleString();
+              },
+              label: (item) => `${item.parsed.y} 🏆`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: "linear",
+            grid: {color:"rgba(255,255,255,.03)"},
+            ticks: {
+              color: "#7a8597", font: {family:"Inter", size:10},
+              maxRotation: 0, autoSkipPadding: 20,
+              callback: (val) => _formatTimeTick(val, _rangeSeconds(_progressionRange)),
+            },
+            border: {display:false},
+          },
+          y: {
+            grid: {color:"rgba(255,255,255,.03)"},
+            ticks: {color:"#7a8597", font:{family:"Inter", size:10}},
+            border: {display:false},
+          },
+        },
+      },
     });
   }
-  progressionChart.data.labels = labels;
-  progressionChart.data.datasets[0].data = trophies;
+  progressionChart.data.datasets[0].data = points;
+  // Constrain X to the requested range so the curve uses the full width
+  // even when the data falls in just one corner of the window.
+  if (span != null && points.length > 0) {
+    progressionChart.options.scales.x.min = Date.now()/1000 - span;
+    progressionChart.options.scales.x.max = Date.now()/1000;
+  } else {
+    delete progressionChart.options.scales.x.min;
+    delete progressionChart.options.scales.x.max;
+  }
   progressionChart.update("none");
 }
+
+// Range buttons
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("#chart-range button");
+  if (!btn) return;
+  _progressionRange = btn.dataset.range;
+  document.querySelectorAll("#chart-range button").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  if (_progressionFullData.length) {
+    renderProgression(_filterByRange(_progressionFullData, _progressionRange));
+  }
+});
 
 function renderWinRate(data) {
   const sorted = data.slice().sort((a,b)=>b.total-a.total).slice(0,8);

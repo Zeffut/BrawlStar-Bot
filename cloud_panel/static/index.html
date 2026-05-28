@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260527f" />
+<link rel="stylesheet" href="/static/style.css?v=20260528a" />
 </head>
 <body>
 <header>
@@ -169,7 +169,16 @@
       </section>
       <section class="charts">
         <div class="chart-card">
-          <h3>Account trophies over time</h3>
+          <div class="chart-card-header">
+            <h3>Account trophies over time</h3>
+            <div class="chart-range" id="chart-range" role="tablist">
+              <button data-range="1h">1 h</button>
+              <button data-range="6h">6 h</button>
+              <button data-range="24h" class="active">24 h</button>
+              <button data-range="7d">7 j</button>
+              <button data-range="all">Tout</button>
+            </div>
+          </div>
           <canvas id="chart-progression"></canvas>
         </div>
         <div class="chart-card">
@@ -242,6 +251,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260527f"></script>
+<script src="/static/app.js?v=20260528a"></script>
 </body>
 </html>
