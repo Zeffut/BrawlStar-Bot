@@ -532,10 +532,20 @@ class GameAPI:
         Strategy: shotgun. Try every known dismissal in sequence per
         iteration. One of them will work regardless of what screen we're
         actually on. Logs every action so we can debug what worked.
+
+        First checks the screen-lock state — no point dismissing popups
+        if the phone is locked, the wallpaper would just keep being
+        misclassified as 'match' by the state detector.
         """
         last_state = None
         same_state_count = 0
         for i in range(max_attempts):
+            # Lock check — wake + PIN if screen is off or keyguard is up.
+            if self._screen_is_locked():
+                log.warning("goto_lobby[%d]: screen locked → wake + unlock", i)
+                self.exit_power_save()
+                time.sleep(2.5)
+                continue
             st = self.state()
             log.info("goto_lobby[%d] state=%s", i, st)
             if st == "lobby":
