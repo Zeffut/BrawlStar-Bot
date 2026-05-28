@@ -129,6 +129,91 @@ def _wait_port(host: str, port: int, timeout_s: float = 180) -> bool:
     return False
 
 
+def _load_pin() -> str | None:
+    """Read cfg/lockscreen.toml for the device unlock PIN."""
+    try:
+        import tomllib
+        p = Path(__file__).resolve().parent / "cfg" / "lockscreen.toml"
+        if not p.exists():
+            return None
+        with p.open("rb") as f:
+            cfg = tomllib.load(f)
+        pin = cfg.get("pin")
+        return str(pin) if pin else None
+    except Exception:
+        return None
+
+
+def _is_screen_locked(adb: str, serial: str) -> bool:
+    """Return True if the screen is off OR the keyguard is up."""
+    try:
+        disp = subprocess.run(
+            [adb, "-s", serial, "shell", "dumpsys", "display"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout
+        if "mScreenState=OFF" in disp:
+            return True
+        win = subprocess.run(
+            [adb, "-s", serial, "shell", "dumpsys", "window", "windows"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.lower()
+        for line in win.splitlines():
+            if "mcurrentfocus" in line or "mfocusedapp" in line:
+                if "keyguard" in line or "lockscreen" in line:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def _unlock_screen(adb: str, serial: str) -> None:
+    """Wake screen + swipe up + enter PIN (if cfg/lockscreen.toml).
+
+    Idempotent: safe to call even if already unlocked. Mirrors
+    GameAPI.exit_power_save so the bootstrap can unlock before
+    game_api initializes.
+    """
+    try:
+        disp = subprocess.run(
+            [adb, "-s", serial, "shell", "dumpsys", "display"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout
+        if "mScreenState=OFF" in disp:
+            subprocess.run(
+                [adb, "-s", serial, "shell", "input", "keyevent", "26"],
+                timeout=5, check=False,
+            )
+            time.sleep(0.6)
+        # Swipe up to reveal PIN entry.
+        subprocess.run(
+            [adb, "-s", serial, "shell", "input", "swipe",
+             "540", "1500", "540", "500", "200"],
+            timeout=5, check=False,
+        )
+        time.sleep(0.6)
+        pin = _load_pin()
+        if pin:
+            subprocess.run(
+                [adb, "-s", serial, "shell", "input", "text", pin],
+                timeout=5, check=False,
+            )
+            time.sleep(0.3)
+            subprocess.run(
+                [adb, "-s", serial, "shell", "input", "keyevent", "66"],
+                timeout=5, check=False,
+            )
+            time.sleep(0.8)
+            log.info("_unlock_screen: PIN entered")
+        else:
+            subprocess.run(
+                [adb, "-s", serial, "shell", "wm", "dismiss-keyguard"],
+                timeout=5, check=False,
+            )
+            log.info("_unlock_screen: dismiss-keyguard (no PIN configured)")
+    except Exception:
+        log.exception("_unlock_screen failed")
+
+
 def _adb(adb: str, *args, timeout: float = 30) -> tuple[int, str]:
     try:
         proc = subprocess.run(
@@ -291,6 +376,10 @@ def _bootstrap_linux() -> bool:
         _alert("Brawl Stars not installed on this phone — install it manually via Play Store")
         return False
 
+    # 3a. Wake & unlock if needed. The keyguard wallpaper is misread
+    # as "match" by state_finder, so we'd never make progress.
+    _unlock_screen(adb, serial)
+
     # 3. Launch Brawl Stars via `am start`
     log.info("launching Brawl Stars")
     code, output = _adb(adb, "-s", serial, "shell", "am", "start",
@@ -315,6 +404,16 @@ def _bootstrap_linux() -> bool:
         same_state_count = 0
         last_state = None
         for attempt in range(45):
+            # Re-check lock state: if BS got dropped behind a keyguard
+            # (notification timeout, etc.), every screencap from now on
+            # would show the lock wallpaper.
+            if _is_screen_locked(adb, serial):
+                log.warning("boot loop %d: screen got locked → unlock", attempt + 1)
+                _unlock_screen(adb, serial)
+                _adb(adb, "-s", serial, "shell", "am", "start",
+                     "-n", f"{BS_PACKAGE}/.GameApp", timeout=15)
+                time.sleep(3)
+                continue
             raw = subprocess.check_output(
                 [adb, "-s", serial, "exec-out", "screencap", "-p"],
                 timeout=10,
