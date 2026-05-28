@@ -181,7 +181,13 @@ async function refreshAll() {
     } else {
       const empty = document.createElement("div");
       empty.className = "inst-empty";
-      empty.textContent = "no account detected yet";
+      empty.innerHTML = `
+        <div>no account detected yet</div>
+        <button class="header-btn" style="margin-top:8px;font-size:11px" data-inst-id="${inst.id}" data-inst-uid="${inst.instance_id}">🔧 Device console</button>`;
+      empty.querySelector("button").onclick = (e) => {
+        e.stopPropagation();
+        openDeviceConsoleForInstance(inst.id, inst.instance_id);
+      };
       card.appendChild(empty);
     }
 
@@ -365,6 +371,33 @@ function closeDeviceConsole() {
   if (deviceTimer) { clearInterval(deviceTimer); deviceTimer = null; }
 }
 
+function openDeviceConsoleForInstance(instanceId, instanceUid) {
+  // Direct opening for instances that have no account yet (e.g. fresh
+  // PC_Upec with BlueStacks before Brawl Stars is installed/logged-in).
+  selectedInstanceForDevice = instanceId;
+  // Make sure the detail pane is visible so #device-panel renders.
+  document.getElementById("empty-state").hidden = true;
+  document.getElementById("detail-content").hidden = false;
+  // Hide the account-specific KPIs/charts since there's no account.
+  document.getElementById("acc-name").textContent = instanceUid || "Instance";
+  document.getElementById("acc-tag").textContent = "";
+  document.getElementById("acc-instance").textContent = "no account yet";
+  document.getElementById("device-panel").hidden = false;
+  deviceConsoleOpen = true;
+  refreshDevicePanelForInstance(instanceId);
+  if (deviceTimer) clearInterval(deviceTimer);
+  deviceTimer = setInterval(() => refreshDevicePanelForInstance(instanceId), 5000);
+}
+
+async function refreshDevicePanelForInstance(instanceId) {
+  if (!deviceConsoleOpen) return;
+  const [healthRes, logsRes] = await Promise.all([
+    api(`/api/instances/${instanceId}/health`).catch(() => ({connected:false})),
+    api(`/api/instances/${instanceId}/logs?limit=120`).catch(() => []),
+  ]);
+  _renderDevicePanel(healthRes, logsRes, {available: false});
+}
+
 async function refreshDevicePanel() {
   if (!selectedAccountId || !deviceConsoleOpen) return;
   // The device panel is keyed by the instance that owns the selected account.
@@ -384,8 +417,10 @@ async function refreshDevicePanel() {
     api(`/api/instances/${inst.id}/health`).catch(() => ({connected:false})),
     api(`/api/instances/${inst.id}/logs?limit=120`).catch(() => []),
   ]);
-  const shotRes = {available: false};  // skip auto fetch
+  _renderDevicePanel(healthRes, logsRes, {available: false});
+}
 
+function _renderDevicePanel(healthRes, logsRes, shotRes) {
   // WS status indicator
   const wsEl = document.getElementById("ws-status");
   if (healthRes.connected) {
@@ -399,7 +434,7 @@ async function refreshDevicePanel() {
   // Screen
   const screenEl = document.getElementById("device-screen");
   const ageEl = document.getElementById("screen-age");
-  if (shotRes.available) {
+  if (shotRes && shotRes.available) {
     const mime = shotRes.mime || "image/png";
     const b64 = shotRes.b64 || shotRes.png_b64;
     screenEl.src = `data:${mime};base64,${b64}`;
@@ -431,11 +466,12 @@ async function refreshDevicePanel() {
   // Logs
   const logsEl = document.getElementById("device-logs");
   const logsCount = document.getElementById("logs-count");
-  logsCount.textContent = `(${logsRes.length} lines)`;
-  // Only scroll-to-bottom if user is already at the bottom (avoid yanking while reading)
-  const atBottom = logsEl.scrollTop + logsEl.clientHeight + 10 >= logsEl.scrollHeight;
-  logsEl.textContent = logsRes.map(e => e.line).join("\n");
-  if (atBottom) logsEl.scrollTop = logsEl.scrollHeight;
+  if (logsRes && logsRes.length != null) {
+    logsCount.textContent = `(${logsRes.length} lines)`;
+    const atBottom = logsEl.scrollTop + logsEl.clientHeight + 10 >= logsEl.scrollHeight;
+    logsEl.textContent = logsRes.map(e => e.line).join("\n");
+    if (atBottom) logsEl.scrollTop = logsEl.scrollHeight;
+  }
 }
 
 async function sendDeviceCmd(cmd, confirmMsg) {

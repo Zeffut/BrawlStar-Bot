@@ -100,6 +100,83 @@ log = logging.getLogger("telegram_main")
 _SHARED_RUNTIME: dict = {}
 
 
+# ----------------------------- Resume-state persistence ------------
+# When a session is active and the bot restarts (self-update, crash,
+# reboot…), we want to resume the same task automatically. The state
+# is a tiny JSON file dropped at session start and cleared at end.
+_RESUME_STATE_PATH = Path(__file__).resolve().parent / "data" / "session_state.json"
+_RESUME_MAX_AGE_S = 2 * 3600  # don't auto-resume sessions older than 2h
+
+
+def _save_resume_state(state: dict) -> None:
+    try:
+        _RESUME_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _RESUME_STATE_PATH.open("w", encoding="utf-8") as f:
+            json.dump(state, f)
+        log.info("resume state saved: mode=%s brawler=%s target=%s",
+                 state.get("mode"), state.get("brawler"),
+                 state.get("target_total_trophies"))
+    except Exception:
+        log.exception("save_resume_state failed")
+
+
+def _load_resume_state() -> dict | None:
+    if not _RESUME_STATE_PATH.exists():
+        return None
+    try:
+        with _RESUME_STATE_PATH.open("r", encoding="utf-8") as f:
+            state = json.load(f)
+        age = time.time() - state.get("started_at", 0)
+        if age > _RESUME_MAX_AGE_S:
+            log.info("resume state too old (%.0fs) — discarding", age)
+            _clear_resume_state()
+            return None
+        return state
+    except Exception:
+        log.exception("load_resume_state failed")
+        return None
+
+
+def _clear_resume_state() -> None:
+    try:
+        if _RESUME_STATE_PATH.exists():
+            _RESUME_STATE_PATH.unlink()
+            log.info("resume state cleared")
+    except Exception:
+        log.exception("clear_resume_state failed")
+
+
+def _try_resume_session(bot) -> None:
+    """Re-launch the last task if the bot was interrupted mid-session."""
+    state = _load_resume_state()
+    if state is None:
+        return
+    if bot.runner.is_running():
+        log.info("resume: bot already running, skipping")
+        return
+    mode = state.get("mode") or "single"
+    log.info("RESUMING %s session (started %.0fs ago): brawler=%s target_total=%s",
+             mode, time.time() - state.get("started_at", 0),
+             state.get("brawler"), state.get("target_total_trophies"))
+    try:
+        ok, msg = bot.runner.start(
+            brawler=state.get("brawler") or "shelly",
+            trophies=state.get("trophies", 99999),
+            wins=state.get("wins", 0),
+            mode=mode,
+            owned_brawlers=state.get("owned_brawlers"),
+            max_matches=state.get("max_matches"),
+            target_total_trophies=state.get("target_total_trophies"),
+        )
+        log.info("resume result: ok=%s msg=%s", ok, msg)
+        if not ok:
+            # If we can't resume now (battery, lobby, etc.) keep the
+            # state so the next restart can try again.
+            log.warning("resume failed; keeping state for retry")
+    except Exception:
+        log.exception("resume crashed")
+
+
 class BotRunner:
     """Manages the bot worker in a background thread."""
 
@@ -210,6 +287,18 @@ class BotRunner:
             self._target_total_trophies = target_total_trophies
             self._last_match_at = time.time()
             self._stuck_alerted = False
+            # Persist the resume state so a restart can pick up where
+            # we left off (self-update, crash, reboot…).
+            _save_resume_state({
+                "mode": mode,
+                "brawler": brawler,
+                "wins": wins,
+                "trophies": trophies,
+                "max_matches": max_matches,
+                "target_total_trophies": target_total_trophies,
+                "owned_brawlers": owned_brawlers,
+                "started_at": time.time(),
+            })
             try:
                 save_brawler_data(data)
             except Exception as exc:
@@ -287,10 +376,13 @@ class BotRunner:
         The Main loop honors `in_cooldown`: it replaces the lobby
         handler with a no-op so the bot won't tap PLAY again. After the
         cooldown_duration (default 3 min) it breaks out of the loop.
+        Also clears the resume state so a future restart doesn't
+        auto-relaunch the session.
         """
         with self._lock:
             if not self.is_running():
                 return False, "Bot is not running."
+            _clear_resume_state()  # user-initiated stop, no auto-resume
             try:
                 if self.main_instance is not None:
                     self.main_instance.in_cooldown = True
@@ -316,6 +408,7 @@ class BotRunner:
         with self._lock:
             if not self.is_running():
                 return False, "Bot is not running."
+            _clear_resume_state()  # user-initiated stop
             # Always set stop_flag first — _run checks it after Main() init
             # and before entering the main loop, so even if init is still
             # in progress the match loop will be skipped.
@@ -636,6 +729,7 @@ class BotRunner:
             if runner._max_matches is not None and runner._match_count >= runner._max_matches:
                 log.info("max_matches=%d reached — stopping bot", runner._max_matches)
                 main_instance.time_to_stop = True
+                _clear_resume_state()
             # Global trophy target (push_max mode): stop when account total
             # reaches the user-set objective.
             if (runner._target_total_trophies is not None
@@ -643,6 +737,7 @@ class BotRunner:
                 log.info("target_total_trophies=%d reached (current=%d) — stopping",
                          runner._target_total_trophies, runner._account_trophies)
                 main_instance.time_to_stop = True
+                _clear_resume_state()
                 # Edge-trigger the notif on the match that actually crossed
                 # the threshold — avoids spamming if the bot bounces around
                 # the target across multiple matches.
@@ -664,6 +759,7 @@ class BotRunner:
                 if runner._push_max.all_done():
                     log.info("push_max: all brawlers exhausted — stopping bot")
                     main_instance.time_to_stop = True
+                    _clear_resume_state()
                 else:
                     cur = runner._push_max.brawlers.get(current_brawler)
                     if cur and cur.exhausted:
@@ -1229,6 +1325,9 @@ def main() -> int:
                     cloud_sync.heartbeat(metadata={"preparing": False, "ready": True})
                 except Exception:
                     pass
+                # Auto-resume an interrupted session if a resume state
+                # file exists. Triggered by self-update / crash / reboot.
+                _try_resume_session(bot)
                 return
             except Exception as exc:
                 log.warning("phase 2 (attempt %d) failed: %s — retrying in 60s",
