@@ -353,6 +353,35 @@ def api_account_matches(account_id: int, limit: int = 200) -> list[dict]:
     return db.recent_matches(account_id, limit=limit)
 
 
+@app.get("/api/accounts/{account_id}/dashboard")
+def api_account_dashboard(account_id: int, matches_limit: int = 200) -> dict:
+    """Single round-trip combining everything the panel detail view needs.
+
+    Cuts 4 sequential HTTP calls down to 1, eliminating the staggered
+    'load section by section' effect on slow networks (UPEC wifi, etc.).
+    All DB queries run in one connection — SQLite handles them in
+    microseconds — so the marginal cost is tiny vs the round-trip win.
+    """
+    acc = db.get_account(account_id)
+    if not acc:
+        raise HTTPException(404, "not found")
+    acc["current_session"] = db.current_session(account_id)
+    acc["sessions"] = db.list_sessions(account_id, limit=20)
+    acc["win_rate_by_brawler"] = db.win_rate_by_brawler(account_id)
+    matches = db.recent_matches(account_id, limit=matches_limit)
+    brawlers, refreshed_at = db.get_account_brawlers(account_id)
+    total_trophies = sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
+    return {
+        "account": acc,
+        "matches": matches,
+        "brawlers": {
+            "list": brawlers,
+            "refreshed_at": refreshed_at,
+            "total_trophies": total_trophies,
+        },
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "ts": time.time(), "sse_subscribers": BUS.count}

@@ -218,25 +218,47 @@ async function selectAccount(id) {
   document.getElementById("detail-content").hidden = false;
   for (const li of document.querySelectorAll("#accounts li"))
     li.classList.toggle("active", parseInt(li.dataset.id) === id);
-  // Kick off the brawlers fetch immediately so the dropdown fills ASAP
-  // (in parallel with the heavier account-detail call).
-  gcLoadBrawlers();
+  // Brawlers come bundled in the dashboard endpoint now — no need
+  // for an extra round-trip.
   await refreshDetail();
 }
 
 async function refreshDetail() {
   if (!selectedAccountId) return;
-  let acc, matches;
+  const accId = selectedAccountId;
+  // 1. Show last-known snapshot from localStorage IMMEDIATELY so the
+  //    user sees something before any network round-trip.
+  const cacheKey = `dash:${accId}`;
   try {
-    [acc, matches] = await Promise.all([
-      api(`/api/accounts/${selectedAccountId}`),
-      api(`/api/accounts/${selectedAccountId}/matches?limit=200`),
-    ]);
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+    if (cached && cached.account && cached.matches) {
+      _applyDashboard(cached);
+    }
+  } catch (e) {}
+  // 2. Fetch fresh data in one round-trip (dashboard endpoint).
+  let dash;
+  try {
+    dash = await api(`/api/accounts/${accId}/dashboard?matches_limit=200`);
   } catch (e) { return; }
+  if (selectedAccountId !== accId) return;  // user clicked elsewhere
+  _applyDashboard(dash);
+  try { localStorage.setItem(cacheKey, JSON.stringify(dash)); } catch (e) {}
+  // 3. Fire-and-forget secondary calls (alerts, session state, GC).
   refreshSessionState();
   gcRefreshAll();
-  gcLoadBrawlers();
   loadAlerts();
+}
+
+function _applyDashboard(dash) {
+  const acc = dash.account;
+  const matches = dash.matches || [];
+  // Render brawlers from cached payload (saves an extra round-trip).
+  if (dash.brawlers && dash.brawlers.list?.length) {
+    _renderBrawlers(dash.brawlers.list, dash.brawlers.refreshed_at);
+    if (dash.brawlers.total_trophies != null) {
+      _renderAuthoritativeTrophies(dash.brawlers.total_trophies);
+    }
+  }
 
   document.getElementById("acc-name").textContent = acc.name || acc.tag;
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
@@ -343,10 +365,15 @@ function renderProgression(rows) {
       type: "line",
       data: { datasets: [{ label: "Trophies", data: points,
         borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.12)",
-        borderWidth: 2, tension: 0.3, pointRadius: 0, pointHoverRadius: 5,
-        pointHoverBackgroundColor: "#6ea4ff", fill: true,
-        parsing: false }] },
+        borderWidth: 2, tension: 0.3, pointRadius: 0, pointHoverRadius: 6,
+        pointHoverBackgroundColor: "#6ea4ff",
+        pointHoverBorderColor: "#fff", pointHoverBorderWidth: 2,
+        fill: true, parsing: false }] },
       options: { responsive: true, maintainAspectRatio: false, animation: false,
+        // Tooltip fires at the nearest point on the X axis without
+        // requiring the cursor to land directly on the dot. Vertical
+        // hairline shows where the user is reading.
+        interaction: { mode: "index", intersect: false, axis: "x" },
         plugins: {
           legend: { display: false },
           tooltip: {
