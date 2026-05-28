@@ -359,18 +359,32 @@ async def game_snapshot() -> dict:
     if api is None:
         # Degraded snapshot: ADB direct call for battery.
         import subprocess as _sp
+        # Read the configured serial directly from cfg/device.toml —
+        # don't go through device.adb_serial() because it raises when
+        # the device is unreachable (BlueStacks still booting). We want
+        # to detect 'emulator' status BEFORE that check.
+        cfg_serial = ""
+        try:
+            import tomllib
+            from pathlib import Path
+            p = Path(__file__).resolve().parent.parent / "cfg" / "device.toml"
+            if p.exists():
+                with p.open("rb") as f:
+                    cfg_serial = (tomllib.load(f).get("serial") or "").strip()
+        except Exception:
+            pass
+        is_emulator = (cfg_serial.startswith("emulator-")
+                       or cfg_serial.startswith("127.0.0.1:"))
+        if is_emulator:
+            return {
+                "state": "booting", "trophies": None,
+                "battery_pct": 100, "battery_charging": True,
+                "battery_paused": False,
+                "ts": round(__import__("time").time(), 2),
+            }
         try:
             import device as _device
             serial = _device.adb_serial()
-            # Emulators don't have a real battery — short-circuit so the
-            # 'charging' status doesn't lock the UI for BlueStacks etc.
-            if serial.startswith("emulator-") or serial.startswith("127.0.0.1:"):
-                return {
-                    "state": "booting", "trophies": None,
-                    "battery_pct": 100, "battery_charging": True,
-                    "battery_paused": False,
-                    "ts": round(__import__("time").time(), 2),
-                }
             out = _sp.run(
                 ["adb", "-s", serial, "shell", "dumpsys", "battery"],
                 capture_output=True, text=True, timeout=5, check=False,
