@@ -361,8 +361,18 @@ async def game_snapshot() -> dict:
         import subprocess as _sp
         try:
             import device as _device
+            serial = _device.adb_serial()
+            # Emulators don't have a real battery — short-circuit so the
+            # 'charging' status doesn't lock the UI for BlueStacks etc.
+            if serial.startswith("emulator-") or serial.startswith("127.0.0.1:"):
+                return {
+                    "state": "booting", "trophies": None,
+                    "battery_pct": 100, "battery_charging": True,
+                    "battery_paused": False,
+                    "ts": round(__import__("time").time(), 2),
+                }
             out = _sp.run(
-                ["adb", "-s", _device.adb_serial(), "shell", "dumpsys", "battery"],
+                ["adb", "-s", serial, "shell", "dumpsys", "battery"],
                 capture_output=True, text=True, timeout=5, check=False,
             ).stdout
             level = None
@@ -375,10 +385,8 @@ async def game_snapshot() -> dict:
                 elif line.startswith("status:"):
                     try: chg = int(line.split(":", 1)[1].strip()) in (2, 5)
                     except Exception: pass
-            # Mirror game_api's policy (LOW=30, PLAYABLE=50): paused
-            # whenever level is unknown or under 50%. No hard_lock
-            # tracking here — game_api takes over once initialized.
-            paused = level is None or level < 50
+            # paused if level unknown OR < LOW threshold (real phones).
+            paused = level is None or level < 30
             return {
                 "state": "booting",
                 "trophies": None,

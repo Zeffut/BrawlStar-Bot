@@ -242,15 +242,28 @@ class GameAPI:
     def battery_status(self, retries: int = 3) -> dict:
         """Read battery level + charging state via adb dumpsys battery.
 
-        Retries on ADB transient errors. Returns level=None only after
-        all retries fail — callers must treat unknown level as a danger
-        signal (assume LOW), never as OK to play.
+        Emulators (BlueStacks, AVD, …) don't have a real battery and
+        often refuse dumpsys battery. We detect those by serial prefix
+        and short-circuit to {level: 100, charging: True} so the
+        battery gate never blocks emulator-based instances.
+
+        For real phones: retries on ADB transient errors. Returns
+        level=None only after all retries fail — callers must treat
+        unknown level as a danger signal (assume LOW), never as OK
+        to play.
         """
+        try:
+            serial = device.adb_serial()
+        except Exception:
+            return {"level": None, "charging": None}
+        # Emulator shortcut.
+        if serial.startswith("emulator-") or serial.startswith("127.0.0.1:"):
+            return {"level": 100, "charging": True}
         last_exc = None
         for attempt in range(retries):
             try:
                 out = subprocess.run(
-                    ["adb", "-s", device.adb_serial(), "shell", "dumpsys", "battery"],
+                    ["adb", "-s", serial, "shell", "dumpsys", "battery"],
                     capture_output=True, text=True, timeout=5, check=False,
                 ).stdout
                 level = None
