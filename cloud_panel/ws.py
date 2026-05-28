@@ -138,11 +138,10 @@ class WorkerHub:
             log.info("worker connected: %s (total=%d)", instance_id, len(self._conns))
         # Notify browsers (outside the lock to avoid re-entrant issues).
         BUS.publish({"type": "instance_connected", "instance_id": instance_id})
-        try:
-            import notif as _notif
-            _notif.dispatch("instance_connected", {"instance_id": instance_id})
-        except Exception:
-            log.exception("notif dispatch instance_connected failed")
+        # NOTE: no notif dispatch on instance_connected — self-updates,
+        # service restarts and code redeploys all trigger reconnects,
+        # so Telegram would receive a boot ping for every push. The
+        # disconnect notif remains because it indicates a real anomaly.
         return conn
 
     async def unregister(self, conn: WorkerConnection) -> None:

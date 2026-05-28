@@ -1459,7 +1459,7 @@ const EVENT_LABELS = {
   battery_low: "Batterie faible",
   battery_resumed: "Batterie OK (reprise)",
   bot_stuck: "Bot bloqué",
-  instance_connected: "Instance connectée",
+  // instance_connected omitted — too noisy with self-update restarts.
   instance_disconnected: "Instance déconnectée",
   session_ended: "Session terminée",
 };

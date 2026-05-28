@@ -42,7 +42,7 @@ DEFAULT_CONFIG: dict = {
         "battery_low":           {"telegram": True,  "discord": True},
         "battery_resumed":       {"telegram": False, "discord": False},
         "bot_stuck":             {"telegram": True,  "discord": True},
-        "instance_connected":    {"telegram": False, "discord": False},
+        # instance_connected removed — too noisy on self-updates.
         "instance_disconnected": {"telegram": True,  "discord": True},
         "session_ended":         {"telegram": False, "discord": False},
     },
