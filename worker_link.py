@@ -79,8 +79,21 @@ def _cmd_screenshot(args: dict) -> dict:
     Args (optional):
       max_width : int   target width in px (default 960, original aspect ratio)
       quality   : int   JPEG quality 1-95 (default 70)
+
+    On the BlueStacks/emulator side the TCP ADB link drops easily — if
+    the first resolution fails with DeviceNotConnected we run the same
+    reconnect logic as the manual button before bailing out.
     """
-    serial = _adb_serial()
+    try:
+        serial = _adb_serial()
+    except Exception:
+        # Best-effort silent reconnect, then one retry. If it still
+        # fails the error bubbles up to the operator.
+        try:
+            _cmd_adb_reconnect({})
+        except Exception:
+            pass
+        serial = _adb_serial()
     raw = subprocess.check_output(
         ["adb", "-s", serial, "exec-out", "screencap", "-p"],
         timeout=8,
@@ -128,12 +141,57 @@ def _cmd_phone_reboot(args: dict) -> dict:
 
 
 def _cmd_adb_reconnect(args: dict) -> dict:
+    """Restart adb server and reconnect to the configured device.
+
+    For TCP devices (BlueStacks emulator, 127.0.0.1:5555 / similar), we
+    must explicitly `adb connect` after a kill-server — otherwise the
+    emulator stays invisible. Falls back to scanning common BlueStacks
+    ports (5555/5556/5565/5575) if the configured serial isn't TCP.
+    """
+    lines = []
     subprocess.run(["adb", "kill-server"], timeout=5)
     time.sleep(1)
     subprocess.run(["adb", "start-server"], timeout=5)
     time.sleep(1)
-    code, out = _adb("devices", timeout=5)
-    return {"ok": code == 0, "output": out.strip()[:500]}
+    # Re-establish TCP connections that kill-server forgot.
+    tcp_targets = []
+    try:
+        import tomllib as _t
+        from pathlib import Path as _P
+        cfg = _P(__file__).resolve().parent / "cfg" / "device.toml"
+        if cfg.exists():
+            with cfg.open("rb") as f:
+                serial = (_t.load(f).get("serial") or "").strip()
+            if ":" in serial and not serial.startswith("emulator-"):
+                tcp_targets.append(serial)
+    except Exception:
+        pass
+    # Common BlueStacks ADB ports — always tried after the configured
+    # one so reconnect works even with an `emulator-5554` style serial.
+    for p in ("127.0.0.1:5555", "127.0.0.1:5556", "127.0.0.1:5565",
+              "127.0.0.1:5575"):
+        if p not in tcp_targets:
+            tcp_targets.append(p)
+    for tgt in tcp_targets:
+        try:
+            r = subprocess.run(["adb", "connect", tgt],
+                               capture_output=True, text=True, timeout=5)
+            out = (r.stdout + r.stderr).strip()
+            lines.append(f"connect {tgt} → {out[:80]}")
+            if "connected" in out.lower() and "cannot" not in out.lower():
+                break  # one good link is enough
+        except Exception as exc:
+            lines.append(f"connect {tgt} → ERR {exc}")
+    code, devs = _adb("devices", timeout=5)
+    lines.append(devs.strip())
+    # Clear device.py's cached resolution so the next call re-probes.
+    try:
+        import device as _d
+        _d._cached = None
+        _d._cached_at = 0.0
+    except Exception:
+        pass
+    return {"ok": code == 0, "output": "\n".join(lines)[:1200]}
 
 
 def _cmd_battery_gate_set(args: dict) -> dict:
