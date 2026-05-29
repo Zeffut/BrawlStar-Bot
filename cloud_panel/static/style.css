@@ -1383,11 +1383,19 @@ tr:hover td { background: rgba(255,255,255,.015); }
   flex: 1;
   display: grid;
   grid-template-columns: 1.4fr 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "screen health"
+    "screen controls"
+    "logs   logs";
   gap: 14px;
   padding: 16px;
   overflow: auto;
 }
+.screen-card   { grid-area: screen; }
+.health-card   { grid-area: health; }
+.controls-card { grid-area: controls; }
+.logs-card     { grid-area: logs; min-height: 340px; }
 .device-card {
   background: var(--bg-2);
   border: 1px solid var(--border);
@@ -1502,6 +1510,8 @@ tr:hover td { background: rgba(255,255,255,.015); }
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
+  min-height: 280px;
+  max-height: 60vh;
 }
 
 /* ----------------------------------------------------------- responsive */
