@@ -314,13 +314,53 @@ def _download_xapk(url: str, dst: Path) -> bool:
         return False
 
 
+_INSTALL_LOCK_PATH = Path(os.environ.get("TEMP", "/tmp")) / "bs-install.lock"
+
+
+def _install_already_running() -> bool:
+    """Check if another _install_brawlstars is currently mid-flight."""
+    if not _INSTALL_LOCK_PATH.exists():
+        return False
+    # Stale lock guard: if mtime > 30 min, consider it dead.
+    try:
+        if time.time() - _INSTALL_LOCK_PATH.stat().st_mtime > 1800:
+            log.warning("stale install lock (%.0fs old) — taking over",
+                        time.time() - _INSTALL_LOCK_PATH.stat().st_mtime)
+            _INSTALL_LOCK_PATH.unlink()
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def _install_brawlstars(adb: str, max_attempts: int = 3) -> bool:
     """Download + install the XAPK splits, retrying on transient errors.
 
-    Returns True on confirmed install (verified via `pm list packages`),
-    False otherwise. Each attempt re-checks ADB connectivity since the
-    install_multiple session can time out / break the ADB pipe.
+    Strategy:
+      - Acquire a lock file so simultaneous auto-bootstrap + manual
+        button presses don't trash each other's extract dir.
+      - For each install attempt, use session-based install (pm
+        install-create / push / install-write / install-commit) so the
+        single 1.5 GB asset pack can be uploaded via `adb push` (more
+        reliable than install-multiple's single-stream upload that
+        kills the daemon mid-transfer on large files).
+      - Verify via `pm list packages`. install-commit reports Success
+        even on partial install in some BS versions, so trust pm only.
     """
+    if _install_already_running():
+        log.warning("install_brawlstars: another install is already running, "
+                    "skipping to avoid extract-dir conflict")
+        return False
+    _INSTALL_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _INSTALL_LOCK_PATH.touch()
+    try:
+        return _do_install_brawlstars(adb, max_attempts)
+    finally:
+        try: _INSTALL_LOCK_PATH.unlink()
+        except OSError: pass
+
+
+def _do_install_brawlstars(adb: str, max_attempts: int) -> bool:
     work = Path(os.environ.get("TEMP", "/tmp")) / "bs-install"
     work.mkdir(parents=True, exist_ok=True)
     xapk = work / "brawlstars.xapk"
@@ -328,8 +368,14 @@ def _install_brawlstars(adb: str, max_attempts: int = 3) -> bool:
         return False
     extract = work / "extract"
     if extract.exists():
-        shutil.rmtree(extract)
-    extract.mkdir()
+        try:
+            shutil.rmtree(extract)
+        except PermissionError:
+            log.warning("extract dir locked, attempting per-file cleanup")
+            for p in extract.iterdir():
+                try: p.unlink()
+                except OSError: pass
+    extract.mkdir(exist_ok=True)
     log.info("extracting xapk to %s…", extract)
     try:
         with zipfile.ZipFile(xapk) as zf:
@@ -349,33 +395,99 @@ def _install_brawlstars(adb: str, max_attempts: int = 3) -> bool:
     for p in apks:
         log.info("  split: %s (%.1f MB)", p.name, p.stat().st_size / 1e6)
     for attempt in range(1, max_attempts + 1):
-        log.info("install_multiple attempt %d/%d", attempt, max_attempts)
-        # Make sure ADB is reachable before each attempt — a previous
-        # failed install can leave the BlueStacks ADB tcp in a wedged
-        # state until we reconnect.
+        log.info("install attempt %d/%d (session-based)", attempt, max_attempts)
         if not _ensure_adb(adb):
-            log.warning("ADB not reachable for install attempt %d — skipping", attempt)
+            log.warning("ADB not reachable for install attempt %d", attempt)
             time.sleep(5)
             continue
-        args = [adb, "-s", ADB_HOST, "install-multiple", "-r", "-d", "-g",
-                *[str(p) for p in apks]]
-        proc = subprocess.run(args, capture_output=True, text=True,
-                              timeout=600, errors="replace")
-        log.info("install_multiple rc=%d", proc.returncode)
-        if proc.stdout.strip():
-            log.info("stdout: %s", proc.stdout.strip()[:2000])
-        if proc.stderr.strip():
-            log.info("stderr: %s", proc.stderr.strip()[:2000])
-        # Verify via pm list — install_multiple can print 'Success'
-        # while the package is actually broken / partial.
-        if _is_package_installed(adb, BS_PACKAGE):
-            log.info("install verified: %s is now installed", BS_PACKAGE)
-            return True
-        log.warning("attempt %d: install reported as not-Success or package "
-                    "absent post-install", attempt)
+        if _install_session(adb, apks):
+            if _is_package_installed(adb, BS_PACKAGE):
+                log.info("install verified: %s is now installed", BS_PACKAGE)
+                return True
+            log.warning("attempt %d: install-commit OK but pm list doesn't "
+                        "show the package", attempt)
         time.sleep(5)
     log.error("install failed after %d attempts", max_attempts)
     return False
+
+
+def _install_session(adb: str, apks: list) -> bool:
+    """Session-based install using adb push for each split.
+
+    For each APK we:
+      1. push the file to /data/local/tmp on the device
+      2. pm install-write the pushed file into the session
+      3. clean up /data/local/tmp/<file>
+    Then pm install-commit. This avoids install-multiple's single-pipe
+    upload that crashes on 1+ GB files.
+    """
+    total_size = sum(p.stat().st_size for p in apks)
+    # Create install session.
+    proc = subprocess.run(
+        [adb, "-s", ADB_HOST, "shell", "pm", "install-create",
+         "-r", "-d", "-g", "-S", str(total_size)],
+        capture_output=True, text=True, timeout=15, errors="replace",
+    )
+    log.info("pm install-create rc=%d out=%s", proc.returncode,
+             (proc.stdout + proc.stderr).strip()[:300])
+    # Output looks like: "Success: created install session [12345]"
+    import re as _re
+    m = _re.search(r"\[(\-?\d+)\]", proc.stdout + proc.stderr)
+    if not m:
+        log.error("could not parse session id from install-create output")
+        return False
+    session_id = m.group(1)
+    log.info("install session id=%s, %d splits totalling %.1f MB",
+             session_id, len(apks), total_size / 1e6)
+    try:
+        for idx, apk in enumerate(apks):
+            size = apk.stat().st_size
+            remote = f"/data/local/tmp/_bsinst_{idx}.apk"
+            log.info("split %d/%d: pushing %s (%.1f MB) → %s",
+                     idx + 1, len(apks), apk.name, size / 1e6, remote)
+            push = subprocess.run(
+                [adb, "-s", ADB_HOST, "push", str(apk), remote],
+                capture_output=True, text=True,
+                # Big asset pack at typical BS push speed (~30-80 MB/s)
+                # needs maybe 30-60 s. Pick 5 min to be safe.
+                timeout=300, errors="replace",
+            )
+            if push.returncode != 0:
+                log.error("split %d push failed rc=%d: %s",
+                          idx + 1, push.returncode,
+                          (push.stdout + push.stderr).strip()[:300])
+                return False
+            write = subprocess.run(
+                [adb, "-s", ADB_HOST, "shell", "pm", "install-write",
+                 "-S", str(size), session_id, f"split_{idx}", remote],
+                capture_output=True, text=True, timeout=120, errors="replace",
+            )
+            if write.returncode != 0 or "Success" not in (write.stdout + write.stderr):
+                log.error("split %d install-write failed rc=%d: %s",
+                          idx + 1, write.returncode,
+                          (write.stdout + write.stderr).strip()[:300])
+                return False
+            # Clean up the pushed file — pm has it copied into the session.
+            subprocess.run(
+                [adb, "-s", ADB_HOST, "shell", "rm", "-f", remote],
+                timeout=10, capture_output=True,
+            )
+        # Commit the session.
+        commit = subprocess.run(
+            [adb, "-s", ADB_HOST, "shell", "pm", "install-commit", session_id],
+            capture_output=True, text=True, timeout=180, errors="replace",
+        )
+        log.info("pm install-commit rc=%d out=%s", commit.returncode,
+                 (commit.stdout + commit.stderr).strip()[:300])
+        return commit.returncode == 0 and "Success" in (commit.stdout + commit.stderr)
+    except Exception:
+        log.exception("install_session crashed")
+        # Best-effort abandon to free the session slot on device.
+        subprocess.run(
+            [adb, "-s", ADB_HOST, "shell", "pm", "install-abandon", session_id],
+            timeout=10, capture_output=True,
+        )
+        return False
 
 
 def _launch_brawlstars(bs_path: str, adb: str) -> bool:
