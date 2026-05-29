@@ -25,6 +25,7 @@ bot_stuck, instance_connected, instance_disconnected, session_ended.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import urllib.parse
 import urllib.request
@@ -53,10 +54,37 @@ DEFAULT_CONFIG: dict = {
 KNOWN_EVENTS = tuple(DEFAULT_CONFIG["events"].keys())
 
 
+def _env_seed() -> dict:
+    """Bootstrap config from env vars.
+
+    Used when the SQLite DB is empty (fresh deploy or wiped volume on
+    Dokploy redeploy). Vars survive redeploys via the platform's env
+    config, so the panel doesn't lose Telegram/Discord setup whenever
+    the container is recreated.
+    """
+    seed: dict = {}
+    tg_token = os.environ.get("NOTIF_TELEGRAM_BOT_TOKEN", "").strip()
+    tg_chat = os.environ.get("NOTIF_TELEGRAM_CHAT_ID", "").strip()
+    if tg_token and tg_chat:
+        seed["telegram"] = {
+            "enabled": True, "bot_token": tg_token, "chat_id": tg_chat,
+        }
+    dc_url = os.environ.get("NOTIF_DISCORD_WEBHOOK_URL", "").strip()
+    if dc_url:
+        seed["discord"] = {"enabled": True, "webhook_url": dc_url}
+    return seed
+
+
 def get_config() -> dict:
-    """Return the current config merged onto defaults."""
+    """Return the current config merged onto defaults.
+
+    Layering: DEFAULT_CONFIG ← env seed (NOTIF_* vars) ← stored DB row.
+    Stored UI edits always win; env vars only fill the gap when the
+    user has never saved anything (or the DB was wiped).
+    """
     stored = db.get_config("notif")
-    return _merge(DEFAULT_CONFIG, stored)
+    base = _merge(DEFAULT_CONFIG, _env_seed())
+    return _merge(base, stored)
 
 
 def set_config(payload: dict) -> dict:

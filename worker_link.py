@@ -185,13 +185,73 @@ def _check_and_self_update() -> None:
         log.debug("self-update check raised", exc_info=True)
 
 
+# ---- Deferred restart -------------------------------------------
+# Restarts mid-match destroy the player's grind (current match aborted,
+# trophies lost, brawler swap state forgotten). When a session is
+# active we mark the intent and let the match loop drain it from the
+# post-match hook — at that point the bot is at the lobby and any
+# resume-state has just been persisted to the cloud.
+_PENDING_RESTART: dict | None = None
+_PENDING_LOCK = threading.Lock()
+
+
+def _session_active() -> bool:
+    try:
+        import game_api as _ga
+        api = _ga.get()
+        if api is None:
+            return False
+        r = getattr(api, "_runner", None)
+        return r is not None and r.is_running()
+    except Exception:
+        return False
+
+
+def is_restart_pending() -> bool:
+    with _PENDING_LOCK:
+        return _PENDING_RESTART is not None
+
+
+def drain_pending_restart() -> None:
+    """Execute the deferred restart if one was queued.
+
+    Called by the bot's post-match hook between matches. Idempotent.
+    """
+    global _PENDING_RESTART
+    with _PENDING_LOCK:
+        pending = _PENDING_RESTART
+        _PENDING_RESTART = None
+    if pending is None:
+        return
+    log.info("draining pending restart: %s", pending.get("action"))
+    action = pending.get("action")
+    args = pending.get("args", {})
+    if action == "git_update":
+        _do_git_update(args)
+    else:
+        _do_bot_restart(args)
+
+
 def _cmd_git_update(args: dict) -> dict:
     """Pull latest from origin/main and restart the bot service.
 
-    Triggered by GitHub webhook → cloud → all workers. The git pull
-    auto-stashes local-only files (cfg/telegram.toml, cfg/device.toml,
-    cfg/cloud.toml) so they survive the update.
+    Triggered by GitHub webhook → cloud → all workers. If a session is
+    active we defer until the next post-match hook so we don't kill a
+    match mid-flight (loses trophies + corrupts the grind state).
+    The git pull auto-stashes local-only files (cfg/telegram.toml,
+    cfg/device.toml, cfg/cloud.toml) so they survive the update.
     """
+    global _PENDING_RESTART
+    if _session_active() and not args.get("immediate"):
+        with _PENDING_LOCK:
+            _PENDING_RESTART = {"action": "git_update", "args": args}
+        log.info("git_update queued — will fire at next end of match")
+        return {"ok": True, "deferred": True, "sha": args.get("sha"),
+                "msg": args.get("msg")}
+    return _do_git_update(args)
+
+
+def _do_git_update(args: dict) -> dict:
     bot_dir = str(Path(__file__).resolve().parent)
     try:
         # Stash anything locally modified (e.g. cfg/telegram.toml with token).
@@ -224,8 +284,22 @@ def _cmd_git_update(args: dict) -> dict:
 
 
 def _cmd_bot_restart(args: dict) -> dict:
-    """Exit the bot — systemd will respawn it on Linux."""
-    log.info("bot_restart requested by cloud")
+    """Exit the bot — systemd (Linux) / NSSM (Windows) will respawn it.
+
+    Deferred until end of match if a session is active, unless the
+    caller passes `immediate=True` (e.g. emergency operator restart).
+    """
+    global _PENDING_RESTART
+    if _session_active() and not args.get("immediate"):
+        with _PENDING_LOCK:
+            _PENDING_RESTART = {"action": "bot_restart", "args": args}
+        log.info("bot_restart queued — will fire at next end of match")
+        return {"ok": True, "deferred": True}
+    return _do_bot_restart(args)
+
+
+def _do_bot_restart(args: dict) -> dict:
+    log.info("bot_restart firing now")
     threading.Timer(0.5, lambda: os._exit(0)).start()
     return {"ok": True, "output": "exiting in 0.5s"}
 

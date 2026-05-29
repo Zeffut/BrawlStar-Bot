@@ -825,6 +825,18 @@ class BotRunner:
                             main_instance.time_to_stop = True
             except Exception:
                 log.exception("post-match battery gate failed")
+            # Deferred restart drain: if a self-update or operator
+            # restart was queued during the match, fire it now — we're
+            # at the lobby and resume-state has been persisted, so
+            # _try_resume_session() on relaunch will pick the grind
+            # back up where it left off.
+            try:
+                import worker_link as _wl
+                if _wl.is_restart_pending():
+                    log.info("pending restart detected at end of match — firing now")
+                    _wl.drain_pending_restart()
+            except Exception:
+                log.exception("pending restart drain failed")
             return ret
 
         observer.add_trophies = wrapped
