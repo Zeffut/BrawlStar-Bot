@@ -708,6 +708,123 @@ document.getElementById("battery-gate-toggle").addEventListener("change", e => {
   sendBatteryGate(e.target.checked);
 });
 
+// ------- Remote device control -----------------------------------
+// Tap = quick click (no/small drag). Swipe = drag with > SWIPE_PX
+// movement. Coords are normalized 0..1 on the screen overlay and the
+// worker resolves the actual device pixel size at command time. We
+// auto-refresh the screenshot right after each input so the operator
+// sees the effect within ~1s.
+const SWIPE_PX = 8;
+let _remoteEnabled = false;
+let _remoteDrag = null;     // {x, y, t} on mousedown
+let _remoteAutoRefresh = null;
+
+function _sendDeviceInput(name, args) {
+  if (!selectedInstanceForDevice) return Promise.resolve();
+  return fetch(`/api/instances/${selectedInstanceForDevice}/cmd`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name, args: args || {}}),
+  }).then(r => r.json()).catch(e => ({ok: false, error: String(e)}));
+}
+
+function _flashTapFeedback(overlay, evt) {
+  const rect = overlay.getBoundingClientRect();
+  overlay.style.setProperty("--fx", (evt.clientX - rect.left) + "px");
+  overlay.style.setProperty("--fy", (evt.clientY - rect.top) + "px");
+  overlay.classList.remove("feedback");
+  // Trigger reflow so the animation restarts on rapid taps.
+  void overlay.offsetWidth;
+  overlay.classList.add("feedback");
+}
+
+function _enableRemoteControl(on) {
+  _remoteEnabled = on;
+  const overlay = document.getElementById("screen-overlay");
+  const keys = document.getElementById("remote-keys");
+  overlay.hidden = !on;
+  keys.hidden = !on;
+  // Auto-refresh tighter loop only when remote is engaged so we see
+  // the result of taps without spamming when idle.
+  if (_remoteAutoRefresh) { clearInterval(_remoteAutoRefresh); _remoteAutoRefresh = null; }
+  if (on) _remoteAutoRefresh = setInterval(_remoteRefreshScreen, 2500);
+}
+
+async function _remoteRefreshScreen() {
+  if (!selectedInstanceForDevice || !_remoteEnabled) return;
+  try {
+    const r = await api(`/api/instances/${selectedInstanceForDevice}/screenshot?refresh=true`);
+    if (r.available) {
+      const mime = r.mime || "image/png";
+      const b64 = r.b64 || r.png_b64;
+      document.getElementById("device-screen").src = `data:${mime};base64,${b64}`;
+    }
+  } catch (_) { /* swallow; next tick retries */ }
+}
+
+document.getElementById("remote-control-toggle").addEventListener("change", e => {
+  _enableRemoteControl(e.target.checked);
+});
+
+(function wireRemoteOverlay() {
+  const overlay = document.getElementById("screen-overlay");
+  function normCoords(evt) {
+    const rect = overlay.getBoundingClientRect();
+    const x = (evt.clientX - rect.left) / rect.width;
+    const y = (evt.clientY - rect.top) / rect.height;
+    return {x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y))};
+  }
+  overlay.addEventListener("mousedown", evt => {
+    if (!_remoteEnabled) return;
+    evt.preventDefault();
+    _remoteDrag = {...normCoords(evt), px: evt.clientX, py: evt.clientY, t: Date.now()};
+  });
+  overlay.addEventListener("mouseup", async evt => {
+    if (!_remoteEnabled || !_remoteDrag) return;
+    const end = normCoords(evt);
+    const dxPx = Math.abs(evt.clientX - _remoteDrag.px);
+    const dyPx = Math.abs(evt.clientY - _remoteDrag.py);
+    const dur = Date.now() - _remoteDrag.t;
+    const start = _remoteDrag; _remoteDrag = null;
+    _flashTapFeedback(overlay, evt);
+    if (dxPx < SWIPE_PX && dyPx < SWIPE_PX) {
+      await _sendDeviceInput("input_tap", {x: end.x, y: end.y});
+    } else {
+      await _sendDeviceInput("input_swipe", {
+        x1: start.x, y1: start.y, x2: end.x, y2: end.y,
+        duration_ms: Math.max(120, Math.min(dur, 1500)),
+      });
+    }
+    setTimeout(_remoteRefreshScreen, 600);
+  });
+  overlay.addEventListener("mouseleave", () => { _remoteDrag = null; });
+  // Context menu would hijack right-click; suppress to keep right-click free.
+  overlay.addEventListener("contextmenu", e => { if (_remoteEnabled) e.preventDefault(); });
+})();
+
+// Hardware keys row.
+document.querySelectorAll("#remote-keys button[data-key]").forEach(btn => {
+  btn.addEventListener("click", async () => {
+    await _sendDeviceInput("input_key", {keycode: btn.dataset.key});
+    setTimeout(_remoteRefreshScreen, 600);
+  });
+});
+
+// Text input prompt.
+document.getElementById("remote-text-btn").addEventListener("click", async () => {
+  const text = window.prompt("Text to type on device:");
+  if (!text) return;
+  await _sendDeviceInput("input_text", {text});
+  setTimeout(_remoteRefreshScreen, 600);
+});
+
+// Close remote refresh loop when console closes.
+const _origCloseDeviceConsole = closeDeviceConsole;
+closeDeviceConsole = function() {
+  _enableRemoteControl(false);
+  document.getElementById("remote-control-toggle").checked = false;
+  _origCloseDeviceConsole();
+};
+
 // Manual screenshot refresh — triggers an on-demand capture.
 document.getElementById("refresh-screen-btn").addEventListener("click", async () => {
   if (!selectedInstanceForDevice) return;

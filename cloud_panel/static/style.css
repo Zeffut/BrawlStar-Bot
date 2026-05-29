@@ -907,6 +907,38 @@ main {
 .battery-gate-label { color: var(--text-1); }
 .battery-gate-row .muted { font-size: 11px; }
 
+/* Remote control: clickable screen overlay + key row */
+.screen-wrap { position: relative; display: inline-block; max-width: 100%; }
+#device-screen { display: block; max-width: 100%; user-select: none; }
+#screen-overlay {
+  position: absolute; inset: 0;
+  cursor: crosshair;
+  background: transparent;
+  /* faint outline so the user knows it's interactive */
+  outline: 2px dashed rgba(79,140,240,0.45);
+  outline-offset: -2px;
+}
+#screen-overlay.feedback::after {
+  content: "";
+  position: absolute;
+  left: var(--fx, 50%); top: var(--fy, 50%);
+  width: 26px; height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  border: 2px solid #6ea4ff;
+  animation: tap-pulse 360ms ease-out forwards;
+  pointer-events: none;
+}
+@keyframes tap-pulse {
+  0%   { transform: scale(0.3); opacity: 1; }
+  100% { transform: scale(1.4); opacity: 0; }
+}
+.remote-keys {
+  display: flex; gap: 6px; margin-top: 8px;
+  flex-wrap: wrap;
+}
+.remote-keys .ctl { padding: 6px 10px; font-size: 12px; }
+
 /* -------- Toast notifications (floating, bottom-right) -------- */
 #toast-stack {
   position: fixed;

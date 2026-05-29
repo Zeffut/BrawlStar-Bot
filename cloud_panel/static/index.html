@@ -203,8 +203,26 @@
         </div>
         <div class="device-grid">
           <div class="device-card screen-card">
-            <h4>Live screen <button class="refresh-btn" id="refresh-screen-btn">↻ refresh now</button></h4>
-            <img id="device-screen" alt="device screen" />
+            <h4>
+              Live screen
+              <label class="toggle" style="vertical-align:middle;margin-left:8px" title="Click/drag on screen to control device">
+                <input type="checkbox" id="remote-control-toggle" />
+                <span class="slider"></span>
+              </label>
+              <span class="muted" style="font-size:11px">remote control</span>
+              <button class="refresh-btn" id="refresh-screen-btn">↻ refresh now</button>
+            </h4>
+            <div class="screen-wrap">
+              <img id="device-screen" alt="device screen" draggable="false" />
+              <div id="screen-overlay" hidden></div>
+            </div>
+            <div class="remote-keys" hidden id="remote-keys">
+              <button class="ctl" data-key="back" title="Back">← Back</button>
+              <button class="ctl" data-key="home" title="Home">⌂ Home</button>
+              <button class="ctl" data-key="recent" title="Recent apps">▢ Recent</button>
+              <button class="ctl" data-key="power" title="Power">⏻ Power</button>
+              <button class="ctl" id="remote-text-btn" title="Type text">⌨ Text…</button>
+            </div>
             <div class="muted" id="screen-age"></div>
           </div>
           <div class="device-card health-card">

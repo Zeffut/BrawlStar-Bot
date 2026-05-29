@@ -151,6 +151,104 @@ def _cmd_battery_gate_set(args: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+# ---- Remote input (device console manual control) ----------------
+# Coordinates are normalized 0..1 over the *current* device screen
+# (matches what the screenshot just showed). The worker resolves the
+# actual pixel size via `wm size` at each call so a rotation between
+# capture and tap doesn't silently mis-map clicks.
+
+def _device_pixel_size() -> tuple[int, int]:
+    """Return (width, height) of the device screen in its CURRENT
+    orientation — raw `wm size` output, no landscape coercion."""
+    serial = _adb_serial()
+    proc = subprocess.run(
+        ["adb", "-s", serial, "shell", "wm", "size"],
+        capture_output=True, text=True, timeout=5, check=False,
+    )
+    for line in (proc.stdout or "").splitlines():
+        if "size:" in line.lower():
+            a, b = line.split(":")[-1].strip().split("x")
+            return int(a), int(b)
+    raise RuntimeError("wm size returned no usable line")
+
+
+def _cmd_input_tap(args: dict) -> dict:
+    """args = {x: float 0..1, y: float 0..1}."""
+    try:
+        x_norm = float(args["x"]); y_norm = float(args["y"])
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "error": "need {x, y} as floats 0..1"}
+    if not (0.0 <= x_norm <= 1.0 and 0.0 <= y_norm <= 1.0):
+        return {"ok": False, "error": "x,y must be in [0,1]"}
+    try:
+        w, h = _device_pixel_size()
+    except Exception as exc:
+        return {"ok": False, "error": f"wm size failed: {exc}"}
+    px, py = int(x_norm * w), int(y_norm * h)
+    code, out = _adb("shell", "input", "tap", str(px), str(py), timeout=5)
+    return {"ok": code == 0, "output": f"tap {px},{py} → {out.strip()[:200]}"}
+
+
+def _cmd_input_swipe(args: dict) -> dict:
+    """args = {x1, y1, x2, y2: float 0..1, duration_ms?: int default 300}."""
+    try:
+        x1 = float(args["x1"]); y1 = float(args["y1"])
+        x2 = float(args["x2"]); y2 = float(args["y2"])
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "error": "need {x1,y1,x2,y2} as floats 0..1"}
+    for v in (x1, y1, x2, y2):
+        if not (0.0 <= v <= 1.0):
+            return {"ok": False, "error": "coords must be in [0,1]"}
+    duration = max(50, min(int(args.get("duration_ms", 300)), 5000))
+    try:
+        w, h = _device_pixel_size()
+    except Exception as exc:
+        return {"ok": False, "error": f"wm size failed: {exc}"}
+    px1, py1 = int(x1 * w), int(y1 * h)
+    px2, py2 = int(x2 * w), int(y2 * h)
+    code, out = _adb("shell", "input", "swipe", str(px1), str(py1),
+                     str(px2), str(py2), str(duration), timeout=8)
+    return {"ok": code == 0,
+            "output": f"swipe {px1},{py1}→{px2},{py2} ({duration}ms) {out.strip()[:200]}"}
+
+
+# Android keycode aliases (subset relevant to a remote console).
+_KEYCODES = {
+    "back": 4, "home": 3, "recent": 187, "menu": 82,
+    "power": 26, "vol_up": 24, "vol_down": 25,
+    "enter": 66, "esc": 111, "tab": 61, "del": 67,
+    "space": 62, "up": 19, "down": 20, "left": 21, "right": 22,
+}
+
+
+def _cmd_input_key(args: dict) -> dict:
+    """args = {keycode: int|str}. Strings resolved via _KEYCODES alias map."""
+    raw = args.get("keycode")
+    if isinstance(raw, str):
+        kc = _KEYCODES.get(raw.lower())
+        if kc is None:
+            return {"ok": False, "error": f"unknown key {raw!r}"}
+    elif isinstance(raw, int):
+        kc = raw
+    else:
+        return {"ok": False, "error": "keycode must be int or string alias"}
+    code, out = _adb("shell", "input", "keyevent", str(kc), timeout=5)
+    return {"ok": code == 0, "output": f"key {kc} → {out.strip()[:200]}"}
+
+
+def _cmd_input_text(args: dict) -> dict:
+    """Type a string via `input text`. Spaces become %s — adb input text
+    can't handle raw spaces, so we substitute the standard escape."""
+    text = args.get("text", "")
+    if not isinstance(text, str) or not text:
+        return {"ok": False, "error": "need non-empty text"}
+    if len(text) > 500:
+        return {"ok": False, "error": "text > 500 chars (split it client-side)"}
+    safe = text.replace(" ", "%s").replace("'", "")
+    code, out = _adb("shell", "input", "text", safe, timeout=8)
+    return {"ok": code == 0, "output": f"text({len(text)} chars) → {out.strip()[:200]}"}
+
+
 def _cmd_install_brawlstars(args: dict) -> dict:
     """Manually trigger the Brawl Stars XAPK install on this worker.
 
@@ -626,6 +724,10 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "battery_gate_set":   _cmd_battery_gate_set,
     "battery_gate_get":   _cmd_battery_gate_get,
     "install_brawlstars": _cmd_install_brawlstars,
+    "input_tap":          _cmd_input_tap,
+    "input_swipe":        _cmd_input_swipe,
+    "input_key":          _cmd_input_key,
+    "input_text":         _cmd_input_text,
     "bot_restart":        _cmd_bot_restart,
     "git_update":         _cmd_git_update,
     "health":             _cmd_health,
