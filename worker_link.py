@@ -151,6 +151,31 @@ def _cmd_battery_gate_set(args: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _cmd_install_brawlstars(args: dict) -> dict:
+    """Manually trigger the Brawl Stars XAPK install on this worker.
+
+    Operator-driven recovery for the case where the automatic boot
+    install failed silently (BlueStacks ADB pipe dropped mid-install,
+    network blip during xapk download, corrupted cache, etc.).
+    Runs in a background thread so the WS reply isn't blocked by the
+    ~5 min install — progress lives in the bot log.
+    """
+    def _run():
+        try:
+            import host_bootstrap as _hb
+            adb = _hb._find_adb()
+            if not adb:
+                log.error("install_brawlstars: adb not found in PATH")
+                return
+            ok = _hb._install_brawlstars(adb)
+            log.info("install_brawlstars manual run finished: ok=%s", ok)
+        except Exception:
+            log.exception("install_brawlstars manual run crashed")
+    threading.Thread(target=_run, daemon=True,
+                     name="manual-install-brawlstars").start()
+    return {"ok": True, "output": "install started in background — watch the bot log"}
+
+
 def _cmd_battery_gate_get(args: dict) -> dict:
     try:
         import game_api as _ga
@@ -600,6 +625,7 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "adb_reconnect":      _cmd_adb_reconnect,
     "battery_gate_set":   _cmd_battery_gate_set,
     "battery_gate_get":   _cmd_battery_gate_get,
+    "install_brawlstars": _cmd_install_brawlstars,
     "bot_restart":        _cmd_bot_restart,
     "git_update":         _cmd_git_update,
     "health":             _cmd_health,

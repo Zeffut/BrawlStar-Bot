@@ -314,7 +314,13 @@ def _download_xapk(url: str, dst: Path) -> bool:
         return False
 
 
-def _install_brawlstars(adb: str) -> bool:
+def _install_brawlstars(adb: str, max_attempts: int = 3) -> bool:
+    """Download + install the XAPK splits, retrying on transient errors.
+
+    Returns True on confirmed install (verified via `pm list packages`),
+    False otherwise. Each attempt re-checks ADB connectivity since the
+    install_multiple session can time out / break the ADB pipe.
+    """
     work = Path(os.environ.get("TEMP", "/tmp")) / "bs-install"
     work.mkdir(parents=True, exist_ok=True)
     xapk = work / "brawlstars.xapk"
@@ -324,18 +330,52 @@ def _install_brawlstars(adb: str) -> bool:
     if extract.exists():
         shutil.rmtree(extract)
     extract.mkdir()
-    log.info("extracting xapk…")
-    with zipfile.ZipFile(xapk) as zf:
-        zf.extractall(extract)
+    log.info("extracting xapk to %s…", extract)
+    try:
+        with zipfile.ZipFile(xapk) as zf:
+            zf.extractall(extract)
+    except Exception:
+        log.exception("xapk extraction failed — file likely corrupt, deleting")
+        try: xapk.unlink()
+        except OSError: pass
+        return False
     apks = sorted(extract.glob("*.apk"))
-    log.info("found %d splits, installing…", len(apks))
-    args = [adb, "-s", ADB_HOST, "install-multiple", "-r", "-d", "-g",
-            *[str(p) for p in apks]]
-    proc = subprocess.run(args, capture_output=True, text=True,
-                          timeout=600, errors="replace")
-    log.info("install stdout:\n%s", proc.stdout)
-    log.info("install stderr:\n%s", proc.stderr)
-    return proc.returncode == 0 and "Success" in (proc.stdout + proc.stderr)
+    if not apks:
+        log.error("no .apk files inside xapk — extract dir contains: %s",
+                  [p.name for p in extract.iterdir()][:20])
+        return False
+    log.info("found %d splits, total %.1f MB", len(apks),
+             sum(p.stat().st_size for p in apks) / 1e6)
+    for p in apks:
+        log.info("  split: %s (%.1f MB)", p.name, p.stat().st_size / 1e6)
+    for attempt in range(1, max_attempts + 1):
+        log.info("install_multiple attempt %d/%d", attempt, max_attempts)
+        # Make sure ADB is reachable before each attempt — a previous
+        # failed install can leave the BlueStacks ADB tcp in a wedged
+        # state until we reconnect.
+        if not _ensure_adb(adb):
+            log.warning("ADB not reachable for install attempt %d — skipping", attempt)
+            time.sleep(5)
+            continue
+        args = [adb, "-s", ADB_HOST, "install-multiple", "-r", "-d", "-g",
+                *[str(p) for p in apks]]
+        proc = subprocess.run(args, capture_output=True, text=True,
+                              timeout=600, errors="replace")
+        log.info("install_multiple rc=%d", proc.returncode)
+        if proc.stdout.strip():
+            log.info("stdout: %s", proc.stdout.strip()[:2000])
+        if proc.stderr.strip():
+            log.info("stderr: %s", proc.stderr.strip()[:2000])
+        # Verify via pm list — install_multiple can print 'Success'
+        # while the package is actually broken / partial.
+        if _is_package_installed(adb, BS_PACKAGE):
+            log.info("install verified: %s is now installed", BS_PACKAGE)
+            return True
+        log.warning("attempt %d: install reported as not-Success or package "
+                    "absent post-install", attempt)
+        time.sleep(5)
+    log.error("install failed after %d attempts", max_attempts)
+    return False
 
 
 def _launch_brawlstars(bs_path: str, adb: str) -> bool:
