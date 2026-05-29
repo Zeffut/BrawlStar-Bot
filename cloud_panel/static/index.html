@@ -221,6 +221,14 @@
               <button class="ctl danger" data-cmd="phone_reboot" data-confirm="Reboot the phone?">📱 Reboot phone</button>
               <button class="ctl danger" data-cmd="bot_restart" data-confirm="Restart the bot?">🤖 Restart bot</button>
             </div>
+            <div class="battery-gate-row">
+              <label class="toggle">
+                <input type="checkbox" id="battery-gate-toggle" />
+                <span class="slider"></span>
+              </label>
+              <span class="battery-gate-label">🔋 Auto power-save when charging</span>
+              <span class="muted" id="battery-gate-status"></span>
+            </div>
             <div class="cmd-status muted" id="cmd-status"></div>
           </div>
           <div class="device-card logs-card">

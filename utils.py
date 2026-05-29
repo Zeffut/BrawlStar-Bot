@@ -3,10 +3,8 @@ import sys
 import hashlib
 import io
 from io import BytesIO
-import ctypes
 import json
 import aiohttp
-import google_play_scraper
 import requests
 import toml
 from PIL import Image
@@ -15,7 +13,6 @@ import discord
 import cv2
 import numpy as np
 from packaging import version
-import time
 import easyocr
 from contextlib import contextmanager # Added for silencer
 
@@ -88,7 +85,7 @@ def load_toml_as_dict(file_path):
         try:
             with open(path, 'r') as f:
                 return toml.load(f)
-        except:
+        except Exception:
             return {}
     return {}
 
@@ -205,7 +202,7 @@ def get_discord_link():
         response = requests.get(url)
         if response.status_code == 200:
             return response.json().get('link', 'https://discord.gg/xUusk3fw4A')
-    except:
+    except Exception:
         pass
     return "https://discord.gg/xUusk3fw4A"
 
@@ -214,7 +211,7 @@ def get_latest_version():
     try:
         response = requests.get(url)
         return response.json().get('version', '') if response.status_code == 200 else None
-    except: return None
+    except Exception: return None
 
 def check_version():
     if api_base_url != "localhost":
@@ -222,7 +219,7 @@ def check_version():
         if latest:
             current = load_toml_as_dict("cfg/general_config.toml").get('bot_version', '')
             if version.parse(current) < version.parse(latest):
-                print(f"Update available.")
+                print("Update available.")
 
 async def async_notify_user(message_type: str | None = None, screenshot: Image = None) -> None:
     config = load_toml_as_dict("cfg/general_config.toml")
@@ -243,7 +240,7 @@ def get_online_wall_model_hash():
         url = f'https://{api_base_url}/get_wall_model_hash'
         response = requests.get(url)
         return response.json().get('hash', '') if response.status_code == 200 else ""
-    except: return ""
+    except Exception: return ""
 
 def get_latest_wall_model_file():
     try:
@@ -254,7 +251,7 @@ def get_latest_wall_model_file():
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             with open(save_path, "wb") as file:
                 file.write(response.content)
-    except:
+    except Exception:
         pass
 
 def get_latest_wall_model_classes():
@@ -262,7 +259,7 @@ def get_latest_wall_model_classes():
         url = f'https://{api_base_url}/get_wall_model_classes'
         response = requests.get(url)
         return response.json().get('classes', []) if response.status_code == 200 else []
-    except: return []
+    except Exception: return []
 
 def update_wall_model_classes():
     classes = get_latest_wall_model_classes()
@@ -288,7 +285,7 @@ def cprint(text: str, hex_color: str):
         hex_color = hex_color.lstrip("#")
         r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
         print(f"\033[38;2;{r};{g};{b}m{text}\033[0m")
-    except: print(text)
+    except Exception: print(text)
 
 def get_dpi_scale():
     return 96

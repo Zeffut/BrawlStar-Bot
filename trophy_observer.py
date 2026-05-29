@@ -3,7 +3,7 @@ import os
 import requests
 from difflib import SequenceMatcher
 import numpy as np
-from utils import update_toml_file, load_toml_as_dict, save_dict_as_toml, api_base_url, reader
+from utils import load_toml_as_dict, save_dict_as_toml, api_base_url, reader
 
 class TrophyObserver:
 

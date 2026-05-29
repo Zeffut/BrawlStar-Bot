@@ -401,7 +401,18 @@ function renderProgression(rows) {
   // proportional — long idle gaps now show as wide empty stretches,
   // dense grind clusters as packed lines. Previous version used
   // evenly-spaced string labels and lost all temporal nuance.
+  // Trophy changes are instantaneous (end-of-match jumps), so we use a
+  // stepped line: the value stays flat between matches and jumps at the
+  // next data point. Plus we extend the last value to "now" so the
+  // chart doesn't end on a stale point with an ugly trailing gap.
   const points = rows.map(m => ({x: m.timestamp, y: m.account_trophies_after}));
+  if (points.length > 0) {
+    const last = points[points.length - 1];
+    const nowTs = Date.now() / 1000;
+    if (nowTs - last.x > 60) {  // > 1 min idle: extend flat line to now
+      points.push({x: nowTs, y: last.y});
+    }
+  }
   const span = _rangeSeconds(_progressionRange);
   if (!progressionChart) {
     progressionChart = new Chart(document.getElementById("chart-progression"), {
@@ -409,7 +420,8 @@ function renderProgression(rows) {
       plugins: [_crosshairPlugin],
       data: { datasets: [{ label: "Trophies", data: points,
         borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.12)",
-        borderWidth: 2, tension: 0.3, pointRadius: 0, pointHoverRadius: 6,
+        borderWidth: 2, tension: 0, stepped: "after",
+        pointRadius: 0, pointHoverRadius: 6,
         pointHoverBackgroundColor: "#6ea4ff",
         pointHoverBorderColor: "#fff", pointHoverBorderWidth: 2,
         fill: true, parsing: false }] },
@@ -614,6 +626,15 @@ function _renderDevicePanel(healthRes, logsRes, shotRes) {
     hEl.appendChild(item);
   }
 
+  // Battery-gate toggle: sync checkbox to worker-reported state without
+  // firing the change event (would re-POST and loop).
+  if (healthRes.battery_gate_enabled != null) {
+    const tg = document.getElementById("battery-gate-toggle");
+    if (tg && tg.checked !== !!healthRes.battery_gate_enabled) {
+      tg.checked = !!healthRes.battery_gate_enabled;
+    }
+  }
+
   // Logs
   const logsEl = document.getElementById("device-logs");
   const logsCount = document.getElementById("logs-count");
@@ -655,6 +676,36 @@ async function sendDeviceCmd(cmd, confirmMsg) {
 document.querySelectorAll('.control-grid button').forEach(btn => {
   btn.addEventListener("click", () =>
     sendDeviceCmd(btn.dataset.cmd, btn.dataset.confirm || null));
+});
+
+// ------- Battery gate toggle -------------------------------------
+// The worker persists the enabled flag to disk; the panel just sends
+// the desired state. The current state is read from /health on each
+// device console refresh so the checkbox stays in sync with reality
+// (including after a bot restart that toggled it from another tab).
+async function sendBatteryGate(enabled) {
+  if (!selectedInstanceForDevice) return;
+  const status = document.getElementById("battery-gate-status");
+  status.textContent = "…";
+  try {
+    const r = await fetch(`/api/instances/${selectedInstanceForDevice}/cmd`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: "battery_gate_set", args: {enabled}}),
+    });
+    const j = await r.json();
+    if (r.ok && j.ok) {
+      status.textContent = enabled ? "✓ on" : "✓ off";
+    } else {
+      status.textContent = "✗ " + (j.error || r.statusText);
+    }
+  } catch (e) {
+    status.textContent = "✗ " + e.message;
+  } finally {
+    setTimeout(() => { status.textContent = ""; }, 3000);
+  }
+}
+document.getElementById("battery-gate-toggle").addEventListener("change", e => {
+  sendBatteryGate(e.target.checked);
 });
 
 // Manual screenshot refresh — triggers an on-demand capture.

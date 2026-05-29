@@ -136,6 +136,29 @@ def _cmd_adb_reconnect(args: dict) -> dict:
     return {"ok": code == 0, "output": out.strip()[:500]}
 
 
+def _cmd_battery_gate_set(args: dict) -> dict:
+    """Enable or disable the charging-triggered power-save loop.
+
+    args = {"enabled": bool}. Persisted to disk so the choice survives
+    restarts. The power-saver loop reads the flag every iteration.
+    """
+    try:
+        import game_api as _ga
+        enabled = bool(args.get("enabled", True))
+        _ga.set_battery_gate(enabled)
+        return {"ok": True, "enabled": enabled}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _cmd_battery_gate_get(args: dict) -> dict:
+    try:
+        import game_api as _ga
+        return {"ok": True, "enabled": _ga.battery_gate_enabled()}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def _check_and_self_update() -> None:
     """If local HEAD is behind origin/main, trigger an update.
 
@@ -298,7 +321,15 @@ def _collect_health() -> dict:
 
 
 def _cmd_health(args: dict) -> dict:
-    return _collect_health()
+    out = _collect_health()
+    # Surface the battery-gate toggle state so the panel can render the
+    # control without an extra round-trip.
+    try:
+        import game_api as _ga
+        out["battery_gate_enabled"] = _ga.battery_gate_enabled()
+    except Exception:
+        pass
+    return out
 
 
 # ---- bot session control (proxy to local panel API) --------------
@@ -493,6 +524,8 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "brawlstars_restart": _cmd_brawlstars_restart,
     "phone_reboot":       _cmd_phone_reboot,
     "adb_reconnect":      _cmd_adb_reconnect,
+    "battery_gate_set":   _cmd_battery_gate_set,
+    "battery_gate_get":   _cmd_battery_gate_get,
     "bot_restart":        _cmd_bot_restart,
     "git_update":         _cmd_git_update,
     "health":             _cmd_health,
@@ -543,7 +576,6 @@ async def _run_ws_client():
     import websockets
 
     last_log_offset = 0
-    last_screenshot_at = 0.0
     last_health_at = 0.0
     last_snapshot_at = 0.0
 
@@ -582,7 +614,7 @@ async def _run_ws_client():
                     log.debug("history/brawlers sync on reconnect failed", exc_info=True)
 
                 async def sender_loop():
-                    nonlocal last_log_offset, last_screenshot_at, last_health_at, last_snapshot_at
+                    nonlocal last_log_offset, last_health_at, last_snapshot_at
                     log_path = Path(__file__).resolve().parent / "logs" / "bot.log"
                     while True:
                         await asyncio.sleep(2.0)

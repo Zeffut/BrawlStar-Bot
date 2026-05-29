@@ -24,13 +24,11 @@ import platform
 import shutil
 import socket
 import subprocess
-import tempfile
 import time
 import urllib.request
 import zipfile
 from pathlib import Path
 
-import alerts
 import cloud_sync
 
 log = logging.getLogger(__name__)
@@ -356,7 +354,6 @@ def _launch_brawlstars(bs_path: str, adb: str) -> bool:
 
 def _bootstrap_linux() -> bool:
     """Linux host (Android phone over USB)."""
-    import device  # local to avoid circular import
     adb = shutil.which("adb")
     if not adb:
         log.error("adb not found in PATH")

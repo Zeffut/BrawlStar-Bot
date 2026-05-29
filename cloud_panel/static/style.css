@@ -897,6 +897,16 @@ main {
   background: #fff;
 }
 
+.battery-gate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.battery-gate-label { color: var(--text-1); }
+.battery-gate-row .muted { font-size: 11px; }
+
 /* -------- Toast notifications (floating, bottom-right) -------- */
 #toast-stack {
   position: fixed;

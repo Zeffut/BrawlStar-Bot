@@ -18,11 +18,9 @@ Examples:
 """
 from __future__ import annotations
 
-import io
 import json
 import logging
 import os
-import platform
 import signal
 import subprocess
 import sys
@@ -71,7 +69,7 @@ from window_controller import WindowController  # noqa: E402
 from utils import (  # noqa: E402
     get_brawler_list, update_missing_brawlers_info, check_version,
     update_wall_model_classes, get_latest_wall_model_file,
-    get_latest_version, load_toml_as_dict, current_wall_model_is_latest,
+    load_toml_as_dict, current_wall_model_is_latest,
     api_base_url, save_brawler_data,
 )
 from time_management import TimeManagement  # noqa: E402
@@ -79,7 +77,7 @@ from state_finder.main import get_state  # noqa: E402
 from stage_manager import StageManager  # noqa: E402
 from play import Play  # noqa: E402
 from lobby_automation import LobbyAutomation  # noqa: E402
-from account_detect import detect_player_tag, fetch_owned_brawlers, fetch_account_profile, ensure_lobby  # noqa: E402
+from account_detect import detect_player_tag, fetch_account_profile, ensure_lobby  # noqa: E402
 import db  # noqa: E402
 from worker_pool import POOL, BotWorker  # noqa: E402
 import alerts  # noqa: E402

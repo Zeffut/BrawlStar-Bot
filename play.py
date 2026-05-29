@@ -547,20 +547,9 @@ class Play(Movement):
             self.is_super_ready = self.check_if_super_ready(frame)
             self.time_since_super_checked = current_time
 
-        movement = self.loop(brawler, data, current_time)
-
-        # if data:
-        #     # Record scene data
-        #     self.scene_data.append({
-        #         'frame_number': len(self.scene_data),
-        #         'player': data.get('player', []),
-        #         'enemy': data.get('enemy', []),
-        #         'wall': data.get('wall', []),
-        #         'movement': movement,
-        #     })
+        self.loop(brawler, data, current_time)
 
     def generate_visualization(self, output_filename='visualization.mp4'):
-        import cv2
         import numpy as np
 
         frame_size = (1920, 1080)  # Adjust as needed

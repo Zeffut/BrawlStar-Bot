@@ -22,7 +22,7 @@ import logging
 import subprocess
 import threading
 import time
-from typing import Any
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -65,6 +65,31 @@ def _is_emulator_serial() -> bool:
 BATTERY_LOW_PCT = 30          # pause grinding when level drops below this
 BATTERY_CRITICAL_PCT = 20     # background safety net: force-stop active session
 BATTERY_RESUME_PCT = 80       # release the pause once level reaches this
+
+# Flag file path: presence == battery gate DISABLED. Default (absent) == enabled.
+# Lets the user (via the panel toggle) opt out of the whole charging-based
+# auto-pause without restarting the bot. The CRITICAL hardware safety net
+# (< BATTERY_CRITICAL_PCT) still applies regardless.
+_BATTERY_GATE_DISABLED_FLAG = (
+    Path(__file__).resolve().parent / "data" / "battery_gate_disabled.flag"
+)
+
+
+def battery_gate_enabled() -> bool:
+    """Return True if the battery gate is currently enabled (default)."""
+    return not _BATTERY_GATE_DISABLED_FLAG.exists()
+
+
+def set_battery_gate(enabled: bool) -> None:
+    """Persist the battery gate state to disk."""
+    _BATTERY_GATE_DISABLED_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    if enabled:
+        try:
+            _BATTERY_GATE_DISABLED_FLAG.unlink()
+        except FileNotFoundError:
+            pass
+    else:
+        _BATTERY_GATE_DISABLED_FLAG.touch()
 
 
 def _is_brawlball_label(s: str) -> bool:
@@ -1137,87 +1162,117 @@ def _start_idle_watchdog(api: "GameAPI") -> None:
 def _start_power_saver(api: "GameAPI") -> None:
     """Background loop: enter/exit power-save mode based on battery state.
 
-    Rules:
-      - If idle (no runner session) AND battery < LOW_PCT and not charging:
-        enter power save (force-stop game + screen off)
-      - If in power-save AND battery >= RESUME_PCT:
-        exit (wake + relaunch game)
+    Rules (when the battery gate is enabled — see battery_gate_enabled()):
+      - As soon as the phone reports charging=True: enter power save
+        (force-stop Brawl Stars + screen off) so the phone charges as
+        fast as possible without the OLED + game drain.
+      - As soon as charging flips back to False (user unplugged): exit
+        power save (wake + unlock + relaunch Brawl Stars).
+      - Hardware safety net: if battery < CRITICAL_PCT (20%) we still
+        enter power save even when not charging, regardless of toggle.
+    When the gate is disabled and we were in power save, we cleanly exit
+    so the user isn't stranded with a locked phone.
     Runs every 60s, fully self-contained.
     """
     def loop():
         in_power_save = False
         critical_notified = False
+        # Cache the last `charging` reading we acted on so a single
+        # toggle (plug in / unplug) only triggers enter/exit once,
+        # never repeatedly across iterations.
+        last_charging_acted = None
         while True:
             try:
-                # Adaptive poll: tight loop when battery is at risk so a
-                # fast drain (high-CPU brawler, OLED, etc.) can't slip
-                # between two 60s checks.
                 bat = api.battery_status()
                 lvl = bat.get("level")
                 chg = bat.get("charging")
-                if lvl is None:
-                    # ADB failure: treat as risk, also force-stop the
-                    # session — we can't tell what the phone is doing.
-                    log.warning("power-saver: battery unknown (ADB down?) — "
-                                "force-stopping session as safety net")
-                    if api._runner is not None and api._runner.is_running():
+                gate_on = battery_gate_enabled()
+
+                # Gate disabled: exit any active power save and idle.
+                if not gate_on:
+                    if in_power_save:
+                        log.info("power-saver: gate disabled by user → "
+                                 "exiting power save")
+                        try: api.exit_power_save()
+                        except Exception: log.exception("exit_power_save failed")
+                        in_power_save = False
+                        api._battery_paused = False
+                        critical_notified = False
+                        last_charging_acted = None
+                    time.sleep(60)
+                    continue
+
+                # Adaptive poll: tighter when battery is at risk.
+                poll_interval = 20 if (lvl is not None and lvl < BATTERY_LOW_PCT + 5) else 60
+                session_active = (api._runner is not None and api._runner.is_running())
+
+                # 1) Critical hardware safety net (lvl < CRITICAL).
+                if lvl is not None and lvl < BATTERY_CRITICAL_PCT and not in_power_save:
+                    log.warning("power-saver: battery=%d%% CRITICAL → "
+                                "force-stopping session + entering power save "
+                                "(charging=%s)", lvl, chg)
+                    if session_active and api._runner is not None:
                         try: api._runner.force_stop()
                         except Exception: log.exception("force_stop failed")
+                    try: api.enter_power_save()
+                    except Exception: log.exception("enter_power_save failed")
+                    api._battery_paused = True
+                    in_power_save = True
+                    last_charging_acted = chg
+                    if not critical_notified:
+                        try:
+                            import cloud_sync as _cs
+                            _cs.event("battery_low", {"level": lvl, "critical": True})
+                            critical_notified = True
+                        except Exception:
+                            log.exception("cloud_sync.event(battery_low) failed")
+                    time.sleep(poll_interval)
+                    continue
+
+                # 2) ADB battery read failed: be safe — pause if we
+                # weren't already, but don't relaunch on recovery.
+                if lvl is None and chg is None:
                     if not in_power_save:
-                        api.enter_power_save()
+                        log.warning("power-saver: battery unknown (ADB down?) — "
+                                    "force-stopping session as safety net")
+                        if session_active and api._runner is not None:
+                            try: api._runner.force_stop()
+                            except Exception: log.exception("force_stop failed")
+                        try: api.enter_power_save()
+                        except Exception: log.exception("enter_power_save failed")
+                        api._battery_paused = True
                         in_power_save = True
                     time.sleep(30)
                     continue
-                # Choose next poll interval based on current level.
-                poll_interval = 20 if lvl < BATTERY_LOW_PCT + 5 else 60
-                session_active = (api._runner is not None and api._runner.is_running())
-                if not in_power_save:
-                    # Critical: force-pause even an active session — the
-                    # post-match gate is too late if the bot is stuck
-                    # mid-match or on a reward screen. Triggers regardless
-                    # of charging state.
-                    if lvl < BATTERY_CRITICAL_PCT:
-                        log.warning("power-saver: battery=%d%% CRITICAL → "
-                                    "force-stopping session + entering power save "
-                                    "(charging=%s)", lvl, chg)
-                        if session_active and api._runner is not None:
-                            try: api._runner.force_stop()
-                            except Exception: log.exception("force_stop failed")
-                        api.enter_power_save()
-                        api._battery_paused = True
-                        in_power_save = True
-                        if not critical_notified:
-                            try:
-                                import cloud_sync as _cs
-                                _cs.event("battery_low", {"level": lvl, "critical": True})
-                                critical_notified = True
-                            except Exception:
-                                log.exception("cloud_sync.event(battery_low) failed")
-                    elif lvl < BATTERY_LOW_PCT:
-                        # Below LOW: pause even if session active. The
-                        # session's post-match hook will catch this too,
-                        # but the background check is the safety net for
-                        # long matches / stuck states.
-                        log.info("power-saver: battery=%d%% < LOW (%d) → entering power save "
-                                 "(charging=%s, session_active=%s)",
-                                 lvl, BATTERY_LOW_PCT, chg, session_active)
-                        if session_active and api._runner is not None:
-                            try: api._runner.force_stop()
-                            except Exception: log.exception("force_stop failed")
-                        api.enter_power_save()
-                        # Surface the pause to the cloud (status=charging)
-                        # AND engage the hard-lock so the bot keeps
-                        # recharging up to HARD_RESUME (80%) instead of
-                        # resuming as soon as it crosses 50%.
-                        api._battery_paused = True
-                        in_power_save = True
-                else:
-                    if lvl >= BATTERY_RESUME_PCT:
-                        log.info("power-saver: battery=%d%% → exiting power save", lvl)
-                        api.exit_power_save()
-                        api._battery_paused = False
-                        in_power_save = False
-                        critical_notified = False
+
+                # 3) Charging-state edge detection (the new behavior).
+                # `chg` can be None when only the level is readable; in
+                # that case keep prior state — don't enter/exit on noise.
+                if chg is True and not in_power_save and last_charging_acted is not True:
+                    log.info("power-saver: charging=True → entering power save "
+                             "(battery=%s%%, session_active=%s)", lvl, session_active)
+                    if session_active and api._runner is not None:
+                        try: api._runner.force_stop()
+                        except Exception: log.exception("force_stop failed")
+                    try: api.enter_power_save()
+                    except Exception: log.exception("enter_power_save failed")
+                    api._battery_paused = True
+                    in_power_save = True
+                    last_charging_acted = True
+                elif chg is False and in_power_save and last_charging_acted is not False:
+                    log.info("power-saver: charging=False → exiting power save "
+                             "(battery=%s%%)", lvl)
+                    try: api.exit_power_save()
+                    except Exception: log.exception("exit_power_save failed")
+                    api._battery_paused = False
+                    in_power_save = False
+                    critical_notified = False
+                    last_charging_acted = False
+                elif chg is True:
+                    last_charging_acted = True
+                elif chg is False:
+                    last_charging_acted = False
+
                 time.sleep(poll_interval)
             except Exception:
                 log.exception("power-saver iteration crashed")

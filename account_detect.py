@@ -17,7 +17,7 @@ import logging
 import re
 import subprocess
 import time
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import numpy as np
 import requests
@@ -234,7 +234,6 @@ def _ocr_player_tag(profile_img: Image.Image) -> Optional[str]:
     if not candidates:
         return None
     # Rank: prefer #-prefixed, then longer tags, then most common.
-    from collections import Counter
     # Group by tag string; track if any source had #.
     by_tag: dict[str, dict] = {}
     for tag, hashed in candidates:

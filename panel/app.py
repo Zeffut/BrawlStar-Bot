@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel

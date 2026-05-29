@@ -64,7 +64,6 @@ _cached_at: float = 0.0
 def _cached_serial_alive(serial: str) -> bool:
     """Return True if `serial` still appears as 'device' in adb devices."""
     try:
-        import time as _t
         out = subprocess.check_output(
             ["adb", "devices"], stderr=subprocess.DEVNULL, timeout=5
         ).decode("utf-8", errors="replace")

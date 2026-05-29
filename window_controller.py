@@ -1,9 +1,7 @@
 import atexit
-import math
 import threading
 import time
 import cv2
-import os
 from PIL import Image
 from typing import List
 
@@ -45,7 +43,7 @@ class WindowController:
         try:
             self.adb_client = AdbClient(host="127.0.0.1", port=5037)
             try: self.adb_client.server_start()
-            except: pass
+            except Exception: pass
 
             device_list = self.adb_client.device_list()
             
@@ -56,7 +54,7 @@ class WindowController:
                         time.sleep(0.5)
                         device_list = self.adb_client.device_list()
                         if device_list: break
-                    except: pass
+                    except Exception: pass
 
             if not device_list:
                 raise ConnectionError("No ADB devices found. Is your emulator/phone connected and with adb enabled?")

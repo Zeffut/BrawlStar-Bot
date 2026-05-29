@@ -18,7 +18,6 @@ import threading
 import time
 import tomllib
 from pathlib import Path
-from typing import Any
 
 import requests
 

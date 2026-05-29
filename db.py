@@ -16,7 +16,6 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable
 
 log = logging.getLogger(__name__)
 
