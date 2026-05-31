@@ -1,37 +1,44 @@
 """Read trophies / gems / gold from a Brawl Stars lobby screenshot.
 
 Self-contained (no game_api import): captures via adb directly and OCRs
-with the tesseract binary through subprocess (the pytesseract wrapper is
-broken on this host — it chokes decoding tesseract's stderr).
+with **easyocr** (the only engine that reads Brawl Stars' stylised HUD
+font — tesseract fails on it even with clean thresholded glyphs).
 
 `parse_currency_number` is pure (unit-tested). `read_lobby_numbers`
 is exercised live against the BlueStacks emulator.
 
-Crop ratios calibrated + VISUALLY VERIFIED 2026-05-31 on a 2560×1440
-BlueStacks lobby (16:9 — ratios transfer to 1920×1080): each crop lands
-exactly on its number.
-
-⚠️ OCR-ENGINE LIMITATION (2026-05-31): tesseract CANNOT read Brawl Stars'
-stylised HUD font (rounded, thick-outlined digits) even with clean
-thresholded glyphs. This is why the bot itself uses **easyocr**. To make
-this reader work, swap `_tesseract()` for an easyocr-based OCR (heavy:
-pulls PyTorch). The crops + parse + capture pipeline are correct and
-engine-agnostic — only the OCR call needs upgrading.
+Crop ratios calibrated + VERIFIED LIVE 2026-05-31 on a 2560×1440
+BlueStacks lobby (16:9 — ratios transfer to 1920×1080): gems & gold read
+exactly; trophies is also read here but the authoritative trophy total
+comes from brawlace (sum over brawlers) in the orchestrator.
 """
 from __future__ import annotations
 
 import io
 import re
 import subprocess
-import tempfile
-from pathlib import Path
 
 # (y0, y1, x0, x1) as ratios of the lobby frame — top bar, left→right.
+# Verified live on BlueStacks 2560×1440 with easyocr (2026-05-31).
 _CROPS = {
-    "trophies": (0.020, 0.075, 0.210, 0.280),
-    "gems":     (0.015, 0.075, 0.525, 0.605),
-    "gold":     (0.015, 0.075, 0.635, 0.725),
+    "trophies": (0.020, 0.078, 0.218, 0.285),
+    "gems":     (0.015, 0.078, 0.635, 0.715),
+    "gold":     (0.015, 0.078, 0.735, 0.825),
 }
+
+_READER = None
+
+
+def _ocr_digits(pil_image) -> str:
+    """OCR a crop to digits via easyocr (the only engine that reads the
+    stylised Brawl Stars HUD font). Reader is lazily created once."""
+    global _READER
+    import numpy as np
+    if _READER is None:
+        import easyocr
+        _READER = easyocr.Reader(["en"], gpu=False, verbose=False)
+    res = _READER.readtext(np.array(pil_image), allowlist="0123456789", detail=0)
+    return "".join(res)
 
 
 def parse_currency_number(ocr_text: str) -> int | None:
@@ -46,23 +53,6 @@ def parse_currency_number(ocr_text: str) -> int | None:
     if not runs:
         return None
     return int(max(runs, key=lambda s: (len(s), int(s))))
-
-
-def _tesseract(png_bytes: bytes) -> str:
-    """OCR a PNG via the tesseract CLI. Returns raw text ('' on failure)."""
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-        f.write(png_bytes)
-        path = f.name
-    try:
-        out = subprocess.run(
-            ["tesseract", path, "stdout", "--psm", "7"],
-            capture_output=True, timeout=20,
-        )
-        return out.stdout.decode("utf-8", errors="ignore").strip()
-    except Exception:
-        return ""
-    finally:
-        Path(path).unlink(missing_ok=True)
 
 
 def _screencap(serial: str) -> bytes:
@@ -86,8 +76,5 @@ def read_lobby_numbers(serial: str) -> dict:
     result: dict[str, int | None] = {}
     for name, (y0, y1, x0, x1) in _CROPS.items():
         crop = img.crop((int(w * x0), int(h * y0), int(w * x1), int(h * y1)))
-        crop = crop.convert("L").resize((crop.width * 3, crop.height * 3))
-        buf = io.BytesIO()
-        crop.save(buf, format="PNG")
-        result[name] = parse_currency_number(_tesseract(buf.getvalue()))
+        result[name] = parse_currency_number(_ocr_digits(crop))
     return result
