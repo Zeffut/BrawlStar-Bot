@@ -62,6 +62,11 @@ BRAWLER_TIERS: dict[str, str] = {
 }
 TIER_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
 
+# Above this trophy count, expected_gain() turns non-positive — matches lose
+# as much as they gain, so pushing there barely grows the account total.
+# push_max prioritises brawlers BELOW this ceiling ("easiest trophies").
+EFFICIENCY_CEILING = 700
+
 
 def get_tier(name: str) -> str:
     return BRAWLER_TIERS.get(name.lower().strip(), "B")
@@ -129,22 +134,27 @@ class PushMaxStrategy:
         return state
 
     def pick_next(self) -> BrawlerState | None:
-        """Return the brawler to play.
+        """Return the brawler to play, prioritising the *easiest* trophies.
 
-        Stickiness: if `current` is still active (not exhausted), keep
-        playing it. Only switch when it's exhausted.
-        Otherwise pick the highest-tier, highest-trophy brawler not yet
-        exhausted.
+        Push brawlers with positive expected gain first (below the
+        diminishing-returns ceiling) — that grows the account total fastest.
+        A brawler above the ceiling (e.g. a 900+ brock, where a match loses
+        more than it gains) is only touched if nothing easier is left.
+        Stickiness: keep the current brawler while it's still below the
+        ceiling and not exhausted.
         """
         if self.current:
             cur = self.brawlers.get(self.current)
-            if cur and not cur.exhausted:
+            if cur and not cur.exhausted and cur.trophies < EFFICIENCY_CEILING:
                 return cur
         candidates = [b for b in self.brawlers.values() if not b.exhausted]
         if not candidates:
             return None
-        candidates.sort(key=lambda b: (TIER_ORDER.get(b.tier, 99), -b.trophies))
-        winner = candidates[0]
+        easy = [b for b in candidates if b.trophies < EFFICIENCY_CEILING]
+        pool = easy if easy else candidates
+        # Highest expected gain (lowest trophies) first; tie-break by tier.
+        pool.sort(key=lambda b: (-expected_gain(b.trophies), TIER_ORDER.get(b.tier, 99)))
+        winner = pool[0]
         self.current = winner.name
         if not winner.locked:
             winner.locked = True

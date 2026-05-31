@@ -81,20 +81,31 @@ def test_all_done():
 
 
 def test_per_brawler_cap_exhausts_on_reach():
+    # Cap below the efficiency ceiling so the capped brawler is the one pushed.
+    owned = [{"name": "shelly", "trophies": 250}]   # below ceiling + below cap
+    s = PushMaxStrategy.from_owned(owned, brawler_max_trophies=300)
+    s.pick_next()
+    s.record_match("shelly", "victory", 290)        # under the cap → keep going
+    assert not s.brawlers["shelly"].exhausted
+    s.record_match("shelly", "victory", 305)        # reached the cap → done
+    assert s.brawlers["shelly"].exhausted
+
+
+def test_pushes_easiest_skips_above_ceiling():
     owned = [
-        {"name": "brock", "trophies": 900},    # S
-        {"name": "shelly", "trophies": 100},   # A
+        {"name": "brock", "trophies": 940},    # S-tier but above the ceiling
+        {"name": "shelly", "trophies": 80},    # A-tier, lots of headroom
     ]
-    s = PushMaxStrategy.from_owned(owned, brawler_max_trophies=950)
-    assert s.pick_next().name == "brock"
-    # Win toward the cap but not reaching it → keep brock.
-    s.record_match("brock", "victory", 945)
-    assert not s.brawlers["brock"].exhausted
-    assert s.pick_next().name == "brock"
-    # Reach the cap → exhausted, rotate to the next brawler.
-    s.record_match("brock", "victory", 955)
-    assert s.brawlers["brock"].exhausted
+    s = PushMaxStrategy.from_owned(owned)
+    # Despite brock's higher tier, a 940 brawler loses trophies on average →
+    # push the easy shelly instead.
     assert s.pick_next().name == "shelly"
+
+
+def test_above_ceiling_only_as_last_resort():
+    owned = [{"name": "brock", "trophies": 940}]   # only brawler, above ceiling
+    s = PushMaxStrategy.from_owned(owned)
+    assert s.pick_next().name == "brock"           # nothing easier → still pick it
 
 
 def test_per_brawler_cap_skips_already_capped():
