@@ -204,7 +204,7 @@ class StageManager:
         cx, cy = sw // 2, sh // 2
         serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
         self._star_drop_attempts = getattr(self, "_star_drop_attempts", 0) + 1
-        if self._star_drop_attempts >= 3:
+        if self._star_drop_attempts >= 2:
             self._star_drop_attempts = 0
             self._restart_brawlstars("star drop can't be opened via ADB")
             return
@@ -228,16 +228,19 @@ class StageManager:
         
         found_game_result = False
         current_state = get_state(screenshot)
-        max_end_attempts = 12
+        max_end_attempts = 7
         end_attempts = 0
         while current_state == "end" and end_attempts < max_end_attempts:
             if not found_game_result and time.time() - self.time_since_last_stat_change > 10:
                 found_game_result = self.Trophy_observer.find_game_result(screenshot, current_brawler=self.brawlers_pick_data[0]['brawler'])
                 self.time_since_last_stat_change = time.time()
                 save_brawler_data(self.brawlers_pick_data)
-
+            # Once the result is logged and we're still on the end screen,
+            # it's a star drop we can't open — stop hammering Q and bail.
+            if found_game_result and end_attempts >= 2:
+                break
             self.window_controller.press_key("Q")
-            time.sleep(3)
+            time.sleep(2)
             screenshot = self.window_controller.screenshot()
             current_state = get_state(screenshot)
             end_attempts += 1
