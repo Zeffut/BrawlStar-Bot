@@ -978,26 +978,32 @@ async function askPushMaxTarget() {
           <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Total trophies cible (compte)</label>
           <input type="number" id="pm-target" min="1" value="${suggested}" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px" />
         </div>
+        <div style="margin-bottom:18px">
+          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Max trophées par brawler — optionnel</label>
+          <input type="number" id="pm-cap" min="1" placeholder="ex: 900 · vide = aucun cap" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px" />
+          <span style="font-size:10px;color:var(--muted);display:block;margin-top:5px">Chaque brawler s'arrête à ce nombre, puis le bot passe au suivant.</span>
+        </div>
         <div class="confirm-actions">
           <button class="confirm-btn" data-act="cancel">Annuler</button>
           <button class="confirm-btn primary" data-act="ok">▶ Lancer</button>
         </div>
       </div>`;
     const close = (val) => { overlay.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
+    const submit = () => {
+      const t = parseInt(overlay.querySelector("#pm-target").value, 10);
+      if (!Number.isFinite(t) || t <= 0) { close(null); return; }
+      const capRaw = (overlay.querySelector("#pm-cap").value || "").trim();
+      const cap = capRaw === "" ? null : parseInt(capRaw, 10);
+      close({ target: t, perBrawlerMax: (Number.isFinite(cap) && cap > 0) ? cap : null });
+    };
     const onKey = (e) => {
       if (e.key === "Escape") close(null);
-      if (e.key === "Enter") {
-        const v = parseInt(overlay.querySelector("#pm-target").value, 10);
-        close(Number.isFinite(v) && v > 0 ? v : null);
-      }
+      if (e.key === "Enter") submit();
     };
     overlay.addEventListener("click", e => {
       if (e.target === overlay) close(null);
       else if (e.target.dataset.act === "cancel") close(null);
-      else if (e.target.dataset.act === "ok") {
-        const v = parseInt(overlay.querySelector("#pm-target").value, 10);
-        close(Number.isFinite(v) && v > 0 ? v : null);
-      }
+      else if (e.target.dataset.act === "ok") submit();
     });
     document.addEventListener("keydown", onKey);
     document.body.appendChild(overlay);
@@ -1012,15 +1018,17 @@ document.getElementById("btn-push-max").addEventListener("click", async (e) => {
   // active) → ignore. session-active toggles `hidden`, not `disabled`,
   // so cover both cases.
   if (btn.disabled || btn.hidden) return;
-  const target = await askPushMaxTarget();
-  if (!target) return;
+  const res = await askPushMaxTarget();
+  if (!res) return;
+  const target = res.target;
+  const perBrawlerMax = res.perBrawlerMax;
   // Optimistic UI: hide Push Max immediately + show Stop, so a second
   // click is impossible during the 10s window before session_state
   // catches up.
   document.getElementById("btn-push-max").hidden = true;
   document.getElementById("btn-stop").hidden = false;
   await withLoader("btn-push-max", async () => {
-    const r = await postSession("/push_max", {target_total_trophies: target});
+    const r = await postSession("/push_max", {target_total_trophies: target, per_brawler_max_trophies: perBrawlerMax});
     if (!r.ok || (r.data && !r.data.ok)) {
       const reason = r.data?.msg || r.data?.error || r.error || "unknown";
       showToast("Push Max failed: " + reason, "err");
@@ -1033,7 +1041,7 @@ document.getElementById("btn-push-max").addEventListener("click", async (e) => {
       }
       refreshSessionState();
     } else {
-      showToast(`Push Max démarré — objectif ${target} 🏆`, "ok");
+      showToast(`Push Max démarré — objectif ${target} 🏆${perBrawlerMax ? ` · cap ${perBrawlerMax}/brawler` : ""}`, "ok");
       // Poll session_state aggressively for ~30s so the banner appears
       // as soon as pick_next sets _push_max on the runner.
       for (let i = 0; i < 15; i++) {
@@ -1490,11 +1498,20 @@ function _activityRowHtml(m) {
     </div>`;
 }
 
-async function loadActivity() {
+let _activityOffset = 0;
+let _activityTotal = 0;
+let _activityLoading = false;
+const _ACTIVITY_PAGE = 30;
+
+async function loadActivity(reset = true) {
+  const feed = document.getElementById("activity-feed");
+  if (!feed) return;
   try {
-    const rows = await api("/api/activity/recent?limit=30", {silent: true});
-    const feed = document.getElementById("activity-feed");
-    if (!rows || !rows.length) {
+    if (reset) _activityOffset = 0;
+    const data = await api(`/api/activity/recent?limit=${_ACTIVITY_PAGE}&offset=${_activityOffset}`, {silent: true});
+    const items = (data && data.items) || [];
+    _activityTotal = (data && typeof data.total === "number") ? data.total : items.length;
+    if (reset && !items.length) {
       feed.innerHTML = `<div class="empty-card" style="padding:14px">
         <span class="icon">🎮</span>
         <div style="font-size:11px">No matches yet</div>
@@ -1502,9 +1519,29 @@ async function loadActivity() {
       document.getElementById("activity-count").textContent = "0";
       return;
     }
-    feed.innerHTML = rows.map(_activityRowHtml).join("");
-    document.getElementById("activity-count").textContent = rows.length;
+    const html = items.map(_activityRowHtml).join("");
+    if (reset) feed.innerHTML = html;
+    else feed.insertAdjacentHTML("beforeend", html);
+    _activityOffset += items.length;
+    // Show the REAL total match count, not the page size.
+    document.getElementById("activity-count").textContent = _activityTotal;
+    _bindActivityScroll();
   } catch (e) {}
+}
+
+// Lazy-load the next page when the user scrolls near the bottom of the
+// feed — avoids loading the whole (potentially huge) history at once.
+function _bindActivityScroll() {
+  const feed = document.getElementById("activity-feed");
+  if (!feed || feed._scrollBound) return;
+  feed._scrollBound = true;
+  feed.addEventListener("scroll", () => {
+    if (_activityLoading || _activityOffset >= _activityTotal) return;
+    if (feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 60) {
+      _activityLoading = true;
+      loadActivity(false).finally(() => { _activityLoading = false; });
+    }
+  });
 }
 
 function _prependActivity(m) {
@@ -1515,10 +1552,12 @@ function _prependActivity(m) {
   const tmp = document.createElement("div");
   tmp.innerHTML = _activityRowHtml(m).trim();
   feed.insertBefore(tmp.firstChild, feed.firstChild);
-  // Cap at 30 rows.
-  while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+  // A new match arrived live: bump the real total + paging cursor so the
+  // next lazy page stays aligned. No DOM cap — pagination owns growth.
+  _activityTotal += 1;
+  _activityOffset += 1;
   const countEl = document.getElementById("activity-count");
-  if (countEl) countEl.textContent = feed.children.length;
+  if (countEl) countEl.textContent = _activityTotal;
 }
 
 loadActivity();

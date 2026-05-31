@@ -424,16 +424,23 @@ def health() -> dict:
 
 
 @app.get("/api/activity/recent")
-def activity_recent(limit: int = 30) -> list[dict]:
-    """Recent match events across all accounts (newest first)."""
+def activity_recent(limit: int = 30, offset: int = 0) -> dict:
+    """Recent match events across all accounts (newest first), paginated.
+
+    Returns {total, offset, limit, items}. `total` is the real match count
+    so the UI can show it and lazy-load more pages on scroll.
+    """
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    total = db.conn().execute("SELECT COUNT(*) FROM matches").fetchone()[0]
     rows = db.conn().execute(
         "SELECT m.brawler, m.result, m.trophies_before, m.trophies_after, "
         "       m.timestamp, a.tag, a.name AS account_name, i.instance_id "
         "FROM matches m "
         "JOIN accounts a ON m.account_id = a.id "
         "JOIN instances i ON a.instance_id = i.id "
-        "ORDER BY m.timestamp DESC LIMIT ?",
-        (limit,),
+        "ORDER BY m.timestamp DESC LIMIT ? OFFSET ?",
+        (limit, offset),
     ).fetchall()
     out = []
     for r in rows:
@@ -443,7 +450,7 @@ def activity_recent(limit: int = 30) -> list[dict]:
         else:
             d["delta"] = None
         out.append(d)
-    return out
+    return {"total": total, "offset": offset, "limit": limit, "items": out}
 
 
 @app.get("/api/fleet/overview")
@@ -870,6 +877,7 @@ async def _cmd_for_account(account_id: int, name: str, args: dict, timeout_s: fl
 
 class PushMaxBody(BaseModel):
     target_total_trophies: int | None = None
+    per_brawler_max_trophies: int | None = None
 
 
 @app.post("/api/accounts/{account_id}/push_max")
@@ -877,6 +885,8 @@ async def api_account_push_max(account_id: int, payload: PushMaxBody | None = No
     args = {}
     if payload and payload.target_total_trophies is not None:
         args["target_total_trophies"] = payload.target_total_trophies
+    if payload and payload.per_brawler_max_trophies is not None:
+        args["per_brawler_max_trophies"] = payload.per_brawler_max_trophies
     # Worker fetches the brawler list (via flaresolverr) before starting,
     # so allow ample time on a cold call.
     return await _cmd_for_account(account_id, "session_push_max", args, timeout_s=100)
