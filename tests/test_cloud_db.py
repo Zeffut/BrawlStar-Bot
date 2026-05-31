@@ -10,17 +10,32 @@ import pytest
 
 
 @pytest.fixture
-def cdb(tmp_path, monkeypatch):
-    """Spin up a clean cloud_panel.db module pointing at a temp DB."""
-    os.environ["CLOUD_DB_PATH"] = str(tmp_path / "test.db")
-    # Force re-import so the module re-reads CLOUD_DB_PATH.
+def cdb(monkeypatch):
+    """Spin up a clean cloud_panel.db module pointing at a TEST Postgres.
+
+    Requires TEST_DATABASE_URL (a throwaway database). Skips otherwise so
+    local/CI runs without a Postgres don't fail. Guards against pointing at a
+    production DB: the URL must contain 'test' (the fixture DROPs all tables).
+    """
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set — Postgres needed for db tests")
+    if "test" not in url.lower():
+        pytest.skip("refusing to run destructive db tests on a non-'test' DB URL")
+    os.environ["DATABASE_URL"] = url
+    # Force re-import so the module re-reads DATABASE_URL.
     for mod in list(sys.modules):
         if mod == "db" or mod.endswith(".db"):
             sys.modules.pop(mod, None)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "cloud_panel"))
     import db as cdb  # noqa: E402
-    # Force a fresh connection.
     cdb._conn = None
+    # Clean slate before each test.
+    with cdb.conn().cursor() as c:
+        c.execute(
+            "DROP TABLE IF EXISTS matches, sessions, events, instance_state, "
+            "accounts, instances, config CASCADE"
+        )
     cdb.init()
     return cdb
 

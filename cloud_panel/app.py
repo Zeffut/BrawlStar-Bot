@@ -121,7 +121,7 @@ def sync_session_end(payload: SessionEndPayload, authorization: str | None = Hea
     # any lingering 'running' sessions for the account by tag.
     if payload.tag:
         norm = payload.tag.lstrip("#").upper()
-        for r in db.conn().execute("SELECT id FROM accounts WHERE tag = ?", (norm,)).fetchall():
+        for r in db.query("SELECT id FROM accounts WHERE tag = %s", (norm,)):
             db.end_running_sessions(r["id"], payload.status, payload.ended_at)
     return {"ok": True}
 
@@ -204,18 +204,18 @@ def sync_state(tag: str, authorization: str | None = Header(None)) -> dict:
     the user — worker auto-replays missing history on next sync tick.
     """
     _require_auth(authorization)
-    rows = db.conn().execute(
-        "SELECT a.id FROM accounts a WHERE a.tag = ? LIMIT 1", (tag,),
-    ).fetchall()
+    rows = db.query("SELECT a.id FROM accounts a WHERE a.tag = %s LIMIT 1", (tag,))
     if not rows:
         return {"ok": True, "known": False, "latest_match_ts": 0}
     aid = rows[0]["id"]
-    r = db.conn().execute(
-        "SELECT MAX(timestamp) AS ts FROM matches WHERE account_id = ?", (aid,),
-    ).fetchone()
-    s = db.conn().execute(
-        "SELECT MAX(started_at) AS ts FROM sessions WHERE account_id = ?", (aid,),
-    ).fetchone()
+    r = db.query(
+        "SELECT MAX(timestamp) AS ts FROM matches WHERE account_id = %s", (aid,),
+        one=True,
+    )
+    s = db.query(
+        "SELECT MAX(started_at) AS ts FROM sessions WHERE account_id = %s", (aid,),
+        one=True,
+    )
     return {
         "ok": True, "known": True,
         "latest_match_ts": (r["ts"] if r and r["ts"] else 0),
@@ -454,16 +454,16 @@ def activity_recent(limit: int = 30, offset: int = 0) -> dict:
     """
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    total = db.conn().execute("SELECT COUNT(*) FROM matches").fetchone()[0]
-    rows = db.conn().execute(
+    total = db.query("SELECT COUNT(*) AS n FROM matches", one=True)["n"]
+    rows = db.query(
         "SELECT m.brawler, m.result, m.trophies_before, m.trophies_after, "
         "       m.timestamp, a.tag, a.name AS account_name, i.instance_id "
         "FROM matches m "
         "JOIN accounts a ON m.account_id = a.id "
         "JOIN instances i ON a.instance_id = i.id "
-        "ORDER BY m.timestamp DESC LIMIT ? OFFSET ?",
+        "ORDER BY m.timestamp DESC LIMIT %s OFFSET %s",
         (limit, offset),
-    ).fetchall()
+    )
     out = []
     for r in rows:
         d = dict(r)
@@ -490,19 +490,19 @@ def fleet_overview() -> dict:
         brawlers, _ = db.get_account_brawlers(a["id"])
         total_trophies += _account_total_trophies(a["id"], brawlers) or 0
     # Today's matches across all accounts.
-    today_matches = db.conn().execute(
-        "SELECT result, COUNT(*) AS n FROM matches WHERE timestamp >= ? GROUP BY result",
+    today_matches = db.query(
+        "SELECT result, COUNT(*) AS n FROM matches WHERE timestamp >= %s GROUP BY result",
         (today_start,),
-    ).fetchall()
+    )
     today = {"victory": 0, "defeat": 0, "draw": 0}
     for r in today_matches:
         today[r["result"]] = r["n"]
     total_today = sum(today.values())
     wr_today = round(today["victory"] / total_today * 100) if total_today else None
     # Active sessions count.
-    active_sessions = db.conn().execute(
-        "SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL",
-    ).fetchone()["n"]
+    active_sessions = db.query(
+        "SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL", one=True,
+    )["n"]
     return {
         "instances_total": len(insts),
         "instances_by_status": breakdown,
@@ -717,10 +717,10 @@ def util_brawler_profile(tag: str) -> dict:
     """
     tag_norm = tag.lstrip("#").upper()
     # 1. DB cache first — find an account matching this tag.
-    rows = db.conn().execute(
-        "SELECT a.id, a.name FROM accounts a WHERE a.tag = ? LIMIT 1",
+    rows = db.query(
+        "SELECT a.id, a.name FROM accounts a WHERE a.tag = %s LIMIT 1",
         (tag_norm,),
-    ).fetchall()
+    )
     if rows:
         acc_id = rows[0]["id"]
         brawlers, refreshed_at = db.get_account_brawlers(acc_id)
