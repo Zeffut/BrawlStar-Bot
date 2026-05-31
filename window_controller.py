@@ -194,17 +194,60 @@ class WindowController:
         return (self.scrcpy_client is not None
                 and getattr(self.scrcpy_client, "control", None) is not None)
 
+    def _reconnect_scrcpy(self) -> None:
+        """Re-establish the scrcpy control socket after it dies.
+
+        On WiFi-ADB the scrcpy control socket drops intermittently; every
+        touch then raises '[Errno 9] Bad file descriptor', which kills
+        in-match movement (the joystick uses scrcpy touch) → the bot stands
+        still and gets kicked for AFK. Throttled so we don't thrash.
+        """
+        now = time.time()
+        if now - getattr(self, "_last_scrcpy_reconnect", 0) < 8:
+            return
+        self._last_scrcpy_reconnect = now
+        log.warning("scrcpy control socket dead — reconnecting")
+        try:
+            old = self.scrcpy_client
+            self.scrcpy_client = None
+            if old is not None:
+                try: old.stop()
+                except Exception: pass
+            cli = scrcpy.Client(device=self.device, max_width=0, bitrate=0)
+            cli.start(threaded=True)
+            deadline = time.time() + 5
+            while getattr(cli, "control", None) is None and time.time() < deadline:
+                time.sleep(0.1)
+            self.scrcpy_client = cli
+            self.are_we_moving = False  # joystick pointer state was lost
+            log.info("scrcpy reconnected (control=%s)",
+                     getattr(cli, "control", None) is not None)
+        except Exception as exc:
+            log.warning("scrcpy reconnect failed: %s", exc)
+            self.scrcpy_client = None
+
+    def _touch(self, x, y, action, pointer_id):
+        if not self._scrcpy_ok():
+            return
+        try:
+            self.scrcpy_client.control.touch(int(x), int(y), action, pointer_id)
+        except OSError:
+            # Socket died — reconnect and retry once so movement resumes.
+            self._reconnect_scrcpy()
+            if self._scrcpy_ok():
+                try:
+                    self.scrcpy_client.control.touch(int(x), int(y), action, pointer_id)
+                except Exception:
+                    pass
+
     def touch_down(self, x, y, pointer_id=0):
-        if self._scrcpy_ok():
-            self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_DOWN, pointer_id)
+        self._touch(x, y, scrcpy.ACTION_DOWN, pointer_id)
 
     def touch_move(self, x, y, pointer_id=0):
-        if self._scrcpy_ok():
-            self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_MOVE, pointer_id)
+        self._touch(x, y, scrcpy.ACTION_MOVE, pointer_id)
 
     def touch_up(self, x, y, pointer_id=0):
-        if self._scrcpy_ok():
-            self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_UP, pointer_id)
+        self._touch(x, y, scrcpy.ACTION_UP, pointer_id)
 
     # --- swipe via ADB (robust) ---
     def swipe(self, start_x, start_y, end_x, end_y, duration=0.5, steps=20):
