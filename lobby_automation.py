@@ -82,13 +82,13 @@ class LobbyAutomation:
         return best[1] if best else None
 
     def _reset_to_lobby(self) -> None:
-        """Return to the lobby from any sub-screen.
+        """Return to the lobby by tapping the top-right home button.
 
-        BS/Unity ignores the Android BACK key on many screens (notably the
-        Trophy Road), so the bot used to get permanently stuck there. We
-        first tap the home/lobby button in the top-right corner — it's
-        present on virtually every sub-screen and reliably returns to the
-        lobby — then fall back to BACK for the few menus without it.
+        We never use the Android BACK key: BS/Unity ignores it on
+        sub-screens (so it can't escape the Trophy Road / shop / brawler
+        menu), AND pressing BACK at the lobby pops a "Quit Brawl Stars?"
+        dialog that then confuses the state detector. The top-right home
+        button reliably returns to the lobby from every sub-screen.
         """
         wc = self.window_controller
         try:
@@ -96,19 +96,8 @@ class LobbyAutomation:
             if fw and fh:
                 # Home button sits in the top-right corner (~95% width, ~6.5% height).
                 wc.click(int(fw * 0.952), int(fh * 0.065))
-                time.sleep(1.2)
-        except Exception as exc:
-            log.warning("reset_to_lobby: home-button tap failed: %s", exc)
-        try:
-            serial = getattr(wc, "device_serial", None) or device.adb_serial()
-            for _ in range(2):
-                subprocess.run(
-                    ["adb", "-s", serial, "shell", "input", "keyevent", "4"],
-                    timeout=3, check=False,
-                )
-                time.sleep(0.6)
-            time.sleep(1.0)
-            log.debug("reset_to_lobby: home-button tap + BACK done")
+                time.sleep(1.5)
+            log.debug("reset_to_lobby: home-button tapped")
         except Exception as exc:
             log.warning("reset_to_lobby failed: %s", exc)
 
@@ -184,12 +173,10 @@ class LobbyAutomation:
         wr = self.window_controller.width_ratio
         hr = self.window_controller.height_ratio
 
-        # Two phases: forward scroll (50 swipes down), then a "scroll-back-up"
-        # phase (15 swipes up) in case the menu jumped past the target.
-        for phase, (swipes, dy_start, dy_step) in enumerate([
-            (50, 850, 650),     # forward scroll
-            (15, 250, 450),     # reverse — swipe upward to scroll back
-        ]):
+        # Two scroll passes: forward (down through the list) then reverse
+        # (back up) in case we scrolled past the target. Big swipes cover
+        # the whole grid in few steps.
+        for phase, swipes in enumerate([14, 9]):
             log.debug("select_brawler phase %d: %d swipes", phase, swipes)
             for i in range(swipes):
                 screenshot = self.window_controller.screenshot()
@@ -231,15 +218,17 @@ class LobbyAutomation:
                     time.sleep(1.5)
                     log.info("brawler %r selection completed", brawler)
                     return
-                # Swipe to scroll within the menu.
-                start_y = 900 if phase == 0 else dy_start
-                end_y = dy_start if phase == 0 else dy_step
-                self.window_controller.swipe(
-                    int(1700 * wr), int(start_y * hr),
-                    int(1700 * wr), int(end_y * hr),
-                    duration=0.8,
-                )
-                time.sleep(0.6)
+                # Scroll the grid with a LARGE swipe in the centre column.
+                # The old swipe was tiny (~50px) and over the right-hand
+                # cards, so it registered as a TAP and opened a brawler's
+                # detail page instead of scrolling.
+                cx = int(960 * wr)
+                if phase == 0:                      # scroll down the list
+                    sy, ey = int(800 * hr), int(300 * hr)
+                else:                               # scroll back up
+                    sy, ey = int(300 * hr), int(800 * hr)
+                self.window_controller.swipe(cx, sy, cx, ey, duration=0.5)
+                time.sleep(0.8)
 
         # Not found anywhere — fail this attempt; outer loop will retry.
         raise ValueError(f"Brawler '{brawler}' not found in menu OCR.")

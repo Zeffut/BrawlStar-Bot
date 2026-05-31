@@ -605,21 +605,15 @@ def _bootstrap_linux() -> bool:
             # State-specific stuck recovery (>=2 iterations on the same screen).
             if same_state_count >= 2:
                 if state in ("shop", "brawler_selection", "popup"):
-                    log.info("stuck in state=%s for %d iters -> home button + BACK",
+                    log.info("stuck in state=%s for %d iters -> home button",
                              state, same_state_count + 1)
-                    # BS/Unity ignores the Android BACK key on most screens
-                    # (shop, brawler menu, Trophy Road…), so BACK alone loops
-                    # forever. The top-right home button reliably returns to
-                    # the lobby; try it first, then BACK for modal popups.
+                    # The top-right home button reliably returns to the lobby.
+                    # Never BACK: BS/Unity ignores it on sub-screens AND it
+                    # pops a "Quit Brawl Stars?" dialog at the lobby.
                     sw, sh = img.width, img.height
                     subprocess.run(
                         [adb, "-s", serial, "shell", "input", "tap",
                          str(int(sw * 0.952)), str(int(sh * 0.065))],
-                        timeout=5,
-                    )
-                    time.sleep(1.2)
-                    subprocess.run(
-                        [adb, "-s", serial, "shell", "input", "keyevent", "4"],
                         timeout=5,
                     )
                     time.sleep(1.5)
