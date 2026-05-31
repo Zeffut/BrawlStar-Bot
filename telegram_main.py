@@ -573,6 +573,7 @@ class BotRunner:
 
         wc = main_instance.window_controller
         deadline = time.time() + 10
+        single_fallback = None
         while time.time() < deadline:
             try:
                 frame = wc.screenshot()
@@ -597,14 +598,23 @@ class BotRunner:
                 up = _Image.fromarray(clean).resize(
                     (clean.shape[1] * 4, clean.shape[0] * 4)
                 )
+                cands = []
                 for key in extract_text_and_positions(np.array(up)).keys():
                     d = ''.join(c for c in key if c.isdigit())
                     if d and 0 < int(d) <= 9999:
-                        return int(d)
+                        cands.append(d)
+                # Prefer a multi-digit reading (trophy counts are 2-4 digits).
+                # Returning the first token would sometimes catch a stray "1"
+                # from the rank badge / cup icon, seeding the session wrong.
+                multi = [c for c in cands if len(c) >= 2]
+                if multi:
+                    return int(max(multi, key=lambda s: (len(s), int(s))))
+                if cands and single_fallback is None:
+                    single_fallback = int(cands[0])
             except Exception as exc:
                 log.warning("_read_brawler_trophies error: %s", exc)
             time.sleep(0.5)
-        return None
+        return single_fallback
 
     def _install_match_hook(self, main_instance) -> None:
         """Wrap Trophy_observer.add_trophies to push a Telegram log line
