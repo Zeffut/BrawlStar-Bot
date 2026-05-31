@@ -1,0 +1,8 @@
+# Copie ce fichier vers cfg/imap.toml (gitignored) et remplis-le.
+# Pour Gmail : active la 2FA puis crée un "mot de passe d'application"
+#   (myaccount.google.com → Sécurité → Mots de passe des applications).
+#   Active aussi IMAP dans Gmail (Paramètres → Transfert et POP/IMAP).
+host = "imap.gmail.com"
+port = 993
+user = "tom77ds@gmail.com"
+password = "xxxx xxxx xxxx xxxx"   # mot de passe d'application Gmail (16 car.)
