@@ -27,3 +27,4 @@ venv/
 cfg/lockscreen.toml
 cfg/alerts.toml
 cfg/device.toml
+revente/captures/
