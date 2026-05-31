@@ -65,16 +65,26 @@ class LobbyAutomation:
         leading/trailing chars (e.g. `?colt`).
         """
         target = target.lower().strip()
+        if not target:
+            return None
         best: tuple[float, str] | None = None
         for c in candidates:
             c_norm = c.lower().strip()
-            if not c_norm:
+            # Skip empty + pure-number tokens (trophy counts).
+            if not c_norm or c_norm.replace(".", "").isdigit():
                 continue
-            # Skip purely-numeric strings (trophy counts).
-            if c_norm.replace(".", "").isdigit():
+            # Exact match wins (also covers short names like "bo").
+            if c_norm == target:
+                return c
+            # Skip stray short fragments — a lone 'a'/'i' must NOT match a
+            # long name. (This is what made 'a' "match" barley and tap junk.)
+            if len(c_norm) < 3:
                 continue
-            # Substring match wins immediately.
-            if target in c_norm or c_norm in target:
+            # OCR appends junk (trophy count, badges); accept when the FULL
+            # target name appears inside the token. We do NOT accept the
+            # reverse (token as a substring of target) — that's the unsafe
+            # direction that let 'a' match 'barley'.
+            if len(target) >= 3 and target in c_norm:
                 return c
             ratio = difflib.SequenceMatcher(None, target, c_norm).ratio()
             if ratio >= min_ratio and (best is None or ratio > best[0]):
