@@ -82,9 +82,25 @@ class LobbyAutomation:
         return best[1] if best else None
 
     def _reset_to_lobby(self) -> None:
-        """Press BACK a couple of times to close any open menus."""
+        """Return to the lobby from any sub-screen.
+
+        BS/Unity ignores the Android BACK key on many screens (notably the
+        Trophy Road), so the bot used to get permanently stuck there. We
+        first tap the home/lobby button in the top-right corner — it's
+        present on virtually every sub-screen and reliably returns to the
+        lobby — then fall back to BACK for the few menus without it.
+        """
+        wc = self.window_controller
         try:
-            serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
+            fw, fh = wc.width or 0, wc.height or 0
+            if fw and fh:
+                # Home button sits in the top-right corner (~95% width, ~6.5% height).
+                wc.click(int(fw * 0.952), int(fh * 0.065))
+                time.sleep(1.2)
+        except Exception as exc:
+            log.warning("reset_to_lobby: home-button tap failed: %s", exc)
+        try:
+            serial = getattr(wc, "device_serial", None) or device.adb_serial()
             for _ in range(2):
                 subprocess.run(
                     ["adb", "-s", serial, "shell", "input", "keyevent", "4"],
@@ -92,33 +108,79 @@ class LobbyAutomation:
                 )
                 time.sleep(0.6)
             time.sleep(1.0)
-            log.debug("reset_to_lobby: BACK pressed")
+            log.debug("reset_to_lobby: home-button tap + BACK done")
         except Exception as exc:
             log.warning("reset_to_lobby failed: %s", exc)
 
+    def _open_brawler_menu(self) -> bool:
+        """Open the brawler-selection menu by OCR-tapping the "BRAWLERS"
+        button in the lobby. Returns True if a candidate was tapped.
+
+        Replaces the old brawler_menu_btn.png template match, which failed
+        to match above 0.5 on the current lobby and then false-matched the
+        trophy counter — opening the Trophy Road instead of the menu.
+        """
+        try:
+            shot = self.window_controller.screenshot()
+            small = shot.resize((int(shot.width * 0.65), int(shot.height * 0.65)))
+            results = extract_text_and_positions(np.array(small))
+            norm = {}
+            for k in results.keys():
+                kk = k
+                for symbol in [' ', '-', '.', '&', '_', ',']:
+                    kk = kk.replace(symbol, "")
+                norm[kk] = results[k]
+            # Match the BRAWLERS label by difflib ratio only — NOT the
+            # substring shortcut in _fuzzy_match (a single 'a' is a
+            # substring of "brawlers" and would match garbage). Require a
+            # reasonably long token so we don't tap a stray letter.
+            best = None
+            for k, v in norm.items():
+                if len(k) < 6:
+                    continue
+                ratio = difflib.SequenceMatcher(None, "brawlers", k).ratio()
+                if ratio >= 0.6 and (best is None or ratio > best[0]):
+                    best = (ratio, k, v)
+            if best is None:
+                log.debug("_open_brawler_menu: 'brawlers' not OCR'd; keys=%s",
+                          list(norm.keys())[:20])
+                return False
+            match = best[1]
+            bx, by = best[2]['center']
+            real_x, real_y = int(bx * 1.5385), int(by * 1.5385)
+            log.info("opening brawler menu via OCR %r at (%d,%d)", match, real_x, real_y)
+            self.window_controller.click(real_x, real_y)
+            time.sleep(1.5)
+            return True
+        except Exception:
+            log.exception("_open_brawler_menu failed")
+            return False
+
     def _select_brawler_once(self, brawler):
-        self.window_controller.screenshot()
-        brawler_menu_treshold = 0.8
-        found = False
-        brawler_menu_btn_coords = None
-        while not found:
-            brawler_menu_btn_coords = find_template_center(self.window_controller.screenshot(), load_image(
-                r'state_finder/images_to_detect/brawler_menu_btn.png', self.window_controller.scale_factor),
-                                                           brawler_menu_treshold)
-            if brawler_menu_btn_coords:
-                found = True
-            else:
+        # Open the brawler-selection menu. Prefer OCR (robust to layout
+        # and capture scale); fall back to the template only down to 0.6
+        # — below that it false-matches the trophy counter and opens the
+        # Trophy Road instead.
+        if not self._open_brawler_menu():
+            brawler_menu_treshold = 0.8
+            brawler_menu_btn_coords = None
+            while brawler_menu_treshold >= 0.6:
+                brawler_menu_btn_coords = find_template_center(
+                    self.window_controller.screenshot(),
+                    load_image(r'state_finder/images_to_detect/brawler_menu_btn.png',
+                               self.window_controller.scale_factor),
+                    brawler_menu_treshold)
+                if brawler_menu_btn_coords:
+                    break
                 log.debug("brawler menu button not found at threshold=%.2f", brawler_menu_treshold)
                 brawler_menu_treshold -= 0.1
                 time.sleep(1)
-            if not found and brawler_menu_treshold < 0.5:
-                image = self.window_controller.screenshot()
-                image.save(r'brawler_menu_btn_not_found.png')
-                raise ValueError("Brawler menu button not found on screen, even at low threshold.")
-        x, y = brawler_menu_btn_coords
-        log.debug("clicking brawler menu button at (%d,%d)", x, y)
-        self.window_controller.click(x, y)
-        time.sleep(1.2)  # menu open animation
+            if not brawler_menu_btn_coords:
+                raise ValueError("Brawler menu button not found (OCR + template ≥0.6).")
+            x, y = brawler_menu_btn_coords
+            log.debug("clicking brawler menu button (template) at (%d,%d)", x, y)
+            self.window_controller.click(x, y)
+            time.sleep(1.2)  # menu open animation
         wr = self.window_controller.width_ratio
         hr = self.window_controller.height_ratio
 
