@@ -559,7 +559,15 @@ class BotRunner:
                 except Exception:
                     pass
                 try:
-                    cloud_sync.session_end(self._session_id, "stopped", end_trophies)
+                    _tag = None
+                    try:
+                        if self._account_id is not None:
+                            _acc = db.get_account(self._account_id)
+                            _tag = _acc["tag"] if _acc else None
+                    except Exception:
+                        pass
+                    cloud_sync.session_end(self._session_id, "stopped",
+                                           end_trophies, tag=_tag)
                 except Exception:
                     log.exception("cloud session_end push failed")
                 self._session_id = None

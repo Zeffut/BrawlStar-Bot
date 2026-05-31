@@ -96,13 +96,17 @@ def sync_session_start(payload: SessionStartPayload, authorization: str | None =
     _require_auth(authorization)
     inst = db.upsert_instance(payload.instance_id)
     acc = db.upsert_account(inst, payload.tag, None)
+    # Close any stale 'running' sessions first — a worker runs one session
+    # at a time, and restarts can orphan the previous cloud session.
+    db.end_running_sessions(acc, "stopped")
     sid = db.start_session(acc, payload.brawler, payload.target_trophies,
                            payload.start_trophies, payload.started_at)
     return {"ok": True, "session_id": sid}
 
 
 class SessionEndPayload(BaseModel):
-    session_id: int
+    session_id: int | None = None
+    tag: str | None = None
     status: str = "stopped"
     end_trophies: int | None = None
     ended_at: float | None = None
@@ -111,7 +115,14 @@ class SessionEndPayload(BaseModel):
 @app.post("/api/sync/session_end")
 def sync_session_end(payload: SessionEndPayload, authorization: str | None = Header(None)) -> dict:
     _require_auth(authorization)
-    db.end_session(payload.session_id, payload.status, payload.end_trophies, payload.ended_at)
+    if payload.session_id is not None:
+        db.end_session(payload.session_id, payload.status, payload.end_trophies, payload.ended_at)
+    # Fallback: if the worker lost the local→cloud id map (restart), close
+    # any lingering 'running' sessions for the account by tag.
+    if payload.tag:
+        norm = payload.tag.lstrip("#").upper()
+        for r in db.conn().execute("SELECT id FROM accounts WHERE tag = ?", (norm,)).fetchall():
+            db.end_running_sessions(r["id"], payload.status, payload.ended_at)
     return {"ok": True}
 
 

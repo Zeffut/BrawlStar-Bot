@@ -370,6 +370,26 @@ def end_session(session_id: int, status: str = "stopped",
         )
 
 
+def end_running_sessions(account_id: int, status: str = "stopped",
+                         ended_at: float | None = None,
+                         except_id: int | None = None) -> int:
+    """Mark every still-'running' session of an account as ended.
+
+    Workers run one session at a time, and the local→cloud session-id map
+    is in-memory (lost on worker restart), so a crashed/restarted grind can
+    leave the cloud session stuck 'running'. Closing stale running rows when
+    a new session starts (or on stop) keeps the panel honest.
+    """
+    with _lock:
+        cur = conn().execute(
+            "UPDATE sessions SET ended_at = ?, status = ? "
+            "WHERE account_id = ? AND status = 'running' "
+            "AND (? IS NULL OR id != ?)",
+            (ended_at or time.time(), status, account_id, except_id, except_id),
+        )
+        return cur.rowcount
+
+
 def list_sessions(account_id: int, limit: int = 50) -> list[dict]:
     with _lock:
         rows = conn().execute(

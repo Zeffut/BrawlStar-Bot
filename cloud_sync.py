@@ -98,12 +98,16 @@ def session_start(tag: str, brawler: str, target: int,
 
 
 def session_end(local_session_id: int, status: str = "stopped",
-                end_trophies: int | None = None) -> None:
+                end_trophies: int | None = None, tag: str | None = None) -> None:
+    # cloud_sid may be None if the worker restarted since session_start (the
+    # map is in-memory). Post anyway with the tag so the cloud can close the
+    # account's lingering 'running' sessions instead of leaving them stuck.
     cloud_sid = _session_map.pop(local_session_id, None)
-    if cloud_sid is None:
+    if cloud_sid is None and not tag:
         return
     _post("/api/sync/session_end", {
         "session_id": cloud_sid,
+        "tag": tag,
         "status": status,
         "end_trophies": end_trophies,
         "ended_at": time.time(),
