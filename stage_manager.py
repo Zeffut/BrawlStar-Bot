@@ -174,21 +174,42 @@ class StageManager:
         except Exception:
             self.window_controller.click(cx, cy, already_include_ratio=True)
 
+    def _restart_brawlstars(self, reason: str):
+        """Force-stop + relaunch Brawl Stars to bail out of a screen the bot
+        can't dismiss (e.g. an unopenable star drop). The grind resumes at
+        the lobby; any pending reward stays claimable manually."""
+        import subprocess
+        serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
+        log.warning("restarting Brawl Stars (%s)", reason)
+        try:
+            subprocess.run(["adb", "-s", serial, "shell", "am", "force-stop",
+                            "com.supercell.brawlstars"], timeout=5, check=False)
+            time.sleep(2)
+            subprocess.run(["adb", "-s", serial, "shell", "am", "start", "-n",
+                            "com.supercell.brawlstars/.GameApp"], timeout=10, check=False)
+            time.sleep(8)
+        except Exception as exc:
+            log.warning("Brawl Stars restart failed: %s", exc)
+
     def click_star_drop(self):
-        log.info("state=star_drop → long-press center")
-        # "TAP AND HOLD" / "TOUCHEZ ET MAINTENEZ" — needs a real long-press
-        # at screen center.
-        # scrcpy.control.touch DOWN+UP is silently ignored by Brawl Stars
-        # (Unity touch filter). ADB `input swipe X Y X Y 4000` is treated as
-        # a proper long-press by BlueStacks and works reliably.
+        # "TAP AND HOLD" / "TOUCHEZ ET MAINTENEZ" — needs a real long-press.
+        # On physical phones BS/Unity silently ignores the synthesized hold
+        # (ADB `input swipe`/`motionevent` both fail; it only works on
+        # BlueStacks), so the star drop can't be opened via ADB. After a few
+        # tries, bail out by restarting the app so the grind resumes instead
+        # of stalling here forever — the star drop stays pending.
         import subprocess
         sw = self.window_controller.width or 1920
         sh = self.window_controller.height or 1080
         cx, cy = sw // 2, sh // 2
-        duration_ms = 4000 if self.long_press_star_drop == "yes" else 50
-        # Pick the connected ADB device serial (works for BlueStacks
-        # emulator-5554 and physical phones alike).
         serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
+        self._star_drop_attempts = getattr(self, "_star_drop_attempts", 0) + 1
+        if self._star_drop_attempts >= 3:
+            self._star_drop_attempts = 0
+            self._restart_brawlstars("star drop can't be opened via ADB")
+            return
+        log.info("state=star_drop → long-press center (try %d)", self._star_drop_attempts)
+        duration_ms = 4000 if self.long_press_star_drop == "yes" else 50
         try:
             subprocess.run(
                 ["adb", "-s", serial, "shell", "input", "swipe",
@@ -207,7 +228,7 @@ class StageManager:
         
         found_game_result = False
         current_state = get_state(screenshot)
-        max_end_attempts = 30
+        max_end_attempts = 12
         end_attempts = 0
         while current_state == "end" and end_attempts < max_end_attempts:
             if not found_game_result and time.time() - self.time_since_last_stat_change > 10:
@@ -220,6 +241,12 @@ class StageManager:
             screenshot = self.window_controller.screenshot()
             current_state = get_state(screenshot)
             end_attempts += 1
+        # Still stuck on the post-match screen — almost always an unopenable
+        # star drop ("TOUCHEZ ET MAINTENEZ") that Unity won't accept a
+        # synthesized hold for on a physical phone. Bail out by restarting
+        # Brawl Stars so the grind resumes at the lobby.
+        if current_state in ("end", "star_drop"):
+            self._restart_brawlstars(f"stuck on {current_state} after {end_attempts} tries")
 
     def quit_shop(self):
         self.window_controller.click(100*self.window_controller.width_ratio, 60*self.window_controller.height_ratio)
@@ -236,6 +263,8 @@ class StageManager:
     def do_state(self, state, data=None):
         if state in self.states:
             log.debug("do_state: %s", state)
+            if state != "star_drop":
+                self._star_drop_attempts = 0
             try:
                 self.states[state](data)
             except TypeError:

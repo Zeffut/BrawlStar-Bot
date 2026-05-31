@@ -619,6 +619,26 @@ def _bootstrap_linux() -> bool:
                     time.sleep(1.5)
                     continue
                 elif state == "star_drop":
+                    # On physical phones the synthesized long-press is ignored
+                    # by Unity, so the star drop can't be opened. Try a couple
+                    # of times, then bail out by restarting BS (drop stays
+                    # pending) so boot doesn't stall here forever.
+                    if same_state_count >= 4:
+                        log.warning("stuck in star_drop (%d iters) — long-press "
+                                    "ineffective -> force-stop + relaunch BS",
+                                    same_state_count + 1)
+                        subprocess.run(
+                            [adb, "-s", serial, "shell", "am", "force-stop",
+                             "com.supercell.brawlstars"], timeout=5,
+                        )
+                        time.sleep(2)
+                        subprocess.run(
+                            [adb, "-s", serial, "shell", "am", "start", "-n",
+                             "com.supercell.brawlstars/.GameApp"], timeout=10,
+                        )
+                        time.sleep(5)
+                        same_state_count = 0
+                        continue
                     log.info("stuck in star_drop -> long-press center")
                     # 1080-height phone: center is (sw/2, sh/2). Use 4s long-press.
                     sw = img.width
