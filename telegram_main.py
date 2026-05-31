@@ -162,6 +162,7 @@ def _try_resume_session(bot) -> None:
             owned_brawlers=state.get("owned_brawlers"),
             max_matches=state.get("max_matches"),
             target_total_trophies=state.get("target_total_trophies"),
+            per_brawler_max_trophies=state.get("per_brawler_max_trophies"),
         )
         log.info("resume result: ok=%s msg=%s", ok, msg)
         if not ok:
@@ -215,7 +216,8 @@ class BotRunner:
               mode: str = "single",
               owned_brawlers: list[dict] | None = None,
               max_matches: int | None = None,
-              target_total_trophies: int | None = None) -> tuple[bool, str]:
+              target_total_trophies: int | None = None,
+              per_brawler_max_trophies: int | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
         mode = "single"   → push one brawler to a fixed target (current behaviour)
@@ -256,7 +258,8 @@ class BotRunner:
             if mode == "push_max":
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
-                self._push_max = PushMaxStrategy.from_owned(owned_brawlers)
+                self._push_max = PushMaxStrategy.from_owned(
+                    owned_brawlers, brawler_max_trophies=per_brawler_max_trophies)
                 # Pick the starter brawler from the strategy.
                 first = self._push_max.pick_next()
                 if first is None:
@@ -291,6 +294,7 @@ class BotRunner:
                 "trophies": trophies,
                 "max_matches": max_matches,
                 "target_total_trophies": target_total_trophies,
+                "per_brawler_max_trophies": per_brawler_max_trophies,
                 "owned_brawlers": owned_brawlers,
                 "started_at": time.time(),
             })

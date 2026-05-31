@@ -628,6 +628,8 @@ def _cmd_session_push_max(args: dict) -> dict:
     body = {}
     if args.get("target_total_trophies") is not None:
         body["target_total_trophies"] = int(args["target_total_trophies"])
+    if args.get("per_brawler_max_trophies") is not None:
+        body["per_brawler_max_trophies"] = int(args["per_brawler_max_trophies"])
     # Local endpoint calls fetch_account_profile → cloud → flaresolverr,
     # which can take 12-15s on a cold call. Allow up to 90s.
     return _local_post(f"/api/accounts/{aid}/push_max", body, timeout=90)

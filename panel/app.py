@@ -150,6 +150,7 @@ def api_start(account_id: int, payload: StartPayload) -> dict:
 
 class PushMaxPayload(BaseModel):
     target_total_trophies: int | None = None
+    per_brawler_max_trophies: int | None = None
 
 
 def _wait_for_game_api(max_wait_s: float = 90) -> bool:
@@ -188,14 +189,18 @@ def api_push_max(account_id: int, payload: PushMaxPayload | None = None) -> dict
     if not profile["brawlers"]:
         raise HTTPException(503, "Could not fetch brawler list from brawlace")
     target = payload.target_total_trophies if payload else None
+    per_brawler_cap = payload.per_brawler_max_trophies if payload else None
     ok, msg = worker.runner.start(
         brawler=profile["brawlers"][0]["name"],  # placeholder, strategy overrides
         trophies=99999, wins=0,
         mode="push_max", owned_brawlers=profile["brawlers"],
         target_total_trophies=target,
+        per_brawler_max_trophies=per_brawler_cap,
     )
-    log.info("push_max start result: ok=%s msg=%s", ok, msg)
-    return {"ok": ok, "msg": msg, "target_total_trophies": target}
+    log.info("push_max start result: ok=%s msg=%s (per_brawler_cap=%s)",
+             ok, msg, per_brawler_cap)
+    return {"ok": ok, "msg": msg, "target_total_trophies": target,
+            "per_brawler_max_trophies": per_brawler_cap}
 
 
 @app.get("/api/accounts/{account_id}/push_max_state")

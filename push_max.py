@@ -97,19 +97,29 @@ class PushMaxStrategy:
     defeat_limit: int = DEFAULT_DEFEAT_LIMIT
     stagnation_window: int = STAGNATION_WINDOW
     current: str | None = None
+    # Global per-brawler trophy cap: when a brawler reaches this many
+    # trophies, it's marked exhausted and the bot moves to the next one.
+    # None = no cap (push until stagnation, the original behavior).
+    brawler_max_trophies: int | None = None
 
     @classmethod
     def from_owned(cls, owned: list[dict],
-                   defeat_limit: int = DEFAULT_DEFEAT_LIMIT) -> "PushMaxStrategy":
+                   defeat_limit: int = DEFAULT_DEFEAT_LIMIT,
+                   brawler_max_trophies: int | None = None) -> "PushMaxStrategy":
         """Build a strategy from the brawlace `fetch_owned_brawlers` list."""
-        state = cls(defeat_limit=defeat_limit)
+        state = cls(defeat_limit=defeat_limit,
+                    brawler_max_trophies=brawler_max_trophies)
         for b in owned:
             name = b["name"]
-            state.brawlers[name] = BrawlerState(
+            bs = BrawlerState(
                 name=name,
                 trophies=b.get("trophies", 0),
                 tier=get_tier(name),
             )
+            # Already at/above the cap → don't bother picking it.
+            if brawler_max_trophies is not None and bs.trophies >= brawler_max_trophies:
+                bs.exhausted = True
+            state.brawlers[name] = bs
         log.info("PushMax built with %d brawlers (S=%d A=%d B=%d C=%d)",
                  len(state.brawlers),
                  sum(1 for b in state.brawlers.values() if b.tier == "S"),
@@ -159,6 +169,13 @@ class PushMaxStrategy:
         b.trophies = trophies_after
         b.matches_played += 1
         b.deltas.append(delta)
+        # Per-brawler trophy cap reached → done with this brawler, move on.
+        if (self.brawler_max_trophies is not None
+                and b.trophies >= self.brawler_max_trophies):
+            b.exhausted = True
+            log.info("PushMax: %s reached cap (%d/%d) — moving to next brawler",
+                     b.name, b.trophies, self.brawler_max_trophies)
+            return
         if result == "defeat":
             b.defeat_streak += 1
         else:
