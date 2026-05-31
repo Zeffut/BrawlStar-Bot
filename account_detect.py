@@ -318,14 +318,32 @@ _NAME_RE = re.compile(
 )
 
 
-def fetch_account_profile(tag: str, timeout: float = 30.0) -> dict:
+# In-process cache for the (rate-limited) brawlace profile. Brawlace via
+# flaresolverr returns 403/504 if hit too often, and the profile barely
+# changes minute-to-minute, so we serve a cached copy for a while and only
+# re-fetch when stale. On a fetch failure we serve the last good copy
+# rather than an empty list (so push_max can still start, etc.).
+_PROFILE_CACHE: dict = {}            # tag -> (ts, profile)
+_PROFILE_TTL_S = 300.0               # 5 min
+
+
+def fetch_account_profile(tag: str, timeout: float = 30.0, *, force: bool = False) -> dict:
     """Return {"name": "zeffut2.0", "brawlers": [...]} for the account.
 
+    Cached for `_PROFILE_TTL_S`; pass force=True to bypass (periodic refresh).
     Goes through the cloud panel `/api/util/brawler_profile/{tag}` which
     proxies brawlace through flaresolverr (bypasses Cloudflare).
-    Falls back to direct brawlace (likely 403) if cloud unreachable.
+    Falls back to direct brawlace, then to the last cached copy.
     """
+    import time as _t
     tag = tag.lstrip("#").upper()
+    now = _t.time()
+    cached = _PROFILE_CACHE.get(tag)
+    # Fresh cache → skip the API entirely (this is the rate-limit guard).
+    if cached and not force and (now - cached[0]) < _PROFILE_TTL_S:
+        log.debug("profile cache hit for %s (%.0fs old)", tag, now - cached[0])
+        return cached[1]
+
     cloud_url = _cloud_url()
     if cloud_url:
         url = f"{cloud_url.rstrip('/')}/api/util/brawler_profile/{tag}"
@@ -334,32 +352,49 @@ def fetch_account_profile(tag: str, timeout: float = 30.0) -> dict:
             resp = requests.get(url, timeout=timeout)
             if resp.status_code == 200:
                 j = resp.json()
-                return {"name": j.get("name"), "brawlers": j.get("brawlers", [])}
-            log.warning("cloud profile endpoint HTTP %d: %s", resp.status_code, resp.text[:200])
+                prof = {"name": j.get("name"), "brawlers": j.get("brawlers", [])}
+                if prof["brawlers"]:
+                    _PROFILE_CACHE[tag] = (now, prof)
+                    return prof
+                # Empty list (brawlace hiccup) — prefer stale cache below.
+                log.warning("cloud profile returned 0 brawlers for %s", tag)
+            else:
+                log.warning("cloud profile endpoint HTTP %d: %s", resp.status_code, resp.text[:200])
         except Exception as exc:
             log.warning("cloud profile request failed: %s", exc)
-    # Fallback: direct (will probably 403 due to Cloudflare).
-    url = f"https://brawlace.com/players/{tag}"
-    log.info("fallback: direct brawlace %s", url)
-    try:
-        resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-    except requests.RequestException as exc:
-        log.warning("brawlace request failed: %s", exc)
-        return {"name": None, "brawlers": []}
-    if resp.status_code != 200:
-        log.warning("brawlace returned HTTP %d", resp.status_code)
-        return {"name": None, "brawlers": []}
-    name_match = _NAME_RE.search(resp.text)
-    name = name_match.group(1).strip() if name_match else None
-    brawlers: List[dict] = []
-    for _img_name, display_name, power, trophies in _ROW_RE.findall(resp.text):
-        brawlers.append({
-            "name": display_name.strip().lower(),
-            "power": int(power),
-            "trophies": int(trophies),
-        })
-    log.info("brawlace profile parsed: name=%r brawlers=%d", name, len(brawlers))
-    return {"name": name, "brawlers": brawlers}
+    else:
+        # Fallback: direct (will probably 403 due to Cloudflare).
+        url = f"https://brawlace.com/players/{tag}"
+        log.info("fallback: direct brawlace %s", url)
+        try:
+            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
+            if resp.status_code == 200:
+                name_match = _NAME_RE.search(resp.text)
+                name = name_match.group(1).strip() if name_match else None
+                brawlers: List[dict] = []
+                for _img_name, display_name, power, trophies in _ROW_RE.findall(resp.text):
+                    brawlers.append({
+                        "name": display_name.strip().lower(),
+                        "power": int(power),
+                        "trophies": int(trophies),
+                    })
+                log.info("brawlace profile parsed: name=%r brawlers=%d", name, len(brawlers))
+                if brawlers:
+                    prof = {"name": name, "brawlers": brawlers}
+                    _PROFILE_CACHE[tag] = (now, prof)
+                    return prof
+            else:
+                log.warning("brawlace returned HTTP %d", resp.status_code)
+        except requests.RequestException as exc:
+            log.warning("brawlace request failed: %s", exc)
+
+    # Everything failed → serve the last good profile instead of empty, so
+    # callers (push_max start, seeding) keep working through a rate-limit.
+    if cached:
+        log.warning("profile fetch failed for %s — serving cached copy (%.0fs old)",
+                    tag, now - cached[0])
+        return cached[1]
+    return {"name": None, "brawlers": []}
 
 
 def _cloud_url() -> str | None:
