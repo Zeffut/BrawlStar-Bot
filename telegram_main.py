@@ -499,6 +499,14 @@ class BotRunner:
                             _self.cooldown_start_time = time.time()
                             _self.Stage_manager.states['lobby'] = lambda: 0
                     if _self.in_cooldown:
+                        # Stop requested. Exit as soon as we're NOT in a match
+                        # (nothing to finish) — keeps a soft stop near-instant
+                        # at the lobby instead of idling for the full cooldown.
+                        # If a match is in progress, finish it, then the next
+                        # non-match iteration breaks (cooldown_duration is just
+                        # a hard safety cap).
+                        if _self.state != "match":
+                            break
                         if time.time() - _self.cooldown_start_time >= _self.cooldown_duration:
                             break
                     if abs(s_time - time.time()) > 1:
