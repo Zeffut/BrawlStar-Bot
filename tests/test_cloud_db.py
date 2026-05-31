@@ -66,6 +66,22 @@ def test_accounts_needing_refresh(cdb):
     assert fresh not in ids, "fresh account should NOT need refresh"
 
 
+def test_latest_account_trophies(cdb):
+    inst = cdb.upsert_instance("x", "X")
+    acc = cdb.upsert_account(inst, "T", None)
+    # No match yet → None (caller falls back to brawler sum).
+    assert cdb.latest_account_trophies(acc) is None
+    s = cdb.start_session(acc, "bea", 5000, 100, time.time())
+    base = time.time()
+    cdb.log_match(acc, s, "bea", "victory", 100, 110, 1010, timestamp=base)
+    cdb.log_match(acc, s, "bea", "victory", 110, 118, 1018, timestamp=base + 1)
+    # Most recent match wins, even though an older one exists.
+    assert cdb.latest_account_trophies(acc) == 1018
+    # A later match that didn't record a total must not shadow the last known.
+    cdb.log_match(acc, s, "bea", "draw", 118, 118, None, timestamp=base + 2)
+    assert cdb.latest_account_trophies(acc) == 1018
+
+
 def test_end_running_sessions(cdb):
     inst = cdb.upsert_instance("hp-mi9t", "HP")
     a1 = cdb.upsert_account(inst, "AAA", None)

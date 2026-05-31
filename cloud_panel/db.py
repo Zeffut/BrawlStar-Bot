@@ -456,6 +456,25 @@ def recent_matches(account_id: int, limit: int = 200) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def latest_account_trophies(account_id: int) -> int | None:
+    """Account-wide trophy total kept live by per-match deltas.
+
+    The worker adds each match's trophy delta to this running total and
+    pushes it on every match end (`account_trophies_after`) — no external
+    API call. It's therefore the freshest source for the displayed total,
+    ahead of the periodic brawlace brawler-list refresh. Returns None when
+    no match has recorded a total yet (fall back to the brawler sum).
+    """
+    with _lock:
+        row = conn().execute(
+            "SELECT account_trophies_after FROM matches "
+            "WHERE account_id = ? AND account_trophies_after IS NOT NULL "
+            "ORDER BY timestamp DESC LIMIT 1",
+            (account_id,),
+        ).fetchone()
+    return row[0] if row and row[0] is not None else None
+
+
 def win_rate_by_brawler(account_id: int) -> list[dict]:
     with _lock:
         rows = conn().execute(

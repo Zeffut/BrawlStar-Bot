@@ -922,7 +922,12 @@ async function refreshSessionState() {
       const brawlers = s.brawlers || [];
       const total = brawlers.length;
       const done = brawlers.filter(b => b.exhausted).length;
-      const current = brawlers.find(b => !b.exhausted);
+      // Show the brawler the worker is ACTUALLY playing (summary.current),
+      // not just the first non-exhausted one in the list (which was showing a
+      // 900+ brock the strategy never picks). Fall back to first-active.
+      const curName = s.summary && s.summary.current;
+      const current = (curName && brawlers.find(b => b.name === curName))
+        || brawlers.find(b => !b.exhausted);
       const targetTxt = s.target_total_trophies
         ? ` · target ${s.target_total_trophies} 🏆`
         : "";

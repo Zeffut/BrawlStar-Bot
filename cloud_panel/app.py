@@ -372,6 +372,16 @@ def api_instances() -> list[dict]:
     return out
 
 
+def _account_total_trophies(account_id: int, brawlers: list[dict] | None) -> int | None:
+    """Live account trophy total: the per-match running total when available
+    (updated by delta on every match end, no API hit), else the cached
+    brawler-list sum, else None."""
+    live = db.latest_account_trophies(account_id)
+    if live is not None:
+        return live
+    return sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
+
+
 @app.get("/api/accounts")
 def api_accounts(instance_id: int | None = None) -> list[dict]:
     accs = db.list_accounts(instance_id)
@@ -380,7 +390,7 @@ def api_accounts(instance_id: int | None = None) -> list[dict]:
     for a in accs:
         a["session_running"] = bool(db.current_session(a["id"]))
         brawlers, _ = db.get_account_brawlers(a["id"])
-        a["total_trophies"] = sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
+        a["total_trophies"] = _account_total_trophies(a["id"], brawlers)
     return accs
 
 
@@ -417,7 +427,7 @@ def api_account_dashboard(account_id: int, matches_limit: int = 200) -> dict:
     acc["win_rate_by_brawler"] = db.win_rate_by_brawler(account_id)
     matches = db.recent_matches(account_id, limit=matches_limit)
     brawlers, refreshed_at = db.get_account_brawlers(account_id)
-    total_trophies = sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
+    total_trophies = _account_total_trophies(account_id, brawlers)
     return {
         "account": acc,
         "matches": matches,
@@ -477,7 +487,7 @@ def fleet_overview() -> dict:
     total_trophies = 0
     for a in accs:
         brawlers, _ = db.get_account_brawlers(a["id"])
-        total_trophies += sum(b.get("trophies", 0) for b in brawlers)
+        total_trophies += _account_total_trophies(a["id"], brawlers) or 0
     # Today's matches across all accounts.
     today_matches = db.conn().execute(
         "SELECT result, COUNT(*) AS n FROM matches WHERE timestamp >= ? GROUP BY result",
@@ -746,7 +756,7 @@ def api_account_brawlers(account_id: int) -> dict:
     authoritative trophy count for the account.
     """
     brawlers, refreshed_at = db.get_account_brawlers(account_id)
-    total_trophies = sum(b.get("trophies", 0) for b in brawlers) if brawlers else None
+    total_trophies = _account_total_trophies(account_id, brawlers)
     return {
         "brawlers": brawlers,
         "total_trophies": total_trophies,
