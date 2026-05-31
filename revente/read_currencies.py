@@ -29,15 +29,21 @@ _CROPS = {
 _READER = None
 
 
-def _ocr_digits(pil_image) -> str:
-    """OCR a crop to digits via easyocr (the only engine that reads the
-    stylised Brawl Stars HUD font). Reader is lazily created once."""
+def _ocr_digits_reader():
+    """Return the lazily-created shared easyocr Reader (the only engine
+    that reads the stylised Brawl Stars HUD font)."""
     global _READER
-    import numpy as np
     if _READER is None:
         import easyocr
         _READER = easyocr.Reader(["en"], gpu=False, verbose=False)
-    res = _READER.readtext(np.array(pil_image), allowlist="0123456789", detail=0)
+    return _READER
+
+
+def _ocr_digits(pil_image) -> str:
+    """OCR a crop to digits via the shared easyocr Reader."""
+    import numpy as np
+    res = _ocr_digits_reader().readtext(np.array(pil_image),
+                                        allowlist="0123456789", detail=0)
     return "".join(res)
 
 
