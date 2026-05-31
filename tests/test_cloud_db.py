@@ -82,6 +82,21 @@ def test_latest_account_trophies(cdb):
     assert cdb.latest_account_trophies(acc) == 1018
 
 
+def test_match_stats_counts_whole_history(cdb):
+    inst = cdb.upsert_instance("x", "X")
+    acc = cdb.upsert_account(inst, "T", None)
+    s = cdb.start_session(acc, "bea", 5000, 100, time.time())
+    base = time.time()
+    results = ["victory"] * 5 + ["defeat"] * 3 + ["draw"] * 2  # 10 total
+    for i, r in enumerate(results):
+        cdb.log_match(acc, s, "bea", r, 100, 110, 110, timestamp=base + i)
+    st = cdb.match_stats(acc)
+    assert st == {"total": 10, "wins": 5, "losses": 3, "draws": 2}
+    # Empty account → all zeros (no division-by-zero downstream).
+    other = cdb.upsert_account(inst, "U", None)
+    assert cdb.match_stats(other) == {"total": 0, "wins": 0, "losses": 0, "draws": 0}
+
+
 def test_end_running_sessions(cdb):
     inst = cdb.upsert_instance("hp-mi9t", "HP")
     a1 = cdb.upsert_account(inst, "AAA", None)

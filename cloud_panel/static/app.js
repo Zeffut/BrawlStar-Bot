@@ -285,10 +285,16 @@ function _applyDashboard(dash) {
   document.getElementById("acc-instance").textContent =
     `on ${acc.instance_name || acc.instance_uid}`;
 
-  const totalWins = matches.filter(m=>m.result==="victory").length;
-  const wr = matches.length ? Math.round(totalWins/matches.length*100)+"%" : "—";
+  // Use the whole-history stats (real COUNT + win/loss) so the KPIs reflect
+  // every match, not just the recent page loaded for the table below.
+  const stats = dash.stats || {};
+  const totalMatches = stats.total != null ? stats.total : matches.length;
+  const totalWins = stats.wins != null
+    ? stats.wins
+    : matches.filter(m=>m.result==="victory").length;
+  const wr = totalMatches ? Math.round(totalWins/totalMatches*100)+"%" : "—";
   document.getElementById("kpi-sessions").textContent = (acc.sessions||[]).length;
-  document.getElementById("kpi-matches").textContent = matches.length;
+  document.getElementById("kpi-matches").textContent = totalMatches;
   document.getElementById("kpi-wr").textContent = wr;
   document.getElementById("kpi-seen").textContent = ago(acc.last_seen_at);
 
@@ -314,7 +320,7 @@ function _applyDashboard(dash) {
       <td class="${deltaClass(d)}">${d>=0?'+':''}${d}</td>
       <td>${m.trophies_before} → ${m.trophies_after}</td></tr>`;
   }
-  _updateTableCount("matches-table", shownMatches.length, matches.length);
+  _updateTableCount("matches-table", shownMatches.length, totalMatches);
 
   const st = document.querySelector("#sessions-table tbody"); st.innerHTML = "";
   const allSessions = acc.sessions || [];

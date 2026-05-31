@@ -431,6 +431,7 @@ def api_account_dashboard(account_id: int, matches_limit: int = 200) -> dict:
     return {
         "account": acc,
         "matches": matches,
+        "stats": db.match_stats(account_id),
         "brawlers": {
             "list": brawlers,
             "refreshed_at": refreshed_at,

@@ -456,6 +456,27 @@ def recent_matches(account_id: int, limit: int = 200) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def match_stats(account_id: int) -> dict:
+    """Account-wide match totals over the WHOLE history (not just the page
+    of recent matches loaded for the table). Lets the KPI show the real
+    count + win-rate without loading every match into the client."""
+    with _lock:
+        row = conn().execute(
+            "SELECT COUNT(*) AS total, "
+            "       SUM(result = 'victory') AS wins, "
+            "       SUM(result = 'defeat')  AS losses, "
+            "       SUM(result = 'draw')    AS draws "
+            "FROM matches WHERE account_id = ?",
+            (account_id,),
+        ).fetchone()
+    return {
+        "total": row["total"] or 0,
+        "wins": row["wins"] or 0,
+        "losses": row["losses"] or 0,
+        "draws": row["draws"] or 0,
+    }
+
+
 def latest_account_trophies(account_id: int) -> int | None:
     """Account-wide trophy total kept live by per-match deltas.
 
