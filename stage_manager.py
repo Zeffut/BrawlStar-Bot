@@ -192,35 +192,37 @@ class StageManager:
             log.warning("Brawl Stars restart failed: %s", exc)
 
     def click_star_drop(self):
-        # "TAP AND HOLD" / "TOUCHEZ ET MAINTENEZ" — needs a real long-press.
-        # On physical phones BS/Unity silently ignores the synthesized hold
-        # (ADB `input swipe`/`motionevent` both fail; it only works on
-        # BlueStacks), so the star drop can't be opened via ADB. After a few
-        # tries, bail out by restarting the app so the grind resumes instead
-        # of stalling here forever — the star drop stays pending.
+        # "TAP AND HOLD" / "TOUCHEZ ET MAINTENEZ". A perfectly static
+        # synthesized hold (input swipe X Y X Y) is ignored by BS on a phone;
+        # try a slow DRAG instead (a held touch *with* slight motion, like a
+        # real finger jitter). Use real DISPLAY coords (the old code used the
+        # downscaled capture size, tapping the wrong spot). If it still won't
+        # open after a couple tries, bail out by restarting BS so the grind
+        # continues (star drop stays pending, claimable manually).
         import subprocess
-        sw = self.window_controller.width or 1920
-        sh = self.window_controller.height or 1080
-        cx, cy = sw // 2, sh // 2
+        try:
+            dw, dh = device.device_size()           # (2340,1080) landscape
+        except Exception:
+            dw, dh = 2340, 1080
+        cx, cy = dw // 2, dh // 2
         serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
         self._star_drop_attempts = getattr(self, "_star_drop_attempts", 0) + 1
-        if self._star_drop_attempts >= 2:
+        if self._star_drop_attempts >= 3:
             self._star_drop_attempts = 0
-            self._restart_brawlstars("star drop can't be opened via ADB")
+            self._restart_brawlstars("star drop won't open (synthetic hold filtered)")
             return
-        log.info("state=star_drop → long-press center (try %d)", self._star_drop_attempts)
-        duration_ms = 4000 if self.long_press_star_drop == "yes" else 50
+        log.info("state=star_drop → drag-hold center %dx%d (try %d)",
+                 cx, cy, self._star_drop_attempts)
         try:
+            # Slow 3.5s drag over a small distance = a continuous held touch
+            # that moves slightly. One swipe call.
             subprocess.run(
                 ["adb", "-s", serial, "shell", "input", "swipe",
-                 str(cx), str(cy), str(cx), str(cy), str(duration_ms)],
-                timeout=duration_ms / 1000 + 3,
-                check=False,
+                 str(cx), str(cy), str(cx + 18), str(cy + 18), "3500"],
+                timeout=8, check=False,
             )
         except Exception as exc:
-            print(f"click_star_drop fallback (ADB failed: {exc})")
-            self.window_controller.click(cx, cy, delay=duration_ms / 1000.0,
-                                         already_include_ratio=True)
+            log.warning("click_star_drop drag-hold failed: %s", exc)
 
     def end_game(self):
         screenshot = self.window_controller.screenshot()

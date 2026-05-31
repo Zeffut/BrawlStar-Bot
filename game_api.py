@@ -121,11 +121,17 @@ def _ocr_trophies(arr) -> int | None:
         # Top-left trophy pill: y 0.02-0.12, x 0.10-0.22 in landscape.
         crop = arr[int(h * 0.02):int(h * 0.12), int(w * 0.10):int(w * 0.22)]
         text = extract_text_and_positions(crop)
-        # Pick the first plausible digit value.
+        # Collect all plausible digit values, then pick the LONGEST digit
+        # run (tie -> largest). The account total is the longest number in
+        # the pill; returning the first token sometimes caught a stray "75"
+        # fragment from the avatar badge instead of e.g. "2475".
+        cands = []
         for key in text.keys():
             cleaned = "".join(c for c in key if c.isdigit())
             if cleaned and 50 <= int(cleaned) <= 200000:
-                return int(cleaned)
+                cands.append(cleaned)
+        if cands:
+            return int(max(cands, key=lambda s: (len(s), int(s))))
         return None
     except Exception:
         return None
