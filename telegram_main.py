@@ -1356,6 +1356,25 @@ def main() -> int:
     # if the game isn't on the lobby screen.
     threading.Thread(target=_bootstrap_account, args=(bot,),
                      daemon=True, name="bootstrap-account").start()
+
+    # Always-on session keepalive: if a grind crashes mid-run (e.g. the
+    # capture/ADB pipe dies with "Bad file descriptor"), the run ends but
+    # the process keeps idling at the lobby. _try_resume_session re-launches
+    # the saved session (it no-ops when already running, when there's no
+    # resume state — cleared on user-stop/target-reached — or when the state
+    # is >2h old). Without this the bot could sit idle for hours.
+    def _session_keepalive():
+        import game_api as _ga
+        while True:
+            time.sleep(150)
+            try:
+                if _ga.get() is not None:
+                    _try_resume_session(bot)
+            except Exception:
+                log.exception("session-keepalive iteration crashed")
+    threading.Thread(target=_session_keepalive, daemon=True,
+                     name="session-keepalive").start()
+
     signal.signal(signal.SIGINT, lambda *a: sys.exit(0))
     bot.run()
     return 0
