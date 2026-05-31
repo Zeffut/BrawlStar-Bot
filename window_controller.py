@@ -1,4 +1,5 @@
 import atexit
+import logging
 import threading
 import time
 import cv2
@@ -10,6 +11,8 @@ import scrcpy
 from adbutils import AdbClient
 # Added resource_path to find the bundled jar
 from utils import resource_path
+
+log = logging.getLogger(__name__)
 
 
 def np_from_pil(pil_img):
@@ -203,38 +206,44 @@ class WindowController:
         if self._scrcpy_ok():
             self.scrcpy_client.control.touch(int(x), int(y), scrcpy.ACTION_UP, pointer_id)
 
-    # --- new swipe methood ---
+    # --- swipe via ADB (robust) ---
     def swipe(self, start_x, start_y, end_x, end_y, duration=0.5, steps=20):
-        """
-        Simulates a swipe gesture from (start_x, start_y) to (end_x, end_y).
-        Falls back to `adb shell input swipe` when scrcpy is not bound.
-        """
-        if not self._scrcpy_ok():
-            # ADB fallback: native swipe gesture on the device.
-            try:
-                import subprocess
-                import device as _device
-                serial = _device.adb_serial()
-                ms = max(int(duration * 1000), 1)
-                subprocess.run(
-                    ["adb", "-s", serial, "shell", "input", "swipe",
-                     str(int(start_x)), str(int(start_y)),
-                     str(int(end_x)), str(int(end_y)), str(ms)],
-                    timeout=max(duration + 3, 5), check=False,
-                )
-            except Exception:
-                pass
-            return
+        """Swipe gesture via `adb shell input swipe`.
 
-        self.touch_down(start_x, start_y, pointer_id=self.PID_ATTACK)
-        
-        for i in range(1, steps + 1):
-            curr_x = start_x + (end_x - start_x) * (i / steps)
-            curr_y = start_y + (end_y - start_y) * (i / steps)
-            self.touch_move(curr_x, curr_y, pointer_id=self.PID_ATTACK)
-            time.sleep(duration / steps)
-            
-        self.touch_up(end_x, end_y, pointer_id=self.PID_ATTACK)
+        Always uses ADB (not scrcpy's control socket): that socket silently
+        dies on WiFi-ADB / after a capture respawn and raised
+        '[Errno 9] Bad file descriptor', which crashed brawler-menu
+        scrolling and left push_max stuck. Inputs are in FRAME coords (like
+        click()); rescaled to device coords here.
+        """
+        import subprocess
+        import device as _device
+        try:
+            serial = _device.adb_serial()
+        except Exception as exc:
+            log.warning("swipe: no device (%s)", exc)
+            return
+        # Frame -> device rescale (mirror click()).
+        try:
+            dw, dh = _device.device_size()
+            fw, fh = self.width or dw, self.height or dh
+            if fw and fh and (fw != dw or fh != dh):
+                start_x = start_x * dw / fw
+                end_x = end_x * dw / fw
+                start_y = start_y * dh / fh
+                end_y = end_y * dh / fh
+        except Exception:
+            pass
+        ms = max(int(duration * 1000), 1)
+        try:
+            subprocess.run(
+                ["adb", "-s", serial, "shell", "input", "swipe",
+                 str(int(start_x)), str(int(start_y)),
+                 str(int(end_x)), str(int(end_y)), str(ms)],
+                timeout=max(duration + 3, 5), check=False,
+            )
+        except Exception as exc:
+            log.warning("swipe failed: %s", exc)
 
     def keys_down(self, keys: List[str]):
         delta_x, delta_y = 0, 0
