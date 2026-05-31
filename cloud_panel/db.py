@@ -205,6 +205,11 @@ def load_instance_snapshot(instance_id: str) -> tuple[dict | None, float | None]
 
 
 def set_account_brawlers(account_id: int, brawlers: list[dict]) -> None:
+    # Never wipe a populated cache with an empty list: a transient brawlace
+    # failure must not clear the brawlers (that breaks push_max start and
+    # makes /util/brawler_profile hang on a live re-fetch).
+    if not brawlers:
+        return
     with _lock:
         conn().execute(
             "UPDATE accounts SET brawlers_json = ?, brawlers_refreshed_at = ? WHERE id = ?",

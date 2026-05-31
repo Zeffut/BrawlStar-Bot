@@ -746,11 +746,16 @@ function _enableRemoteControl(on) {
   // Auto-refresh tighter loop only when remote is engaged so we see
   // the result of taps without spamming when idle.
   if (_remoteAutoRefresh) { clearInterval(_remoteAutoRefresh); _remoteAutoRefresh = null; }
-  if (on) _remoteAutoRefresh = setInterval(_remoteRefreshScreen, 2500);
+  if (on) _remoteAutoRefresh = setInterval(_remoteRefreshScreen, 4000);
 }
 
+let _remoteRefreshing = false;
 async function _remoteRefreshScreen() {
   if (!selectedInstanceForDevice || !_remoteEnabled) return;
+  // A live capture takes ~2s (real phone screencap over WiFi→Pi). Skip a
+  // tick if the previous one is still in flight so requests don't pile up.
+  if (_remoteRefreshing) return;
+  _remoteRefreshing = true;
   try {
     const r = await api(`/api/instances/${selectedInstanceForDevice}/screenshot?refresh=true`);
     if (r.available) {
@@ -759,6 +764,7 @@ async function _remoteRefreshScreen() {
       document.getElementById("device-screen").src = `data:${mime};base64,${b64}`;
     }
   } catch (_) { /* swallow; next tick retries */ }
+  finally { _remoteRefreshing = false; }
 }
 
 document.getElementById("remote-control-toggle").addEventListener("change", e => {
