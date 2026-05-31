@@ -614,8 +614,14 @@ git commit -m "feat(revente): bs-account-estimator skill + end-to-end orchestrat
 
 ## Phase gating summary
 - **Now (no emulator needed):** Task 1, 2, 4a → ✅ **DONE 2026-05-31 (12/12 tests green)**.
-- **After Phase 0 (BlueStacks + 1 account + ADB port):** Task 3 (calibrate), Task 6, Task 7 (live smoke test).
-- **After Phase 2 (IMAP creds + throwaway account):** Task 4b, Task 5.
+- **After Phase 0 (BlueStacks + 1 account + ADB port):** ✅ **DONE 2026-05-31**
+  - Env: adb↔BlueStacks `127.0.0.1:5555`, BS at lobby (Zeffut2.0), easyocr+requests installed.
+  - Task 3 (currency reader) ✅ live-verified (trophies 4093 / gems 3674 / gold 10484).
+  - Task 7 (orchestrator + SKILL.md) ✅ end-to-end live with `--tag`.
+  - Tag auto-detect (`read_tag.py`) = ⚠️ **best-effort only**: easyocr drops a char on the
+    stylised tag font (`PYV98LG9` vs `PYLV98LG9`); brawlace validation ~14s/call so no
+    brute-force. **Pass `--tag` for reliability.** Task 6 (collection capture) not built.
+- **After Phase 2 (IMAP creds + throwaway account):** Task 4b, Task 5 — NOT started.
 
 ## Dev environment note
 - Run tests with **`/opt/homebrew/bin/python3.11 -m pytest`** — bare `python3` resolves to Xcode's **3.9.6** which chokes on `int | None` at import. pytest was installed into 3.11 on 2026-05-31.
