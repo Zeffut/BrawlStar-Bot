@@ -29,7 +29,7 @@
 
 **Livrable :** un Google Sheets prêt à l'emploi avec les bonnes colonnes + une feuille « ventes » pour le suivi économique.
 
-- [ ] **2.1 [Moi]** Je te fournis la structure exacte du tableur (2 feuilles ci-dessous) à copier dans un nouveau Google Sheets
+- [x] **2.1 [Moi]** ✅ Livré : `revente/inventaire_template.csv` + `revente/ventes_template.csv` (importables dans Google Sheets), seedés avec Zeffut5.0 & Zeffut2.0
 
 **Feuille `Inventaire` :**
 | ID | Email SCID | Accès (ref. gestionnaire mdp) | Device | Trophées actuels | Brawlers | Skins/légendaires notables | Hypercharges | Statut | Plateforme | Prix listé | Date listé |
@@ -50,9 +50,9 @@ Statut ∈ { grind, prêt, listé, vendu, livré }
 
 **Livrable :** une fourchette de prix € par tranche de composition, basée sur les annonces Eldorado live au 2026-05-31.
 
-- [ ] **3.1 [Moi]** Relever sur Eldorado 10 annonces de composition comparable à tes comptes prêts (trophées + nb brawlers + skins/légendaires ± équivalents)
-- [ ] **3.2 [Moi]** Produire un tableau : palier trophées × composition → fourchette de prix observée (min / médian / max)
-- [ ] **3.3 [Ensemble]** Caler le **prix d'amorçage** de tes 1-2 premiers comptes = bas de fourchette **−10/−15 %**
+- [x] **3.1 [Moi]** ✅ Relevé live fait (Eldorado + PlayerAuctions)
+- [x] **3.2 [Moi]** ✅ Grille livrée : `revente/grille_prix.md` (palier × composition → fourchette + prix d'amorçage)
+- [ ] **3.3 [Ensemble]** Caler le **prix d'amorçage** réel quand un compte atteint un palier vendable (rien de vendable aujourd'hui : stock à ~2,5-4k tr)
 
 > Dépend de la Tâche 2.3 (connaître la composition réelle de tes comptes prêts). Si tu me donnes les compositions, je benchmarke immédiatement.
 
@@ -62,23 +62,9 @@ Statut ∈ { grind, prêt, listé, vendu, livré }
 
 **Livrable :** un modèle de titre + description réutilisable, et la liste exacte des captures à prendre.
 
-- [ ] **4.1 [Moi]** Template de titre, ex :
-  > `Compte Brawl Stars — {trophées} 🏆 | {nb} Brawlers | {nb} Skins | {légendaires max} | Email dédié, livraison propre`
-
-- [ ] **4.2 [Moi]** Template de description (structure) :
-  - Trophées totaux + niveau du compte
-  - Liste des brawlers notables (légendaires/mythiques + niveaux max)
-  - Skins (en valorisant les rares/exclusifs)
-  - Hypercharges débloquées
-  - **Mode de livraison** : « Supercell ID avec email dédié, transfert via la messagerie Eldorado, je vous guide pour basculer vers votre propre email »
-  - Mention : transaction 100 % via Eldorado (escrow), pas de hors-plateforme
-
-- [ ] **4.3 [Moi]** Checklist des captures à prendre (côté toi, sur le device) :
-  - Écran profil (trophées + niveau)
-  - Collection brawlers (vue d'ensemble)
-  - Zoom sur les brawlers légendaires/mythiques niveau max
-  - Skins notables
-  - Écran des hypercharges si applicable
+- [x] **4.1 [Moi]** ✅ Template de titre livré dans `revente/annonce_template.md` (met en avant skins rares → hypercharges → Power 11 → trophées)
+- [x] **4.2 [Moi]** ✅ Template de description livré (avec section livraison + mention escrow)
+- [x] **4.3 [Moi]** ✅ Checklist captures livrée dans le même fichier
 
 - [ ] **4.4 [Toi]** Prendre les captures de tes comptes prêts selon la checklist (masquer tout identifiant à l'écran)
 
