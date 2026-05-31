@@ -613,9 +613,13 @@ git commit -m "feat(revente): bs-account-estimator skill + end-to-end orchestrat
 ---
 
 ## Phase gating summary
-- **Now (no emulator needed):** Task 1, 2, 4a → land the tested pure logic.
+- **Now (no emulator needed):** Task 1, 2, 4a → ✅ **DONE 2026-05-31 (12/12 tests green)**.
 - **After Phase 0 (BlueStacks + 1 account + ADB port):** Task 3 (calibrate), Task 6, Task 7 (live smoke test).
 - **After Phase 2 (IMAP creds + throwaway account):** Task 4b, Task 5.
+
+## Dev environment note
+- Run tests with **`/opt/homebrew/bin/python3.11 -m pytest`** — bare `python3` resolves to Xcode's **3.9.6** which chokes on `int | None` at import. pytest was installed into 3.11 on 2026-05-31.
+- Pure-logic modules use `from __future__ import annotations` for portability.
 
 ## Self-review notes
 - Spec §2 reuse map → Tasks reuse game_api/account_detect/device as documented. ✅
