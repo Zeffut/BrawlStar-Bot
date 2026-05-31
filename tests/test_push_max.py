@@ -78,3 +78,38 @@ def test_all_done():
     s.record_match("brock", "defeat", 46)
     assert s.all_done()
     assert s.pick_next() is None
+
+
+def test_per_brawler_cap_exhausts_on_reach():
+    owned = [
+        {"name": "brock", "trophies": 900},    # S
+        {"name": "shelly", "trophies": 100},   # A
+    ]
+    s = PushMaxStrategy.from_owned(owned, brawler_max_trophies=950)
+    assert s.pick_next().name == "brock"
+    # Win toward the cap but not reaching it → keep brock.
+    s.record_match("brock", "victory", 945)
+    assert not s.brawlers["brock"].exhausted
+    assert s.pick_next().name == "brock"
+    # Reach the cap → exhausted, rotate to the next brawler.
+    s.record_match("brock", "victory", 955)
+    assert s.brawlers["brock"].exhausted
+    assert s.pick_next().name == "shelly"
+
+
+def test_per_brawler_cap_skips_already_capped():
+    owned = [
+        {"name": "brock", "trophies": 1000},   # S, already at/above cap
+        {"name": "shelly", "trophies": 100},   # A
+    ]
+    s = PushMaxStrategy.from_owned(owned, brawler_max_trophies=900)
+    assert s.brawlers["brock"].exhausted          # never grind a capped brawler
+    assert s.pick_next().name == "shelly"
+
+
+def test_no_cap_keeps_pushing():
+    owned = [{"name": "brock", "trophies": 1500}]
+    s = PushMaxStrategy.from_owned(owned)          # no cap
+    s.pick_next()
+    s.record_match("brock", "victory", 1600)
+    assert not s.brawlers["brock"].exhausted       # only defeats/stagnation exhaust
