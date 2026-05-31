@@ -19,7 +19,7 @@
 | **Plateforme Phase 1** | **Eldorado.gg** (séquestre/escrow) |
 | **Phase 2 (optionnelle)** | Discord avec middleman (MM) + G2G, **uniquement si la Phase 1 valide la demande** |
 | **Volume** | Démarrer petit, scaler progressivement si ça vend |
-| **Inventaire** | Comptes **déjà vieux** (faible risque de ban Supercell), **email dédié par compte** que Zeffut contrôle |
+| **Inventaire** | Comptes **frais grindés par bot** (série numérotée Zeffut2.0, 5.0…), **email dédié par compte** que Zeffut contrôle. À pousser de ~2,5k → 15k-30k+ avant vente. **Corrigé 2026-05-31** : ces comptes ne sont PAS vieux → risque de ban réel (cf. §6). |
 
 ---
 
@@ -30,6 +30,10 @@ Quand on part de **zéro réputation**, le problème n°1 n'est pas « où sont 
 **Conséquence :** on s'appuie d'abord sur l'**infrastructure de confiance des autres** (escrow + système d'avis d'une marketplace), on accumule des preuves (ventes propres, avis, zéro litige), puis seulement on rapatrie la vente chez nous (Phase 2) à marge plus élevée.
 
 **Le pivot produit (mi-gamme → haut-trophées) :** la tranche 3 000–8 000 trophées se vend **3–20 $ brut**, marge nette quasi nulle après commission + frais + temps de grind. La valeur réelle commence vers **15 000–30 000+ trophées (20–80 $+)**. Le bot a un avantage décisif sur ce segment : il grind **longtemps et sans fatigue** des paliers que les humains détestent atteindre.
+
+**Constat benchmark décisif (relevé live Eldorado/PlayerAuctions le 2026-05-31) — les trophées ne font PAS le prix.** À ~22 000 trophées identiques : compte « vide » (1 brawler max, peu de skins) = **7 $**, compte « chargé » (10 brawlers max, 7 hypercharges, 80+ skins, 1 item rare) = **80 $**. Facteur **×10** à trophées égaux. Les leviers de prix, par ordre d'impact : (1) **skins rares/inobtenables** (Star Shelly, pins event — peuvent doubler/tripler le prix), (2) **hypercharges** (~+5-8 $ chacune), (3) **brawlers Power 11 max** (+10-30 $), puis seulement le compteur de trophées.
+
+**Implication produit → dev (à relayer à l'autre instance) :** pour produire un compte de 60 $ et non de 5 $, le bot ne doit pas seulement pousser les trophées — il doit **convertir l'or + points de pouvoir accumulés en hypercharges + max brawlers**. Aujourd'hui les comptes grindés laissent dormir cette valeur (ex. Zeffut5.0 : 26k or, 1647 gemmes, 460 points de pouvoir non dépensés). Les skins rares, eux, ne se grindent pas — on ne peut compter dessus que s'ils existent déjà sur le compte.
 
 ---
 
@@ -111,7 +115,7 @@ Atout majeur : **chaque compte a déjà un email dédié contrôlé par Zeffut**
 | **Chargeback PayPal** | Couvert : Eldorado garantit le payout dès confirmation acheteur |
 | **Arnaque acheteur** (prétend ne pas avoir reçu) | Couvert par l'escrow + logs/captures de livraison ; faire basculer l'email par l'acheteur = preuve d'accès |
 | **Récupération du compte par l'ancien proprio** | Mitigé par la SOP : zéro accès résiduel ; couvert par la fenêtre after-sale |
-| **Ban Supercell post-vente** | **Non couvert au-delà de l'after-sale.** Mitigation principale : **comptes vieux** (faible flag) + after-sale **courte (5 j Eldorado)** + petit **buffer de remboursement** mis de côté |
+| **Ban Supercell post-vente (botting)** | **Non couvert au-delà de l'after-sale.** ⚠️ **Corrigé 2026-05-31** : les comptes sont **frais + grindés par bot** = le profil le PLUS détectable, le risque de ban est RÉEL (l'hypothèse initiale « comptes vieux → faible flag » était fausse). Mitigations : **dev anti-détection** (patterns humains, à traiter par l'autre instance) AVANT de scaler les ventes ; **faire vieillir/reposer** les comptes avant de lister ; after-sale **courte (5 j Eldorado)** ; **buffer de remboursement** provisionné. |
 | **KYC / identité** | Préparer pièce d'identité + compte de retrait au nom exact avant la 1re vente |
 | **Fiscal (FR)** | Les revenus de revente sont **imposables / à déclarer**. À surveiller dès que le volume devient régulier. |
 | **CGU Supercell** | La vente de comptes **viole les CGU Supercell** (grey market). Risque assumé et structurel ; aucune plateforme ne protège contre ça. |
