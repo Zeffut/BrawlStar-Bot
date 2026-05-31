@@ -25,6 +25,11 @@ Always run with the project's 3.11 interpreter (bare `python3` is Xcode 3.9 and 
 
 # Autonomous path — auto-detect the loaded account's tag (best-effort OCR):
 /opt/homebrew/bin/python3.11 -m revente.estimate_account
+
+# Capture the brawler collection (to read skins / Power 11 / hypercharges by eye):
+/opt/homebrew/bin/python3.11 -m revente.capture_collection <TAG> 127.0.0.1:5555
+# → saves revente/captures/<TAG>_collection_*.png ; open them and set
+#   rare_skins / hypercharges in AccountData to refine the estimate.
 ```
 
 Output: JSON `{ok, account{tag,name,trophies,brawlers,power11,gems,gold}, estimate{tier,price_min_usd,price_max_usd,confidence,notes}}`.
@@ -40,9 +45,10 @@ Output: JSON `{ok, account{tag,name,trophies,brawlers,power11,gems,gold}, estima
   easyocr drop a character (e.g. reads `PYV98LG9` for `PYLV98LG9`), and brawlace
   validation is ~14 s/call so we cannot brute-force. **Pass `--tag` for reliability**;
   store each account's tag in `revente/inventaire_template.csv`.
-- **Skins / hypercharges are NOT read** (no public source; deep menu nav is fragile).
-  They are the biggest price levers — capture the collection screen and read it by eye,
-  then set `rare_skins`/`hypercharges` to refine the estimate upward.
+- **Skins / hypercharges are not auto-counted** (no public source; ambiguous in-grid).
+  Use `revente.capture_collection` to grab the collection grid (per-brawler power &
+  trophies are readable, e.g. Shelly P11), then read skins/hypercharges by eye and set
+  `rare_skins`/`hypercharges` to refine the estimate upward — they are the biggest levers.
 - **Account login/switching (Phase 2)** is not built yet — needs `cfg/imap.toml` creds.
 
 ## Files

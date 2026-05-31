@@ -620,8 +620,11 @@ git commit -m "feat(revente): bs-account-estimator skill + end-to-end orchestrat
   - Task 7 (orchestrator + SKILL.md) ✅ end-to-end live with `--tag`.
   - Tag auto-detect (`read_tag.py`) = ⚠️ **best-effort only**: easyocr drops a char on the
     stylised tag font (`PYV98LG9` vs `PYLV98LG9`); brawlace validation ~14s/call so no
-    brute-force. **Pass `--tag` for reliability.** Task 6 (collection capture) not built.
-- **After Phase 2 (IMAP creds + throwaway account):** Task 4b, Task 5 — NOT started.
+    brute-force. **Pass `--tag` for reliability.**
+  - Task 6 (collection capture) ✅ live: OCR-calibrated BRAWLERS nav (y≈0.45 — NOT 0.59,
+    which is the Starr Road bar), grid + 2 scrolls saved to revente/captures/, returns
+    via top-left back-arrow. Per-brawler power/trophies readable (Shelly P11 confirmed).
+- **After Phase 2 (IMAP creds + throwaway account):** Task 4b, Task 5 (login auto) — NOT started.
 
 ## Dev environment note
 - Run tests with **`/opt/homebrew/bin/python3.11 -m pytest`** — bare `python3` resolves to Xcode's **3.9.6** which chokes on `int | None` at import. pytest was installed into 3.11 on 2026-05-31.
