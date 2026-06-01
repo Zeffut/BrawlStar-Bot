@@ -140,13 +140,22 @@ def event(type_: str, payload: dict | None = None, tag: str | None = None) -> No
 # through these helpers. Used by the resume-session mechanism.
 
 def set_instance_state(state: dict) -> None:
+    # The cloud route is PUT (not POST) — a POST here 405'd silently, so the
+    # resume state was never persisted and the grind never auto-resumed after
+    # a restart. Use PUT to match the endpoint.
+    import requests as _r
     cfg = _load_cfg()
     if not is_enabled():
         return
-    _post("/api/sync/instance_state", {
-        "instance_id": cfg.get("instance_id"),
-        "state": state,
-    })
+    url = cfg["url"].rstrip("/") + "/api/sync/instance_state"
+    headers = {"Authorization": f"Bearer {cfg['token']}"}
+    try:
+        r = _r.put(url, json={"instance_id": cfg.get("instance_id"), "state": state},
+                   headers=headers, timeout=10)
+        if r.status_code >= 400:
+            log.warning("set_instance_state → %s: %s", r.status_code, r.text[:120])
+    except Exception as exc:
+        log.warning("set_instance_state failed: %s", exc)
 
 
 def get_instance_state() -> dict | None:
