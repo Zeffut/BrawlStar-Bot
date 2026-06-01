@@ -203,7 +203,9 @@ class WindowController:
         still and gets kicked for AFK. Throttled so we don't thrash.
         """
         now = time.time()
-        if now - getattr(self, "_last_scrcpy_reconnect", 0) < 8:
+        # Short throttle (3s, was 8s): on an ADB drop mid-match a long throttle
+        # means several seconds of no joystick = AFK risk. Recover fast.
+        if now - getattr(self, "_last_scrcpy_reconnect", 0) < 3:
             return
         self._last_scrcpy_reconnect = now
         log.warning("scrcpy control socket dead — reconnecting")

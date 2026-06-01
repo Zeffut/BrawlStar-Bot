@@ -877,6 +877,30 @@ class BotRunner:
             # (swap mode only — no_swap grinds the equipped brawler).
             if runner._push_max is not None:
                 runner._push_max.record_match(current_brawler, game_result, after)
+                # Periodically re-sync the current brawler's REAL trophies from
+                # brawlace (refreshed every few min). The one-shot seed at
+                # session start can be stale-LOW (served from an old cache), so
+                # push_max's tracked value lags reality and the ceiling never
+                # fires — that's how barley got pushed past 1000. Correct
+                # upward only (the bot climbs; never trust a stale-low read).
+                if runner._match_count % 3 == 0:
+                    try:
+                        acc = db.get_account(runner._account_id) if runner._account_id else None
+                        if acc:
+                            from account_detect import fetch_account_profile
+                            prof = fetch_account_profile(acc["tag"])
+                            for b in prof.get("brawlers", []):
+                                if b.get("name", "").lower() == current_brawler.lower():
+                                    real = b.get("trophies") or 0
+                                    bs = runner._push_max.brawlers.get(current_brawler)
+                                    if bs and real > bs.trophies:
+                                        log.info("brawlace re-sync: %s %d → %d",
+                                                 current_brawler, bs.trophies, real)
+                                        bs.trophies = real
+                                        observer.current_trophies = real
+                                    break
+                    except Exception:
+                        log.exception("brawlace trophy re-sync failed")
                 if runner._push_max.no_swap:
                     # Stay-on-equipped: never swap. Only the per-brawler cap
                     # stops us here (the global target is handled above).
