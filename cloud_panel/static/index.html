@@ -8,7 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260601e" />
+<script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
+<link rel="stylesheet" href="/static/style.css?v=20260602a" />
 </head>
 <body>
 <header>
@@ -131,6 +132,7 @@
           <div class="gc-screen">
             <div class="gc-screen-frame">
               <img id="gc-screenshot" alt="game frame (on-demand)" />
+              <video id="gc-video" class="gc-stream-video" muted autoplay playsinline hidden></video>
               <button class="gc-capture-btn" id="gc-capture">📷 capture</button>
               <button class="gc-capture-btn gc-live-btn" id="gc-live-toggle" title="Live stream ~13 fps">▶ Live</button>
             </div>
@@ -205,6 +207,7 @@
             </h4>
             <div class="screen-wrap">
               <img id="device-screen" alt="device screen" draggable="false" />
+              <video id="device-video" class="gc-stream-video" muted autoplay playsinline hidden></video>
               <div id="screen-overlay" hidden></div>
             </div>
             <div class="remote-keys" hidden id="remote-keys">
@@ -269,6 +272,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260601e"></script>
+<script src="/static/app.js?v=20260602a"></script>
 </body>
 </html>

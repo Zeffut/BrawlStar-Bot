@@ -793,6 +793,20 @@ main {
 }
 .gc-screen-frame img:not([src]),
 .gc-screen-frame img[src=""] { opacity: 0; }
+
+/* Live H264 stream <video> — fills the same frame as the on-demand <img>.
+   Shown (img hidden) only while streaming; hidden otherwise. */
+.gc-stream-video {
+  width: 100%;
+  display: block;
+  min-height: 180px;
+  background: #000;
+}
+.gc-stream-video[hidden] { display: none; }
+/* When a stream video is active, collapse the sibling capture <img> so the
+   two don't stack. JS toggles .streaming on the frame/wrap. */
+.gc-screen-frame.streaming img,
+.screen-wrap.streaming img { display: none; }
 .gc-capture-btn {
   position: absolute;
   bottom: 10px; right: 10px;

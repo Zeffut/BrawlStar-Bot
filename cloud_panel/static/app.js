@@ -871,7 +871,52 @@ function _enableRemoteControl(on) {
 let _streamWS = null;
 let _streamReconnect = null;
 let _streamInstanceId = null;
-const _streamTargets = new Set();   // element ids to paint each frame onto
+// Each stream "target" is an on-demand <img> with an overlay <video>. We mux
+// the worker's raw H264 into each target's <video> via jMuxer + MSE.
+const _STREAM_VIDEO = {                 // img target id → overlay <video> id
+  "gc-screenshot": "gc-video",
+  "device-screen": "device-video",
+};
+const _streamMuxers = new Map();        // targetId → {video, muxer}
+
+function _streamMakeMuxer(targetId) {
+  if (_streamMuxers.has(targetId)) return;
+  const vid = document.getElementById(_STREAM_VIDEO[targetId]);
+  if (!vid || typeof JMuxer === "undefined") return;
+  let muxer;
+  try {
+    muxer = new JMuxer({
+      node: vid,
+      mode: "video",
+      flushingTime: 0,        // lowest latency
+      maxDelay: 200,
+      clearBuffer: true,
+      fps: 30,
+      debug: false,
+      onError: () => { /* glitch until next keyframe; jMuxer self-recovers */ },
+    });
+  } catch (_) { return; }
+  // Show the video, hide the on-demand capture <img> behind it.
+  vid.hidden = false;
+  const frame = vid.closest(".gc-screen-frame, .screen-wrap");
+  if (frame) frame.classList.add("streaming");
+  _streamMuxers.set(targetId, {video: vid, muxer});
+}
+function _streamDropMuxer(targetId) {
+  const m = _streamMuxers.get(targetId);
+  if (!m) return;
+  try { m.muxer.destroy(); } catch (_) {}
+  try { m.video.removeAttribute("src"); m.video.load(); } catch (_) {}
+  m.video.hidden = true;
+  const frame = m.video.closest(".gc-screen-frame, .screen-wrap");
+  if (frame) frame.classList.remove("streaming");
+  _streamMuxers.delete(targetId);
+}
+function _streamFeed(u8) {
+  for (const {muxer} of _streamMuxers.values()) {
+    try { muxer.feed({video: u8}); } catch (_) {}
+  }
+}
 
 function _streamConnect(instanceId) {
   if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
@@ -881,25 +926,18 @@ function _streamConnect(instanceId) {
   let ws;
   try { ws = new WebSocket(`${proto}//${location.host}/ws/stream/${instanceId}`); }
   catch (_) { return; }
+  ws.binaryType = "arraybuffer";
   _streamWS = ws;
   ws.onmessage = (ev) => {
-    try {
-      const f = JSON.parse(ev.data);
-      if (f && f.b64) {
-        const url = "data:image/jpeg;base64," + f.b64;
-        _streamTargets.forEach(id => {
-          const img = document.getElementById(id);
-          if (img) img.src = url;
-        });
-      }
-    } catch (_) {}
+    if (typeof ev.data === "string") return;   // (no text frames in H264 path)
+    _streamFeed(new Uint8Array(ev.data));
   };
   ws.onclose = () => {
     if (_streamWS === ws) _streamWS = null;
-    if (_streamTargets.size && !_streamReconnect) {
+    if (_streamMuxers.size && !_streamReconnect) {
       _streamReconnect = setTimeout(() => {
         _streamReconnect = null;
-        if (_streamTargets.size && _streamInstanceId) _streamConnect(_streamInstanceId);
+        if (_streamMuxers.size && _streamInstanceId) _streamConnect(_streamInstanceId);
       }, 2000);
     }
   };
@@ -907,12 +945,12 @@ function _streamConnect(instanceId) {
 }
 function _streamEnsure(instanceId, targetId) {
   if (!instanceId || !targetId) return;
-  _streamTargets.add(targetId);
+  _streamMakeMuxer(targetId);
   if (!_streamActive() || _streamInstanceId !== instanceId) _streamConnect(instanceId);
 }
 function _streamDrop(targetId) {
-  _streamTargets.delete(targetId);
-  if (!_streamTargets.size) {
+  _streamDropMuxer(targetId);
+  if (!_streamMuxers.size) {
     if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
     if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
     _streamInstanceId = null;
@@ -934,13 +972,13 @@ function _setMainStreamUid(uid) {
 }
 function _toggleMainStream() {
   const btn = document.getElementById("gc-live-toggle");
-  const on = _streamTargets.has("gc-screenshot");
+  const on = _streamMuxers.has("gc-screenshot");
   if (on) { _stopMainStream(); }
   else if (_mainStreamUid) {
     _streamEnsure(_mainStreamUid, "gc-screenshot");
     if (btn) { btn.textContent = "⏸ Live"; btn.classList.add("live-on"); }
     const meta = document.getElementById("gc-screen-meta");
-    if (meta) meta.textContent = "live ~13 fps · streaming";
+    if (meta) meta.textContent = "live · H264 (video)";
   }
 }
 function _stopMainStream() {

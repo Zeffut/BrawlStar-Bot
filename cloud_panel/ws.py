@@ -62,8 +62,12 @@ class WorkerConnection:
     connected_at: float = field(default_factory=time.time)
     # live-stream: browser asyncio.Queues subscribed to this worker's frames.
     # The worker only streams while len(stream_subs) > 0 (start/stop_stream).
+    # Frames are now raw H264 byte chunks (Annex-B) for MSE playback.
     stream_subs: set = field(default_factory=set)
-    last_stream_frame: dict | None = None
+    # Cached codec init (SPS+PPS, Annex-B) — sent first to each new viewer so
+    # one that joins mid-stream can configure its decoder without waiting for
+    # the worker to re-emit it.
+    last_codec_init: bytes | None = None
 
 
 # ---- SSE broadcaster ----------------------------------------------
@@ -195,13 +199,15 @@ class WorkerHub:
             raise TimeoutError(f"command {name} timed out after {timeout_s}s")
 
     async def stream_subscribe(self, instance_id: str):
-        """Register a browser as a live-stream viewer. Returns a frame Queue
-        (maxsize 2 → stale frames drop for slow clients) or None if the worker
-        isn't connected. Sends start_stream to the worker on the FIRST viewer."""
+        """Register a browser as a live-stream viewer. Returns a byte-chunk
+        Queue or None if the worker isn't connected. Sends start_stream to the
+        worker on the FIRST viewer. The queue buffers H264 chunks (maxsize
+        generous: dropping mid-stream glitches video until the next keyframe,
+        ~10s with screenrecord, so we tolerate jitter rather than drop)."""
         conn = self.get(instance_id)
         if conn is None:
             return None
-        q: asyncio.Queue = asyncio.Queue(maxsize=2)
+        q: asyncio.Queue = asyncio.Queue(maxsize=512)
         first = not conn.stream_subs
         conn.stream_subs.add(q)
         if first:
@@ -227,6 +233,31 @@ class WorkerHub:
 HUB = WorkerHub()
 
 
+# Binary stream wire format from the worker (1 type byte + payload):
+_STREAM_INIT = 0x01    # SPS+PPS codec init — cache to prime late viewers
+_STREAM_MEDIA = 0x00   # raw H264 chunk
+
+
+def _relay_stream_chunk(conn: "WorkerConnection", data: bytes) -> None:
+    """Fan a worker's binary H264 chunk out to all browser viewers. The first
+    byte tags init (SPS/PPS) vs media; we strip it and forward pure H264 so
+    the browser can feed it straight to jMuxer/MSE."""
+    if not data:
+        return
+    kind, payload = data[0], data[1:]
+    if kind == _STREAM_INIT:
+        # Just cache it — current viewers already get SPS/PPS inline in the
+        # media stream; this primes viewers that join mid-stream (app.py sends
+        # last_codec_init on connect).
+        conn.last_codec_init = payload
+        return
+    for q in list(conn.stream_subs):
+        try:
+            q.put_nowait(payload)
+        except asyncio.QueueFull:
+            pass  # slow viewer — drop stale chunk
+
+
 async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = "") -> None:
     """FastAPI WebSocket route handler (registered in cloud_panel/app.py)."""
     if token != AUTH_TOKEN:
@@ -239,7 +270,18 @@ async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = 
     conn = await HUB.register(instance_id, ws)
     try:
         while True:
-            raw = await ws.receive_text()
+            # Worker sends control as TEXT (JSON) and live-stream H264 as
+            # BINARY. receive() returns whichever arrived.
+            packet = await ws.receive()
+            if packet.get("type") == "websocket.disconnect":
+                break
+            data_bytes = packet.get("bytes")
+            if data_bytes is not None:
+                _relay_stream_chunk(conn, data_bytes)
+                continue
+            raw = packet.get("text")
+            if raw is None:
+                continue
             try:
                 msg = json.loads(raw)
             except Exception:
@@ -267,17 +309,6 @@ async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = 
                 conn.last_screenshot_b64 = b64
                 conn.last_screenshot_mime = mime
                 conn.last_screenshot_at = time.time()
-            elif mtype == "stream_frame":
-                # Live-stream JPEG frame from the worker → fan out to browser
-                # subscribers. Drop on full queue (slow client = drop stale).
-                frame = {"b64": msg.get("b64"), "w": msg.get("w"),
-                         "h": msg.get("h"), "ts": time.time()}
-                conn.last_stream_frame = frame
-                for q in list(conn.stream_subs):
-                    try:
-                        q.put_nowait(frame)
-                    except asyncio.QueueFull:
-                        pass
             elif mtype == "snapshot":
                 data = msg.get("data") or {}
                 conn.last_snapshot = {**data, "_pushed_at": time.time()}

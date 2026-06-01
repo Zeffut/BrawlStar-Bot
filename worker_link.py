@@ -818,34 +818,25 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
 
 
 # ---- live stream -------------------------------------------------
-# Push JPEG frames from the existing screenrecord buffer over the WS, but only
-# while a browser is watching (cloud sends start_stream/stop_stream). Reuses
-# the bot's H264 capture (screen_capture) — no extra device capture.
-_STREAM_FPS = 13
-_STREAM_JPEG_QUALITY = 55
+# H264 PASSTHROUGH: forward the phone's raw H264 (the same screenrecord stream
+# the bot already decodes for vision) straight to the browser over the WS as
+# BINARY frames — no decode, no JPEG re-encode. The browser muxes it to
+# fragmented-MP4 (jMuxer) and plays it via Media Source Extensions, so the GPU
+# decodes it: ~10x less bandwidth + smooth video vs the old JPEG-per-frame.
+#
+# Binary wire format (worker → cloud): 1 type byte + payload.
+#   0x01 = codec init (SPS+PPS, Annex-B) — cloud caches it to prime late viewers
+#   0x00 = media (raw H264 chunk)
+_STREAM_INIT = b"\x01"
+_STREAM_MEDIA = b"\x00"
 
 
-def _encode_stream_frame():
-    """Latest screenrecord frame → (b64 jpeg, w, h), or None if unavailable."""
+def _raw_get(q, timeout=0.5):
+    """Blocking queue.get used from the executor; None on timeout."""
+    import queue as _q
     try:
-        import cv2
-        import base64 as _b64
-        import screen_capture as _sc
-        rec = _sc.get()
-        if rec is None:
-            return None
-        f = rec.get_frame()
-        age = rec.get_frame_age()
-        if f is None or age is None or age > 2.0:
-            return None
-        ok, buf = cv2.imencode(".jpg", f,
-                               [cv2.IMWRITE_JPEG_QUALITY, _STREAM_JPEG_QUALITY])
-        if not ok:
-            return None
-        h, w = f.shape[:2]
-        return _b64.b64encode(buf.tobytes()).decode("ascii"), w, h
-    except Exception:
-        log.debug("encode_stream_frame failed", exc_info=True)
+        return q.get(timeout=timeout)
+    except _q.Empty:
         return None
 
 
@@ -973,38 +964,59 @@ async def _run_ws_client():
 
                 sender_task = asyncio.create_task(sender_loop())
 
-                # Live stream: push JPEG frames at ~_STREAM_FPS while the cloud
-                # has a browser watching (start_stream/stop_stream toggle it).
-                # Skips frames identical to the last one (static lobby) but
-                # sends a keepalive at least every 2s so the viewer stays live.
-                stream_state = {"on": False}
+                # Live stream: forward raw H264 chunks while a browser watches
+                # (start_stream/stop_stream toggle it). Reuses the bot's
+                # screenrecord capture — no extra device capture, no re-encode.
+                stream_state = {"on": False, "q": None, "init_sent": False}
+
+                def _stream_subscribe():
+                    import screen_capture as _sc
+                    rec = _sc.get()
+                    return rec.subscribe_raw() if rec else None
+
+                def _stream_unsubscribe(q):
+                    try:
+                        import screen_capture as _sc
+                        rec = _sc.get()
+                        if rec and q is not None:
+                            rec.unsubscribe_raw(q)
+                    except Exception:
+                        pass
+
+                def _stream_codec_init():
+                    try:
+                        import screen_capture as _sc
+                        rec = _sc.get()
+                        return rec.get_codec_init() if rec else None
+                    except Exception:
+                        return None
 
                 async def stream_loop():
-                    interval = 1.0 / _STREAM_FPS
-                    last_b64 = None
-                    last_sent = 0.0
+                    loop = asyncio.get_running_loop()
                     while True:
-                        await asyncio.sleep(interval)
-                        if not stream_state["on"]:
-                            last_b64 = None
+                        q = stream_state["q"]
+                        if not stream_state["on"] or q is None:
+                            await asyncio.sleep(0.1)
+                            continue
+                        # Send the codec init (SPS/PPS) once it's known, so the
+                        # cloud can prime viewers that join mid-stream.
+                        if not stream_state["init_sent"]:
+                            init = await loop.run_in_executor(None, _stream_codec_init)
+                            if init:
+                                try:
+                                    await ws.send(_STREAM_INIT + init)
+                                    stream_state["init_sent"] = True
+                                except websockets.exceptions.ConnectionClosed:
+                                    return
+                        chunk = await loop.run_in_executor(None, _raw_get, q)
+                        if chunk is None:
                             continue
                         try:
-                            res = await asyncio.get_running_loop().run_in_executor(
-                                None, _encode_stream_frame)
-                            if res is None:
-                                continue
-                            b64, w, h = res
-                            now = time.time()
-                            if b64 == last_b64 and (now - last_sent) < 2.0:
-                                continue  # unchanged frame, skip (save bandwidth)
-                            last_b64 = b64
-                            last_sent = now
-                            await ws.send(json.dumps({
-                                "type": "stream_frame", "b64": b64, "w": w, "h": h}))
+                            await ws.send(_STREAM_MEDIA + chunk)
                         except websockets.exceptions.ConnectionClosed:
                             return
                         except Exception:
-                            log.debug("stream frame push failed", exc_info=True)
+                            log.debug("stream chunk push failed", exc_info=True)
 
                 stream_task = asyncio.create_task(stream_loop())
 
@@ -1040,11 +1052,19 @@ async def _run_ws_client():
                         continue
                     mtype = msg.get("type")
                     if mtype == "start_stream":
-                        stream_state["on"] = True
-                        log.info("live stream: ON")
+                        if not stream_state["on"]:
+                            q = await asyncio.get_running_loop().run_in_executor(
+                                None, _stream_subscribe)
+                            stream_state["q"] = q
+                            stream_state["init_sent"] = False
+                            stream_state["on"] = True
+                            log.info("live stream: ON (H264 passthrough)")
                         continue
                     if mtype == "stop_stream":
                         stream_state["on"] = False
+                        await asyncio.get_running_loop().run_in_executor(
+                            None, _stream_unsubscribe, stream_state["q"])
+                        stream_state["q"] = None
                         log.info("live stream: OFF")
                         continue
                     if mtype == "cmd":
@@ -1064,6 +1084,12 @@ async def _run_ws_client():
                         asyncio.create_task(_run_cmd(cmd_id, name, handler, args))
                 sender_task.cancel()
                 stream_task.cancel()
+                # Detach the raw-stream queue so screenrecord stops fanning out
+                # to a dead connection (and the capture overhead drops to zero).
+                try:
+                    _stream_unsubscribe(stream_state["q"])
+                except Exception:
+                    pass
         except Exception as exc:
             log.warning("worker_link disconnected: %s", exc)
         # exponential-ish backoff before reconnecting

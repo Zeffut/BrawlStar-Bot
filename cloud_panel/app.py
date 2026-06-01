@@ -836,10 +836,11 @@ async def ws_worker(ws: WebSocket, token: str = "", instance_id: str = "") -> No
 
 @app.websocket("/ws/stream/{instance_db_id}")
 async def ws_stream(ws: WebSocket, instance_db_id: str) -> None:
-    """Browser live-stream viewer. Relays the worker's screenrecord JPEG frames
-    (text JSON {b64,w,h,ts}) at ~13 fps. Subscribing tells the worker to start
-    streaming; the last viewer leaving tells it to stop. Unauthenticated like
-    /api/events (read-only game view; the browser can't set WS auth headers)."""
+    """Browser live-stream viewer. Relays the worker's raw H264 chunks (BINARY)
+    which the browser muxes to fMP4 (jMuxer) and plays via MSE. Subscribing
+    tells the worker to start streaming; the last viewer leaving tells it to
+    stop. Unauthenticated like /api/events (read-only game view; the browser
+    can't set WS auth headers)."""
     await ws.accept()
     inst_id = _resolve_instance(instance_db_id)
     if not inst_id:
@@ -850,12 +851,15 @@ async def ws_stream(ws: WebSocket, instance_db_id: str) -> None:
         await ws.close(code=1011, reason="worker not connected")
         return
     try:
+        # Prime the decoder with the cached codec init (SPS/PPS) so a viewer
+        # joining mid-stream can start without waiting for the worker to
+        # re-emit it. The next keyframe in the live stream begins playback.
         conn = HUB.get(inst_id)
-        if conn and conn.last_stream_frame:  # paint immediately, don't wait
-            await ws.send_text(_json.dumps(conn.last_stream_frame))
+        if conn and conn.last_codec_init:
+            await ws.send_bytes(conn.last_codec_init)
         while True:
-            frame = await q.get()
-            await ws.send_text(_json.dumps(frame))
+            chunk = await q.get()
+            await ws.send_bytes(chunk)
     except (WebSocketDisconnect, Exception):
         pass
     finally:

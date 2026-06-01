@@ -16,6 +16,7 @@ and crashes occasionally on some devices).
 from __future__ import annotations
 
 import logging
+import queue
 import subprocess
 import threading
 import time
@@ -23,6 +24,27 @@ import time
 import numpy as np
 
 log = logging.getLogger(__name__)
+
+
+def _iter_nal_units(buf: bytes):
+    """Yield (nal_type, start_offset) for each Annex-B NAL start code in buf.
+
+    Start codes are 00 00 01 or 00 00 00 01; the NAL type is the low 5 bits
+    of the byte right after the start code. Used to locate SPS(7)/PPS(8) so a
+    late-joining MSE viewer can be primed with the codec config."""
+    n = len(buf)
+    i = 0
+    while i < n - 4:
+        if buf[i] == 0 and buf[i + 1] == 0:
+            if buf[i + 2] == 1:
+                yield buf[i + 3] & 0x1F, i
+                i += 3
+                continue
+            if buf[i + 2] == 0 and buf[i + 3] == 1 and i < n - 5:
+                yield buf[i + 4] & 0x1F, i
+                i += 4
+                continue
+        i += 1
 
 
 class ScreenRecorder:
@@ -50,6 +72,17 @@ class ScreenRecorder:
         self.alive: bool = False
         self._device_w: int | None = None
         self._device_h: int | None = None
+        # --- raw H264 fan-out (live streaming passthrough) ---------
+        # Subscribers (the worker_link stream task) get the raw Annex-B byte
+        # chunks straight off screenrecord — no decode, no JPEG re-encode.
+        # Populated only while ≥1 subscriber is attached, so there's zero
+        # overhead when nobody is watching.
+        self._raw_subs: set[queue.Queue] = set()
+        self._raw_lock = threading.Lock()
+        self._codec_init: bytes | None = None    # cached SPS+PPS (Annex-B)
+        self._sps: bytes | None = None
+        self._pps: bytes | None = None
+        self._force_respawn = False              # set on first viewer → fresh keyframe
 
     # ---- lifecycle -----------------------------------------------
 
@@ -82,6 +115,61 @@ class ScreenRecorder:
         if self.last_frame_time == 0:
             return None
         return time.time() - self.last_frame_time
+
+    # ---- raw H264 fan-out (streaming) ----------------------------
+
+    def subscribe_raw(self) -> queue.Queue:
+        """Attach a live-stream viewer. Returns a Queue of raw H264 byte
+        chunks (Annex-B). On the FIRST subscriber we force a screenrecord
+        respawn so a fresh keyframe (SPS/PPS + IDR) is emitted within ~1s —
+        screenrecord's default I-frame interval is ~10s, so without this a
+        viewer could wait that long for the first decodable frame."""
+        q: queue.Queue = queue.Queue(maxsize=240)  # ~a few seconds of chunks
+        with self._raw_lock:
+            first = not self._raw_subs
+            self._raw_subs.add(q)
+        if first:
+            # The capture loop polls this flag every read (~ms) and respawns
+            # once — no terminate() here (that would double-respawn).
+            self._force_respawn = True
+        return q
+
+    def unsubscribe_raw(self, q: queue.Queue) -> None:
+        with self._raw_lock:
+            self._raw_subs.discard(q)
+
+    def get_codec_init(self) -> bytes | None:
+        """Cached SPS+PPS (Annex-B) so a late viewer can be primed."""
+        return self._codec_init
+
+    def _fan_out_raw(self, chunk: bytes) -> None:
+        with self._raw_lock:
+            subs = list(self._raw_subs)
+        for q in subs:
+            try:
+                q.put_nowait(chunk)
+            except queue.Full:
+                pass  # slow viewer — drop (cloud also drops stale)
+
+    def _scan_codec_init(self, chunk: bytes) -> None:
+        """Track SPS/PPS NALs so we can prime late viewers. Cheap: only runs
+        while a viewer is attached. We keep a small tail to survive start
+        codes split across chunk boundaries."""
+        buf = (self._init_scan_tail + chunk) if getattr(self, "_init_scan_tail", b"") else chunk
+        marks = list(_iter_nal_units(buf))
+        for idx, (ntype, off) in enumerate(marks):
+            if ntype not in (7, 8):
+                continue
+            end = marks[idx + 1][1] if idx + 1 < len(marks) else len(buf)
+            nal = buf[off:end]
+            if ntype == 7:
+                self._sps = nal
+            elif ntype == 8:
+                self._pps = nal
+        if self._sps and self._pps:
+            self._codec_init = self._sps + self._pps
+        # Keep a short tail (start codes are ≤4 bytes; keep a bit more slack).
+        self._init_scan_tail = buf[-8:]
 
     # ---- internal ------------------------------------------------
 
@@ -144,6 +232,17 @@ class ScreenRecorder:
                 while not self._stop:
                     chunk = self._proc.stdout.read(8192)
                     if not chunk:
+                        break
+                    # Raw H264 passthrough for live streaming: fan the bytes
+                    # straight to viewers + track SPS/PPS. Only active while a
+                    # viewer is attached (zero cost otherwise).
+                    if self._raw_subs:
+                        self._scan_codec_init(chunk)
+                        self._fan_out_raw(chunk)
+                    # First viewer just attached → respawn for a fresh keyframe.
+                    if self._force_respawn:
+                        self._force_respawn = False
+                        log.info("screenrec: forced respawn for fresh stream keyframe")
                         break
                     try:
                         packets = codec.parse(chunk)
