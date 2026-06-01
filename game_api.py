@@ -596,6 +596,40 @@ class GameAPI:
 
     # ---- navigation ----------------------------------------------
 
+    def _restart_brawlstars(self, reason: str = "") -> None:
+        """Force-stop + relaunch Brawl Stars to bail out of a screen we can't
+        dismiss (an unopenable star drop). The drop stays claimable; the lobby
+        becomes reachable again."""
+        serial = device.adb_serial()
+        log.warning("restarting Brawl Stars (%s)", reason)
+        try:
+            subprocess.run(["adb", "-s", serial, "shell", "am", "force-stop",
+                            "com.supercell.brawlstars"], timeout=5, check=False)
+            time.sleep(2)
+            subprocess.run(["adb", "-s", serial, "shell", "am", "start", "-n",
+                            "com.supercell.brawlstars/.GameApp"], timeout=10, check=False)
+            time.sleep(8)
+        except Exception:
+            log.exception("Brawl Stars restart failed")
+
+    def _drag_hold_center(self, duration_ms: int = 3500) -> None:
+        """Star-drop open gesture: a slow drag over a tiny distance = a held
+        touch that moves slightly (like a real finger). A static synthesized
+        hold (swipe X Y X Y) is filtered out by Brawl Stars on a phone."""
+        try:
+            dw, dh = device.device_size()
+        except Exception:
+            dw, dh = 2340, 1080
+        cx, cy = dw // 2, dh // 2
+        serial = device.adb_serial()
+        try:
+            subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
+                            str(cx), str(cy), str(cx + 18), str(cy + 18),
+                            str(duration_ms)],
+                           timeout=duration_ms / 1000 + 5, check=False)
+        except Exception:
+            log.exception("drag-hold failed")
+
     def goto_lobby(self, max_attempts: int = 30) -> bool:
         """Aggressively close everything and reach the lobby.
 
@@ -609,6 +643,7 @@ class GameAPI:
         """
         last_state = None
         same_state_count = 0
+        star_drop_tries = 0
         for i in range(max_attempts):
             # Lock check — wake + PIN if screen is off or keyguard is up.
             if self._screen_is_locked():
@@ -623,6 +658,23 @@ class GameAPI:
                     time.sleep(1.0)
                     continue
                 return True
+            # Star drop: try the drag-hold open gesture; if it won't open
+            # after a few tries, bail out by restarting BS instead of looping
+            # the shotgun for minutes (the old failure mode: stuck on a star
+            # drop the whole boot, watchdog only restarting after ~9 min).
+            if st == "star_drop":
+                star_drop_tries += 1
+                if star_drop_tries <= 3:
+                    log.info("goto_lobby[%d]: star_drop → drag-hold (try %d)",
+                             i, star_drop_tries)
+                    self._drag_hold_center()
+                    time.sleep(1.5)
+                    continue
+                log.warning("goto_lobby[%d]: star drop won't open after %d "
+                            "tries — restarting Brawl Stars", i, star_drop_tries)
+                self._restart_brawlstars("unopenable star drop blocking lobby")
+                star_drop_tries = 0
+                continue
             if self._dismiss_team_invite():
                 log.info("goto_lobby[%d]: dismissed team invite", i)
                 time.sleep(1.0)
