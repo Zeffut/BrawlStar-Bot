@@ -65,6 +65,11 @@ class LobbyAutomation:
         leading/trailing chars (e.g. `?colt`).
         """
         target = target.lower().strip()
+        # Strip the same separators the caller strips from OCR keys, so
+        # composite names match (target "8-bit"/"mr. p" → "8bit"/"mrp" vs
+        # the already-stripped candidate tokens).
+        for symbol in (' ', '-', '.', '&', '_'):
+            target = target.replace(symbol, "")
         if not target:
             return None
         best: tuple[float, str] | None = None

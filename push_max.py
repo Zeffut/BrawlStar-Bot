@@ -124,6 +124,13 @@ class PushMaxStrategy:
             # Already at/above the cap → don't bother picking it.
             if brawler_max_trophies is not None and bs.trophies >= brawler_max_trophies:
                 bs.exhausted = True
+            # A brawler at 0 trophies in the brawlace profile is locked / not
+            # owned — the in-game grid shows it as "déblocage en cours" and it
+            # can't be selected. Never grind it: picking the "easiest" brawler
+            # otherwise lands on a locked 0-trophy one (e.g. 8-bit) and the
+            # selection loops forever failing to find it in the menu OCR.
+            if bs.trophies <= 0:
+                bs.exhausted = True
             state.brawlers[name] = bs
         log.info("PushMax built with %d brawlers (S=%d A=%d B=%d C=%d)",
                  len(state.brawlers),

@@ -118,6 +118,19 @@ def test_per_brawler_cap_skips_already_capped():
     assert s.pick_next().name == "shelly"
 
 
+def test_zero_trophy_brawlers_never_picked():
+    # A 0-trophy brawler in the brawlace profile is locked / not owned (the
+    # in-game grid shows "déblocage en cours"); picking it loops forever on a
+    # selection that can't find it. It must be exhausted from the start.
+    owned = [
+        {"name": "8-bit", "trophies": 0},     # locked → skip
+        {"name": "shelly", "trophies": 80},   # owned → grind this
+    ]
+    s = PushMaxStrategy.from_owned(owned)
+    assert s.brawlers["8-bit"].exhausted
+    assert s.pick_next().name == "shelly"
+
+
 def test_no_cap_keeps_pushing():
     owned = [{"name": "brock", "trophies": 1500}]
     s = PushMaxStrategy.from_owned(owned)          # no cap

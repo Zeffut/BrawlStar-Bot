@@ -646,8 +646,12 @@ class BotRunner:
         brawler = (self.brawler_data[0].get('brawler') if self.brawler_data else '?')
         log.info("_install_match_hook: brawler=%s target=%d", brawler, target)
 
-        # Seed the account-wide trophy total from the current brawlace
-        # snapshot. After this, each match delta will update it locally.
+        # Seed trophy totals from the brawlace profile (reliable), not the
+        # on-screen OCR (which reads 0 / stray digits and, once it seeds the
+        # session wrong, makes record_match overwrite each brawler's real
+        # count with an estimate built from 0 — the "trophies stuck at 0"
+        # bug). After seeding, each match delta updates the totals locally.
+        profile = None
         try:
             acc = db.get_account(self._account_id) if self._account_id else None
             if acc:
@@ -662,10 +666,22 @@ class BotRunner:
             log.exception("could not seed account trophies; starting at 0")
             self._account_trophies = 0
 
-        # OCR the brawler card to read CURRENT trophies on the lobby card.
-        log.debug("starting trophy OCR on lobby card…")
-        current = self._read_brawler_trophies(main_instance)
-        log.info("trophy OCR result: %s", current)
+        # Current brawler's trophy count: prefer the brawlace per-brawler
+        # value, fall back to the lobby-card OCR only if absent.
+        current = None
+        if profile:
+            for b in profile.get("brawlers", []):
+                if b.get("name", "").lower().strip() == brawler.lower().strip():
+                    current = b.get("trophies")
+                    break
+        if current is not None:
+            log.info("seed current-brawler '%s' trophies from brawlace: %d",
+                     brawler, current)
+        else:
+            log.debug("brawler not in profile; falling back to lobby-card OCR…")
+            current = self._read_brawler_trophies(main_instance)
+            log.info("trophy OCR result: %s", current)
+
         if current is not None:
             observer.current_trophies = current
             self._initial_trophies = current
