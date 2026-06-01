@@ -243,6 +243,25 @@ class PushMaxStrategy:
     def all_done(self) -> bool:
         return all(b.exhausted for b in self.brawlers.values())
 
+    def revive_grindable(self) -> int:
+        """Un-exhaust brawlers that can still be pushed (>0 trophies, below the
+        per-brawler cap) so the session keeps running toward the GLOBAL target
+        instead of stopping when stagnation + failed selections exhausted them
+        all. Locked (0-trophy) and capped brawlers stay exhausted. Returns how
+        many were revived."""
+        n = 0
+        for b in self.brawlers.values():
+            if not b.exhausted or b.trophies <= 0:
+                continue
+            if (self.brawler_max_trophies is not None
+                    and b.trophies >= self.brawler_max_trophies):
+                continue
+            b.exhausted = False
+            b.defeat_streak = 0
+            b.deltas.clear()
+            n += 1
+        return n
+
     def summary(self) -> dict:
         active = [b.name for b in self.brawlers.values() if not b.exhausted]
         exhausted = [b.name for b in self.brawlers.values() if b.exhausted]

@@ -83,7 +83,7 @@ from worker_pool import POOL, BotWorker  # noqa: E402
 import alerts  # noqa: E402
 import device  # noqa: E402
 import cloud_sync  # noqa: E402
-from push_max import PushMaxStrategy  # noqa: E402
+from push_max import PushMaxStrategy, EFFICIENCY_CEILING  # noqa: E402
 from logging_setup import setup_logging  # noqa: E402
 
 setup_logging()
@@ -900,21 +900,34 @@ class BotRunner:
                                 log.warning("push_max: %s unselectable (menu OCR)"
                                             " — marking exhausted", bad)
                         unsel.clear()
+                    # Keep the grind ALIVE: when everything looks exhausted
+                    # (stagnation + failed selections), don't stop — revive the
+                    # still-grindable brawlers so the session runs to the global
+                    # target. Only stop when there's genuinely nothing left
+                    # (all capped or locked).
                     if runner._push_max.all_done():
-                        log.info("push_max: all brawlers exhausted — stopping bot")
-                        main_instance.time_to_stop = True
-                        _clear_resume_state()
-                    else:
-                        cur = runner._push_max.brawlers.get(current_brawler)
-                        if cur and cur.exhausted:
-                            nxt = runner._push_max.pick_next()
-                            if nxt is not None and nxt.name != current_brawler:
-                                log.info("push_max: scheduling brawler swap %s → %s",
-                                         current_brawler, nxt.name)
-                                main_instance.Stage_manager._pending_swap = nxt.name
-                                # Tell the new brawler's trophies to the
-                                # observer so subsequent matches log correctly.
-                                main_instance.Stage_manager.Trophy_observer.current_trophies = nxt.trophies
+                        if runner._push_max.revive_grindable():
+                            log.info("push_max: all exhausted — revived grindable "
+                                     "brawlers, continuing toward target")
+                        else:
+                            log.info("push_max: nothing grindable left (capped/locked)"
+                                     " — stopping bot")
+                            main_instance.time_to_stop = True
+                            _clear_resume_state()
+                    cur = runner._push_max.brawlers.get(current_brawler)
+                    # Swap when the current brawler is exhausted OR has climbed
+                    # past the efficiency ceiling — don't keep pushing it to
+                    # e.g. 950; move to an easier brawler with better gains.
+                    if (not main_instance.time_to_stop and cur
+                            and (cur.exhausted or cur.trophies >= EFFICIENCY_CEILING)):
+                        nxt = runner._push_max.pick_next()
+                        if nxt is not None and nxt.name != current_brawler:
+                            log.info("push_max: swap %s → %s (exhausted=%s, trophies=%d)",
+                                     current_brawler, nxt.name, cur.exhausted, cur.trophies)
+                            main_instance.Stage_manager._pending_swap = nxt.name
+                            # Tell the new brawler's trophies to the observer so
+                            # subsequent matches log correctly.
+                            main_instance.Stage_manager.Trophy_observer.current_trophies = nxt.trophies
 
             sign = "+" if delta >= 0 else ""
             session_delta = after - runner._initial_trophies

@@ -179,6 +179,29 @@ def test_no_swap_stops_only_on_cap():
     assert s.pick_next() is None
 
 
+def test_revive_grindable_keeps_session_alive():
+    owned = [
+        {"name": "bea", "trophies": 484},      # S, grindable
+        {"name": "shelly", "trophies": 200},   # A, grindable
+        {"name": "8-bit", "trophies": 0},      # locked
+    ]
+    s = PushMaxStrategy.from_owned(owned)
+    s.brawlers["bea"].exhausted = True
+    s.brawlers["shelly"].exhausted = True
+    assert s.all_done()
+    assert s.revive_grindable() == 2           # bea + shelly back, not the locked one
+    assert not s.brawlers["bea"].exhausted
+    assert s.brawlers["8-bit"].exhausted
+    assert s.pick_next() is not None           # session can continue
+
+
+def test_revive_skips_capped():
+    owned = [{"name": "bea", "trophies": 900}]
+    s = PushMaxStrategy.from_owned(owned, brawler_max_trophies=800)
+    assert s.brawlers["bea"].exhausted         # already at/above cap
+    assert s.revive_grindable() == 0           # capped → stays out
+
+
 def test_no_cap_keeps_pushing():
     owned = [{"name": "brock", "trophies": 1500}]
     s = PushMaxStrategy.from_owned(owned)          # no cap
