@@ -96,6 +96,13 @@ class StageManager:
                 self.brawlers_pick_data[0]['brawler'] = pending
             except Exception:
                 log.exception("brawler swap to %s failed", pending)
+                # The menu OCR can't find some brawlers (name fused with the
+                # trophy badge, e.g. nita→"n1o8"). Record it so push_max marks
+                # it exhausted and moves to a brawler it CAN select, instead
+                # of looping forever on the same unselectable target.
+                if not hasattr(self, "_unselectable_brawlers"):
+                    self._unselectable_brawlers = set()
+                self._unselectable_brawlers.add(pending)
         print("state is lobby, starting game")
         values = {
             "trophies": self.Trophy_observer.current_trophies,

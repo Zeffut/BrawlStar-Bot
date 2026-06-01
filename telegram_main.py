@@ -796,6 +796,19 @@ class BotRunner:
 
             # push_max: record match, swap brawler if current one is exhausted.
             if runner._push_max is not None:
+                # Brawlers that failed selection (menu OCR couldn't find them)
+                # get marked exhausted so push_max stops trying to swap to them
+                # and grinds one it CAN select instead.
+                unsel = getattr(main_instance.Stage_manager,
+                                "_unselectable_brawlers", None)
+                if unsel:
+                    for bad in list(unsel):
+                        b = runner._push_max.brawlers.get(bad)
+                        if b and not b.exhausted:
+                            b.exhausted = True
+                            log.warning("push_max: %s unselectable (menu OCR) — "
+                                        "marking exhausted", bad)
+                    unsel.clear()
                 runner._push_max.record_match(current_brawler, game_result, after)
                 if runner._push_max.all_done():
                     log.info("push_max: all brawlers exhausted — stopping bot")
