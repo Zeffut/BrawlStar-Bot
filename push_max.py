@@ -62,10 +62,10 @@ BRAWLER_TIERS: dict[str, str] = {
 }
 TIER_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
 
-# Above this trophy count, expected_gain() turns non-positive — matches lose
-# as much as they gain, so pushing there barely grows the account total.
-# push_max prioritises brawlers BELOW this ceiling ("easiest trophies").
-EFFICIENCY_CEILING = 700
+# Above this trophy count, pushing gets inefficient (matches lose ~as much as
+# they gain). push_max only considers brawlers BELOW this ceiling, and among
+# those prefers the HIGHER tier (Pyla wins more with S/A → climbs further).
+EFFICIENCY_CEILING = 750
 
 
 def get_tier(name: str) -> str:
@@ -175,8 +175,11 @@ class PushMaxStrategy:
             return None
         easy = [b for b in candidates if b.trophies < EFFICIENCY_CEILING]
         pool = easy if easy else candidates
-        # Highest expected gain (lowest trophies) first; tie-break by tier.
-        pool.sort(key=lambda b: (-expected_gain(b.trophies), TIER_ORDER.get(b.tier, 99)))
+        # Tier FIRST (S > A > B > C — Pyla wins more with higher tiers, so they
+        # climb further and more reliably), then lowest trophies within a tier
+        # (most headroom / easiest). This is why we don't grind an A at 100
+        # while an S below the ceiling is still available.
+        pool.sort(key=lambda b: (TIER_ORDER.get(b.tier, 99), b.trophies))
         winner = pool[0]
         self.current = winner.name
         if not winner.locked:

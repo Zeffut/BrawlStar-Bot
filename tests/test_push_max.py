@@ -23,6 +23,27 @@ def test_picks_highest_tier_first():
     assert pick.name == "brock", f"expected brock (S-tier), got {pick.name}"
 
 
+def test_prefers_higher_tier_over_lower_trophy_lower_tier():
+    # Don't grind an A at 100 while an S below the ceiling is available —
+    # Pyla wins more with S-tier so it climbs further/more reliably.
+    owned = [
+        {"name": "shelly", "trophies": 100},   # A, low trophies
+        {"name": "brock", "trophies": 400},    # S, higher trophies but < ceiling
+    ]
+    s = PushMaxStrategy.from_owned(owned)
+    assert s.pick_next().name == "brock"
+
+
+def test_tier_priority_within_ceiling_then_lowest_trophies():
+    owned = [
+        {"name": "brock", "trophies": 600},   # S
+        {"name": "bea", "trophies": 120},     # S  ← lowest-trophy S, expected
+        {"name": "shelly", "trophies": 30},   # A, lower still but wrong tier
+    ]
+    s = PushMaxStrategy.from_owned(owned)
+    assert s.pick_next().name == "bea"
+
+
 def test_pick_is_sticky_until_exhausted():
     owned = [
         {"name": "brock", "trophies": 100},
