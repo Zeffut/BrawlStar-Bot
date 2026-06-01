@@ -558,6 +558,21 @@ async def github_webhook(request: Request) -> dict:
     head = payload.get("head_commit", {})
     commit_sha = head.get("id", "")[:7]
     commit_msg = (head.get("message", "") or "").splitlines()[0][:120]
+    # Collect every path touched by the push (across all commits) and skip the
+    # worker restart when the change is panel-only — the workers don't run any
+    # cloud_panel/ code, so restarting them (interrupting the grind) is pointless.
+    changed: set[str] = set()
+    for c in (payload.get("commits") or []) + [head]:
+        for k in ("added", "removed", "modified"):
+            changed.update(c.get(k) or [])
+    worker_relevant = [f for f in changed if not f.startswith("cloud_panel/")]
+    if changed and not worker_relevant:
+        log.info("github webhook: push %s is panel-only (%d files) → NOT restarting workers",
+                 commit_sha, len(changed))
+        BUS.publish({"type": "git_update", "sha": commit_sha, "msg": commit_msg,
+                     "results": {}, "skipped": "panel-only"})
+        return {"ok": True, "sha": commit_sha, "skipped": "panel-only",
+                "files": sorted(changed)}
     log.info("github webhook: push to main %s '%s' → triggering workers", commit_sha, commit_msg)
     # Fan-out: send git_update to every connected worker (parallel).
     results = {}
