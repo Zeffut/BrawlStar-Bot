@@ -817,6 +817,38 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
 # ------------------------------------------------------ ws client
 
 
+# ---- live stream -------------------------------------------------
+# Push JPEG frames from the existing screenrecord buffer over the WS, but only
+# while a browser is watching (cloud sends start_stream/stop_stream). Reuses
+# the bot's H264 capture (screen_capture) — no extra device capture.
+_STREAM_FPS = 13
+_STREAM_JPEG_QUALITY = 55
+
+
+def _encode_stream_frame():
+    """Latest screenrecord frame → (b64 jpeg, w, h), or None if unavailable."""
+    try:
+        import cv2
+        import base64 as _b64
+        import screen_capture as _sc
+        rec = _sc.get()
+        if rec is None:
+            return None
+        f = rec.get_frame()
+        age = rec.get_frame_age()
+        if f is None or age is None or age > 2.0:
+            return None
+        ok, buf = cv2.imencode(".jpg", f,
+                               [cv2.IMWRITE_JPEG_QUALITY, _STREAM_JPEG_QUALITY])
+        if not ok:
+            return None
+        h, w = f.shape[:2]
+        return _b64.b64encode(buf.tobytes()).decode("ascii"), w, h
+    except Exception:
+        log.debug("encode_stream_frame failed", exc_info=True)
+        return None
+
+
 async def _run_ws_client():
     cfg = _cfg()
     if not cfg or not cfg.get("enabled"):
@@ -928,6 +960,41 @@ async def _run_ws_client():
 
                 sender_task = asyncio.create_task(sender_loop())
 
+                # Live stream: push JPEG frames at ~_STREAM_FPS while the cloud
+                # has a browser watching (start_stream/stop_stream toggle it).
+                # Skips frames identical to the last one (static lobby) but
+                # sends a keepalive at least every 2s so the viewer stays live.
+                stream_state = {"on": False}
+
+                async def stream_loop():
+                    interval = 1.0 / _STREAM_FPS
+                    last_b64 = None
+                    last_sent = 0.0
+                    while True:
+                        await asyncio.sleep(interval)
+                        if not stream_state["on"]:
+                            last_b64 = None
+                            continue
+                        try:
+                            res = await asyncio.get_running_loop().run_in_executor(
+                                None, _encode_stream_frame)
+                            if res is None:
+                                continue
+                            b64, w, h = res
+                            now = time.time()
+                            if b64 == last_b64 and (now - last_sent) < 2.0:
+                                continue  # unchanged frame, skip (save bandwidth)
+                            last_b64 = b64
+                            last_sent = now
+                            await ws.send(json.dumps({
+                                "type": "stream_frame", "b64": b64, "w": w, "h": h}))
+                        except websockets.exceptions.ConnectionClosed:
+                            return
+                        except Exception:
+                            log.debug("stream frame push failed", exc_info=True)
+
+                stream_task = asyncio.create_task(stream_loop())
+
                 async def _run_cmd(cmd_id: str, name: str, handler, args: dict) -> None:
                     """Run a single command in the thread pool and reply.
 
@@ -958,7 +1025,16 @@ async def _run_ws_client():
                         msg = json.loads(raw)
                     except Exception:
                         continue
-                    if msg.get("type") == "cmd":
+                    mtype = msg.get("type")
+                    if mtype == "start_stream":
+                        stream_state["on"] = True
+                        log.info("live stream: ON")
+                        continue
+                    if mtype == "stop_stream":
+                        stream_state["on"] = False
+                        log.info("live stream: OFF")
+                        continue
+                    if mtype == "cmd":
                         cmd_id = msg.get("id")
                         name = msg.get("name")
                         args = msg.get("args") or {}
@@ -974,6 +1050,7 @@ async def _run_ws_client():
                         # must not block screenshot requests).
                         asyncio.create_task(_run_cmd(cmd_id, name, handler, args))
                 sender_task.cancel()
+                stream_task.cancel()
         except Exception as exc:
             log.warning("worker_link disconnected: %s", exc)
         # exponential-ish backoff before reconnecting

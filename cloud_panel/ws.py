@@ -60,6 +60,10 @@ class WorkerConnection:
     # ring buffer of recent log lines
     logs: collections.deque = field(default_factory=lambda: collections.deque(maxlen=LOG_BUFFER))
     connected_at: float = field(default_factory=time.time)
+    # live-stream: browser asyncio.Queues subscribed to this worker's frames.
+    # The worker only streams while len(stream_subs) > 0 (start/stop_stream).
+    stream_subs: set = field(default_factory=set)
+    last_stream_frame: dict | None = None
 
 
 # ---- SSE broadcaster ----------------------------------------------
@@ -190,6 +194,35 @@ class WorkerHub:
             conn.pending.pop(cmd_id, None)
             raise TimeoutError(f"command {name} timed out after {timeout_s}s")
 
+    async def stream_subscribe(self, instance_id: str):
+        """Register a browser as a live-stream viewer. Returns a frame Queue
+        (maxsize 2 → stale frames drop for slow clients) or None if the worker
+        isn't connected. Sends start_stream to the worker on the FIRST viewer."""
+        conn = self.get(instance_id)
+        if conn is None:
+            return None
+        q: asyncio.Queue = asyncio.Queue(maxsize=2)
+        first = not conn.stream_subs
+        conn.stream_subs.add(q)
+        if first:
+            try:
+                await conn.ws.send_text(json.dumps({"type": "start_stream"}))
+            except Exception:
+                log.debug("start_stream send failed", exc_info=True)
+        return q
+
+    async def stream_unsubscribe(self, instance_id: str, q) -> None:
+        """Drop a viewer. Sends stop_stream to the worker on the LAST viewer."""
+        conn = self.get(instance_id)
+        if conn is None:
+            return
+        conn.stream_subs.discard(q)
+        if not conn.stream_subs:
+            try:
+                await conn.ws.send_text(json.dumps({"type": "stop_stream"}))
+            except Exception:
+                log.debug("stop_stream send failed", exc_info=True)
+
 
 HUB = WorkerHub()
 
@@ -234,6 +267,17 @@ async def worker_ws_endpoint(ws: WebSocket, token: str = "", instance_id: str = 
                 conn.last_screenshot_b64 = b64
                 conn.last_screenshot_mime = mime
                 conn.last_screenshot_at = time.time()
+            elif mtype == "stream_frame":
+                # Live-stream JPEG frame from the worker → fan out to browser
+                # subscribers. Drop on full queue (slow client = drop stale).
+                frame = {"b64": msg.get("b64"), "w": msg.get("w"),
+                         "h": msg.get("h"), "ts": time.time()}
+                conn.last_stream_frame = frame
+                for q in list(conn.stream_subs):
+                    try:
+                        q.put_nowait(frame)
+                    except asyncio.QueueFull:
+                        pass
             elif mtype == "snapshot":
                 data = msg.get("data") or {}
                 conn.last_snapshot = {**data, "_pushed_at": time.time()}

@@ -15,7 +15,7 @@ import time
 log = logging.getLogger(__name__)
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException, Request, WebSocket
+from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -813,6 +813,34 @@ def api_account_brawlers_refresh(account_id: int) -> dict:
 async def ws_worker(ws: WebSocket, token: str = "", instance_id: str = "") -> None:
     """Persistent WS endpoint a worker connects to at startup."""
     await worker_ws_endpoint(ws, token=token, instance_id=instance_id)
+
+
+@app.websocket("/ws/stream/{instance_db_id}")
+async def ws_stream(ws: WebSocket, instance_db_id: str) -> None:
+    """Browser live-stream viewer. Relays the worker's screenrecord JPEG frames
+    (text JSON {b64,w,h,ts}) at ~13 fps. Subscribing tells the worker to start
+    streaming; the last viewer leaving tells it to stop. Unauthenticated like
+    /api/events (read-only game view; the browser can't set WS auth headers)."""
+    await ws.accept()
+    inst_id = _resolve_instance(instance_db_id)
+    if not inst_id:
+        await ws.close(code=1008, reason="instance not found")
+        return
+    q = await HUB.stream_subscribe(inst_id)
+    if q is None:
+        await ws.close(code=1011, reason="worker not connected")
+        return
+    try:
+        conn = HUB.get(inst_id)
+        if conn and conn.last_stream_frame:  # paint immediately, don't wait
+            await ws.send_text(_json.dumps(conn.last_stream_frame))
+        while True:
+            frame = await q.get()
+            await ws.send_text(_json.dumps(frame))
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        await HUB.stream_unsubscribe(inst_id, q)
 
 
 def _resolve_instance(instance_id_or_db_id: int | str):

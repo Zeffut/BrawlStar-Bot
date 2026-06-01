@@ -577,11 +577,13 @@ function openDeviceConsole() {
   refreshDevicePanel();           // load immediately on open
   if (deviceTimer) clearInterval(deviceTimer);
   deviceTimer = setInterval(refreshDevicePanel, 5000);
+  // Stream starts inside refreshDevicePanel once the instance id is resolved.
 }
 function closeDeviceConsole() {
   document.getElementById("device-panel").hidden = true;
   deviceConsoleOpen = false;
   if (deviceTimer) { clearInterval(deviceTimer); deviceTimer = null; }
+  _stopStream();
 }
 
 function openDeviceConsoleForInstance(instanceId, instanceUid) {
@@ -600,6 +602,7 @@ function openDeviceConsoleForInstance(instanceId, instanceUid) {
   refreshDevicePanelForInstance(instanceId);
   if (deviceTimer) clearInterval(deviceTimer);
   deviceTimer = setInterval(() => refreshDevicePanelForInstance(instanceId), 5000);
+  _startStream(instanceId);   // live ~13fps stream
 }
 
 async function refreshDevicePanelForInstance(instanceId) {
@@ -624,6 +627,9 @@ async function refreshDevicePanel() {
   if (!inst) { document.getElementById("device-panel").hidden = true; return; }
   selectedInstanceForDevice = inst.id;
   document.getElementById("device-panel").hidden = false;
+  // Start the live stream now that we know the instance (idempotent: only if
+  // not already streaming). Also re-arms it if the WS dropped between ticks.
+  if (deviceConsoleOpen && !_streamActive()) _startStream(inst.id);
 
   // Fetch health and logs only (screenshot is on-demand via "↻ refresh now").
   const [healthRes, logsRes] = await Promise.all([
@@ -799,8 +805,52 @@ function _enableRemoteControl(on) {
   if (on) _remoteAutoRefresh = setInterval(_remoteRefreshScreen, 4000);
 }
 
+// ---- Live stream (WebSocket, ~13 fps JPEG pushed by the worker) ----
+// Replaces the old ~4s screenshot polling. The worker only streams while this
+// WS is connected (cloud sends start/stop_stream to it).
+let _streamWS = null;
+let _streamReconnect = null;
+function _startStream(instanceId) {
+  _stopStream();
+  if (!instanceId) return;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  let ws;
+  try { ws = new WebSocket(`${proto}//${location.host}/ws/stream/${instanceId}`); }
+  catch (_) { return; }
+  _streamWS = ws;
+  ws.onmessage = (ev) => {
+    try {
+      const f = JSON.parse(ev.data);
+      if (f && f.b64) {
+        const img = document.getElementById("device-screen");
+        if (img) img.src = "data:image/jpeg;base64," + f.b64;
+      }
+    } catch (_) {}
+  };
+  ws.onclose = () => {
+    if (_streamWS === ws) _streamWS = null;
+    // Reconnect while the console stays open (worker reconnect, blips…).
+    if (deviceConsoleOpen && !_streamReconnect) {
+      _streamReconnect = setTimeout(() => {
+        _streamReconnect = null;
+        if (deviceConsoleOpen) _startStream(selectedInstanceForDevice);
+      }, 2000);
+    }
+  };
+  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+}
+function _stopStream() {
+  if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
+  if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
+}
+function _streamActive() {
+  return !!_streamWS && _streamWS.readyState === WebSocket.OPEN;
+}
+
 let _remoteRefreshing = false;
 async function _remoteRefreshScreen() {
+  // The live WS stream is the primary source — skip the slow poll when it's up.
+  if (_streamActive()) return;
   if (!selectedInstanceForDevice || !_remoteEnabled) return;
   // A live capture takes ~2s (real phone screencap over WiFi→Pi). Skip a
   // tick if the previous one is still in flight so requests don't pile up.
