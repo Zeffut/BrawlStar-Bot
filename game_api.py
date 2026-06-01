@@ -460,15 +460,11 @@ class GameAPI:
             st = get_state(img)
         except Exception:
             st = "unknown"
-        # OCR trophies ONLY on the lobby screen — on other screens (end
-        # of match, brawler menu, etc) the top-left corner contains a
-        # totally different number (daily wins, brawler trophies, etc).
+        # Trophy counting no longer uses OCR (it drifted ~1000). The account
+        # total comes from the brawlace API + per-match deltas, pushed
+        # separately (account_trophies_after). The snapshot reports no trophy
+        # number so nothing OCR-derived reaches the panel.
         trophies = None
-        try:
-            if st == "lobby":
-                trophies = _ocr_trophies(np.array(img))
-        except Exception:
-            pass
         bat = self.battery_status()
         lvl = bat.get("level")
         chg = bat.get("charging")

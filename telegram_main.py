@@ -643,59 +643,6 @@ class BotRunner:
             self.main_instance = None
             log.info("Bot run ended")
 
-    def _read_brawler_trophies(self, main_instance) -> int | None:
-        """OCR the trophy badge on the current brawler's lobby card.
-
-        Returns the trophy count if found, else None. Tries for ~10s,
-        waiting until the bot is back on the lobby screen.
-        """
-        import numpy as np
-        from utils import extract_text_and_positions
-
-        wc = main_instance.window_controller
-        deadline = time.time() + 10
-        single_fallback = None
-        while time.time() < deadline:
-            try:
-                frame = wc.screenshot()
-                if frame is None:
-                    time.sleep(0.3)
-                    continue
-                if get_state(frame) != "lobby":
-                    time.sleep(0.5)
-                    continue
-                # Trophy badge on the brawler card: "<cup-icon> NNN" with
-                # a circular rank badge to the right. The leading "1" gets
-                # confused with the gold cup icon if we OCR the raw crop
-                # (returns "761" instead of "161"). Fix: keep only
-                # near-white pixels — that drops the cup icon and the
-                # rank-circle background, leaving only the white digits.
-                img = frame.convert('RGB').resize((1920, 1080))
-                crop = np.array(img.crop((900, 150, 1100, 240)))
-                mask = (crop[:, :, 0] > 200) & (crop[:, :, 1] > 200) & (crop[:, :, 2] > 200)
-                clean = np.zeros_like(crop)
-                clean[mask] = [255, 255, 255]
-                from PIL import Image as _Image
-                up = _Image.fromarray(clean).resize(
-                    (clean.shape[1] * 4, clean.shape[0] * 4)
-                )
-                cands = []
-                for key in extract_text_and_positions(np.array(up)).keys():
-                    d = ''.join(c for c in key if c.isdigit())
-                    if d and 0 < int(d) <= 9999:
-                        cands.append(d)
-                # Prefer a multi-digit reading (trophy counts are 2-4 digits).
-                # Returning the first token would sometimes catch a stray "1"
-                # from the rank badge / cup icon, seeding the session wrong.
-                multi = [c for c in cands if len(c) >= 2]
-                if multi:
-                    return int(max(multi, key=lambda s: (len(s), int(s))))
-                if cands and single_fallback is None:
-                    single_fallback = int(cands[0])
-            except Exception as exc:
-                log.warning("_read_brawler_trophies error: %s", exc)
-            time.sleep(0.5)
-        return single_fallback
 
     def _install_match_hook(self, main_instance) -> None:
         """Wrap Trophy_observer.add_trophies to push a Telegram log line
@@ -752,8 +699,9 @@ class BotRunner:
             log.exception("could not seed account trophies; starting at 0")
             self._account_trophies = 0
 
-        # Current brawler's trophy count: prefer the brawlace per-brawler
-        # value, fall back to the lobby-card OCR only if absent.
+        # Current brawler's trophy count: from the brawlace API ONLY (no OCR).
+        # Trophy counting uses the API + per-match deltas exclusively — the
+        # on-screen OCR was dropped (it caused ~100-trophy drift).
         current = None
         if profile:
             for b in profile.get("brawlers", []):
@@ -763,10 +711,6 @@ class BotRunner:
         if current is not None:
             log.info("seed current-brawler '%s' trophies from brawlace: %d",
                      brawler, current)
-        else:
-            log.debug("brawler not in profile; falling back to lobby-card OCR…")
-            current = self._read_brawler_trophies(main_instance)
-            log.info("trophy OCR result: %s", current)
 
         if current is not None:
             observer.current_trophies = current
@@ -911,13 +855,27 @@ class BotRunner:
                                 return
                             from account_detect import fetch_account_profile
                             prof = fetch_account_profile(acc["tag"])
-                            for b in prof.get("brawlers", []):
+                            brawlers = prof.get("brawlers", [])
+                            if not brawlers:
+                                return
+                            # RE-ANCHOR the account total on the brawlace SUM —
+                            # the API is the source of truth. This kills the
+                            # ~1000-trophy drift from accumulating per-match
+                            # delta ESTIMATES indefinitely; deltas only fill the
+                            # gap between re-syncs now.
+                            total = sum(b.get("trophies", 0) for b in brawlers)
+                            if total > 0:
+                                if abs(total - runner._account_trophies) > 5:
+                                    log.info("brawlace re-anchor: account total %d → %d",
+                                             runner._account_trophies, total)
+                                runner._account_trophies = total
+                            # Correct the current brawler's tracked trophies
+                            # upward (for the efficiency ceiling).
+                            for b in brawlers:
                                 if b.get("name", "").lower() == brawler_name.lower():
                                     real = b.get("trophies") or 0
                                     bs = pm.brawlers.get(brawler_name)
                                     if bs and real > bs.trophies:
-                                        log.info("brawlace re-sync: %s %d → %d",
-                                                 brawler_name, bs.trophies, real)
                                         bs.trophies = real
                                         obs.current_trophies = real
                                     break
