@@ -70,10 +70,11 @@ def test_accounts_needing_refresh(cdb):
     cdb.set_account_brawlers(fresh, [{"name": "a", "power": 1, "trophies": 1}])
     cdb.set_account_brawlers(stale, [{"name": "b", "power": 1, "trophies": 1}])
     # Manually backdate "stale" so its refreshed_at is > 1h old.
-    cdb.conn().execute(
-        "UPDATE accounts SET brawlers_refreshed_at = ? WHERE id = ?",
-        (time.time() - 7200, stale),
-    )
+    with cdb.conn().cursor() as c:
+        c.execute(
+            "UPDATE accounts SET brawlers_refreshed_at = %s WHERE id = %s",
+            (time.time() - 7200, stale),
+        )
     needs = cdb.accounts_needing_refresh(stale_after_s=3600)
     ids = {a["id"] for a in needs}
     assert never in ids, "never-fetched account should always need refresh"
