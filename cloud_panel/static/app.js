@@ -285,6 +285,9 @@ function _applyDashboard(dash) {
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
   document.getElementById("acc-instance").textContent =
     `on ${acc.instance_name || acc.instance_uid}`;
+  // Remember this account's instance for the main-page live toggle (stops the
+  // stream if we switched accounts).
+  _setMainStreamUid(acc.instance_uid);
 
   // Use the whole-history stats (real COUNT + win/loss) so the KPIs reflect
   // every match, not just the recent page loaded for the table below.
@@ -806,13 +809,18 @@ function _enableRemoteControl(on) {
 }
 
 // ---- Live stream (WebSocket, ~13 fps JPEG pushed by the worker) ----
-// Replaces the old ~4s screenshot polling. The worker only streams while this
-// WS is connected (cloud sends start/stop_stream to it).
+// Multi-target: one stream paints every active <img> (the main-page Game
+// Control view AND the Device console). The worker streams only while ≥1
+// target is active (cloud start/stop_stream on first/last subscriber).
 let _streamWS = null;
 let _streamReconnect = null;
-function _startStream(instanceId) {
-  _stopStream();
-  if (!instanceId) return;
+let _streamInstanceId = null;
+const _streamTargets = new Set();   // element ids to paint each frame onto
+
+function _streamConnect(instanceId) {
+  if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
+  if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
+  _streamInstanceId = instanceId;
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   let ws;
   try { ws = new WebSocket(`${proto}//${location.host}/ws/stream/${instanceId}`); }
@@ -822,30 +830,69 @@ function _startStream(instanceId) {
     try {
       const f = JSON.parse(ev.data);
       if (f && f.b64) {
-        const img = document.getElementById("device-screen");
-        if (img) img.src = "data:image/jpeg;base64," + f.b64;
+        const url = "data:image/jpeg;base64," + f.b64;
+        _streamTargets.forEach(id => {
+          const img = document.getElementById(id);
+          if (img) img.src = url;
+        });
       }
     } catch (_) {}
   };
   ws.onclose = () => {
     if (_streamWS === ws) _streamWS = null;
-    // Reconnect while the console stays open (worker reconnect, blips…).
-    if (deviceConsoleOpen && !_streamReconnect) {
+    if (_streamTargets.size && !_streamReconnect) {
       _streamReconnect = setTimeout(() => {
         _streamReconnect = null;
-        if (deviceConsoleOpen) _startStream(selectedInstanceForDevice);
+        if (_streamTargets.size && _streamInstanceId) _streamConnect(_streamInstanceId);
       }, 2000);
     }
   };
   ws.onerror = () => { try { ws.close(); } catch (_) {} };
 }
-function _stopStream() {
-  if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
-  if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
+function _streamEnsure(instanceId, targetId) {
+  if (!instanceId || !targetId) return;
+  _streamTargets.add(targetId);
+  if (!_streamActive() || _streamInstanceId !== instanceId) _streamConnect(instanceId);
+}
+function _streamDrop(targetId) {
+  _streamTargets.delete(targetId);
+  if (!_streamTargets.size) {
+    if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
+    if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
+    _streamInstanceId = null;
+  }
 }
 function _streamActive() {
   return !!_streamWS && _streamWS.readyState === WebSocket.OPEN;
 }
+// Device-console callers (target = the console's #device-screen img).
+function _startStream(instanceId) { _streamEnsure(instanceId, "device-screen"); }
+function _stopStream() { _streamDrop("device-screen"); }
+
+// ---- Main-page live toggle (Game Control, target = #gc-screenshot) ----
+let _mainStreamUid = null;   // instance uid of the currently-selected account
+function _setMainStreamUid(uid) {
+  // Account switched: stop streaming the old one if it was live.
+  if (uid !== _mainStreamUid) _stopMainStream();
+  _mainStreamUid = uid || null;
+}
+function _toggleMainStream() {
+  const btn = document.getElementById("gc-live-toggle");
+  const on = _streamTargets.has("gc-screenshot");
+  if (on) { _stopMainStream(); }
+  else if (_mainStreamUid) {
+    _streamEnsure(_mainStreamUid, "gc-screenshot");
+    if (btn) { btn.textContent = "⏸ Live"; btn.classList.add("live-on"); }
+    const meta = document.getElementById("gc-screen-meta");
+    if (meta) meta.textContent = "live ~13 fps · streaming";
+  }
+}
+function _stopMainStream() {
+  _streamDrop("gc-screenshot");
+  const btn = document.getElementById("gc-live-toggle");
+  if (btn) { btn.textContent = "▶ Live"; btn.classList.remove("live-on"); }
+}
+document.getElementById("gc-live-toggle")?.addEventListener("click", _toggleMainStream);
 
 let _remoteRefreshing = false;
 async function _remoteRefreshScreen() {

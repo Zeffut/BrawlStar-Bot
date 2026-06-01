@@ -797,6 +797,9 @@ main {
   transition: all var(--fast);
 }
 .gc-capture-btn:hover { background: var(--primary); border-color: var(--primary); }
+/* Live-stream toggle sits bottom-left so it doesn't overlap the capture btn. */
+.gc-live-btn { right: auto; left: 10px; }
+.gc-live-btn.live-on { background: #34c778; border-color: #34c778; color: #06210f; }
 .gc-capture-btn:disabled { opacity: .5; cursor: wait; }
 .gc-meta { font-size: 11px; color: var(--muted); margin-top: 6px; font-family: 'JetBrains Mono', monospace; }
 
