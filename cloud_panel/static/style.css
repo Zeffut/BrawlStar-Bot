@@ -1242,9 +1242,23 @@ main {
 
 .lists {
   display: grid;
-  grid-template-columns: 1.4fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
+  align-items: start;
 }
+/* Session status pill */
+.sess-badge {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  line-height: 1.5;
+}
+.sess-badge.sess-running { background: rgba(52,199,120,.15); color: #34c778; }
+.sess-badge.sess-stopped { background: rgba(120,134,156,.15); color: #8a96a8; }
+.sess-badge.sess-done    { background: rgba(79,140,240,.15); color: #6ea4ff; }
 .list-card {
   background: var(--surface);
   border: 1px solid var(--border);

@@ -497,12 +497,12 @@ def log_match(account_id: int, session_id: int | None, brawler: str,
         return c.fetchone()["id"]
 
 
-def recent_matches(account_id: int, limit: int = 200) -> list[dict]:
+def recent_matches(account_id: int, limit: int = 200, offset: int = 0) -> list[dict]:
     with _lock, _cur() as c:
         c.execute(
             "SELECT * FROM matches WHERE account_id = %s "
-            "ORDER BY timestamp DESC LIMIT %s",
-            (account_id, limit),
+            "ORDER BY timestamp DESC LIMIT %s OFFSET %s",
+            (account_id, limit, offset),
         )
         rows = c.fetchall()
     return [dict(r) for r in rows]

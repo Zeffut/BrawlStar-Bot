@@ -308,31 +308,75 @@ function _applyDashboard(dash) {
   // Cap displayed rows to keep the page lightweight. The full history
   // is still available via the API; tables also become scrollable
   // (see .list-card max-height in style.css).
-  const MAX_MATCHES_DISPLAYED = 50;
   const MAX_SESSIONS_DISPLAYED = 20;
 
-  const mt = document.querySelector("#matches-table tbody"); mt.innerHTML = "";
-  const shownMatches = matches.slice(0, MAX_MATCHES_DISPLAYED);
-  for (const m of shownMatches) {
-    const d = (m.trophies_after ?? 0) - (m.trophies_before ?? 0);
-    mt.innerHTML += `<tr><td>${fmtTime(m.timestamp)}</td><td>${m.brawler}</td>
-      <td class="result-${m.result}">${m.result}</td>
-      <td class="${deltaClass(d)}">${d>=0?'+':''}${d}</td>
-      <td>${m.trophies_before} → ${m.trophies_after}</td></tr>`;
-  }
-  _updateTableCount("matches-table", shownMatches.length, totalMatches);
+  // Recent matches: render the first page, then lazy-load more on scroll
+  // (like the activity feed) instead of capping at a fixed count.
+  _matchTotal = totalMatches;
+  const mt = document.querySelector("#matches-table tbody");
+  const firstPage = matches.slice(0, MATCH_PAGE);
+  mt.innerHTML = firstPage.map(_matchRowHtml).join("");
+  _matchOffset = firstPage.length;
+  _updateTableCount("matches-table", _matchOffset, _matchTotal);
+  _bindMatchScroll();
 
   const st = document.querySelector("#sessions-table tbody"); st.innerHTML = "";
   const allSessions = acc.sessions || [];
   const shownSessions = allSessions.slice(0, MAX_SESSIONS_DISPLAYED);
   for (const s of shownSessions) {
     const d = (s.end_trophies!=null && s.start_trophies!=null) ? s.end_trophies - s.start_trophies : null;
+    // push_max uses 99999 as a "no per-session target" sentinel — show it as
+    // "Push Max" instead of a meaningless number.
+    const tgt = (s.target_trophies == null || s.target_trophies >= 99999)
+      ? '<span class="muted">Push Max</span>'
+      : `${s.target_trophies} 🏆`;
+    const sc = s.status === 'running' ? 'sess-running'
+      : (s.status === 'stopped' ? 'sess-stopped' : 'sess-done');
     st.innerHTML += `<tr><td>${fmtDate(s.started_at)}</td><td>${s.brawler}</td>
-      <td>${s.target_trophies}</td>
+      <td>${tgt}</td>
       <td class="${d!=null?deltaClass(d):''}">${d!=null ? (d>=0?'+':'')+d : '—'}</td>
-      <td>${s.status}</td></tr>`;
+      <td><span class="sess-badge ${sc}">${s.status}</span></td></tr>`;
   }
   _updateTableCount("sessions-table", shownSessions.length, allSessions.length);
+}
+
+// ---- Recent matches pagination (lazy-load on scroll) ----
+const MATCH_PAGE = 50;
+let _matchOffset = 0, _matchTotal = 0, _matchLoading = false;
+
+function _matchRowHtml(m) {
+  const d = (m.trophies_after ?? 0) - (m.trophies_before ?? 0);
+  return `<tr><td>${fmtTime(m.timestamp)}</td><td>${m.brawler}</td>
+    <td class="result-${m.result}">${m.result}</td>
+    <td class="${deltaClass(d)}">${d>=0?'+':''}${d}</td>
+    <td>${m.trophies_before} → ${m.trophies_after}</td></tr>`;
+}
+
+async function loadMoreMatches() {
+  if (!selectedAccountId || _matchLoading || _matchOffset >= _matchTotal) return;
+  _matchLoading = true;
+  try {
+    const r = await api(
+      `/api/accounts/${selectedAccountId}/matches?limit=${MATCH_PAGE}&offset=${_matchOffset}`,
+      {silent: true});
+    const items = (r && r.items) || [];
+    if (items.length) {
+      document.querySelector("#matches-table tbody")
+        .insertAdjacentHTML("beforeend", items.map(_matchRowHtml).join(""));
+      _matchOffset += items.length;
+      if (typeof r.total === "number") _matchTotal = r.total;
+      _updateTableCount("matches-table", _matchOffset, _matchTotal);
+    }
+  } catch (e) {} finally { _matchLoading = false; }
+}
+
+function _bindMatchScroll() {
+  const tbl = document.querySelector("#matches-table");
+  if (!tbl || tbl._scrollBound) return;
+  tbl._scrollBound = true;
+  tbl.addEventListener("scroll", () => {
+    if (tbl.scrollTop + tbl.clientHeight >= tbl.scrollHeight - 60) loadMoreMatches();
+  });
 }
 
 function _updateTableCount(tableId, shown, total) {
@@ -407,9 +451,8 @@ function renderProgression(rows) {
   // proportional — long idle gaps now show as wide empty stretches,
   // dense grind clusters as packed lines. Previous version used
   // evenly-spaced string labels and lost all temporal nuance.
-  // Trophy changes are instantaneous (end-of-match jumps), so we use a
-  // stepped line: the value stays flat between matches and jumps at the
-  // next data point. Plus we extend the last value to "now" so the
+  // Smooth monotone curve through the points (no more staircase steps) —
+  // nicer to read at a glance. We extend the last value to "now" so the
   // chart doesn't end on a stale point with an ugly trailing gap.
   const points = rows.map(m => ({x: m.timestamp, y: m.account_trophies_after}));
   if (points.length > 0) {
@@ -426,7 +469,7 @@ function renderProgression(rows) {
       plugins: [_crosshairPlugin],
       data: { datasets: [{ label: "Trophies", data: points,
         borderColor: "#4f8cf0", backgroundColor: "rgba(79,140,240,0.12)",
-        borderWidth: 2, tension: 0, stepped: "after",
+        borderWidth: 2, tension: 0.35, stepped: false, cubicInterpolationMode: "monotone",
         pointRadius: 0, pointHoverRadius: 6,
         pointHoverBackgroundColor: "#6ea4ff",
         pointHoverBorderColor: "#fff", pointHoverBorderWidth: 2,
@@ -1581,42 +1624,39 @@ loadActivity();
 
 // ----------------- Telegram alerts config -----------------
 
+// Global alert events (cloud-side notif config — shared across all
+// instances, NOT per-instance). Keys match notif.py KNOWN_EVENTS.
 const ALERT_LABELS = {
   match: "Chaque match",
   target_reached: "Objectif atteint",
-  cycle_started: "Début de cycle",
-  cycle_started_no_ocr: "Cycle (OCR fail)",
-  stop_during_init: "Stop pendant init",
-  bot_stuck: "Bot bloqué",
   battery_low: "Batterie faible",
   battery_resumed: "Batterie OK",
+  bot_stuck: "Bot bloqué",
+  instance_disconnected: "Instance déconnectée",
   session_ended: "Session terminée",
 };
 
 async function loadAlerts() {
-  if (!selectedAccountId) return;
-  const acc = _lastAccounts.find(a => a.id === selectedAccountId);
-  if (!acc) return;
-  const instances = await api("/api/instances", {silent: true}).catch(() => []);
-  const inst = instances.find(i => i.instance_id === acc.instance_uid);
-  if (!inst) return;
   const list = document.getElementById("alerts-list");
   const statusEl = document.getElementById("alerts-status");
+  if (!list) return;
   statusEl.textContent = "loading…";
   try {
-    const r = await api(`/api/instances/${inst.id}/alerts`, {silent: true});
-    const cfg = (r?.ok && r.data) || {};
+    // Global config — one set of toggles for ALL instances (the cloud
+    // dispatches the alerts), not a per-instance config.
+    const cfg = await api("/api/config/notif", {silent: true});
+    const events = (cfg && cfg.events) || {};
     const known = Object.keys(ALERT_LABELS);
     list.innerHTML = "";
-    const enabled = known.filter(k => cfg[k]?.enabled).length;
+    const enabled = known.filter(k => events[k]?.telegram).length;
     statusEl.textContent = `${enabled}/${known.length} active`;
     for (const event of known) {
-      const c = cfg[event] || {enabled: false};
+      const on = !!(events[event] && events[event].telegram);
       const row = document.createElement("div");
       row.className = "alert-row";
       row.innerHTML = `
         <label class="toggle">
-          <input type="checkbox" ${c.enabled ? "checked" : ""} data-event="${event}">
+          <input type="checkbox" ${on ? "checked" : ""} data-event="${event}">
           <span class="slider"></span>
         </label>
         <div class="name">${ALERT_LABELS[event]}</div>
@@ -1624,18 +1664,18 @@ async function loadAlerts() {
       `;
       list.appendChild(row);
       row.querySelector("input").addEventListener("change", async (e) => {
-        const enabled = e.target.checked;
+        const en = e.target.checked;
         try {
-          await api(`/api/instances/${inst.id}/alerts`, {
-            method: "PUT", body: {event, enabled},
+          // Partial update — set_config merges onto the current config.
+          await api("/api/config/notif", {
+            method: "PUT", body: {events: {[event]: {telegram: en}}},
           });
-          showToast(`${ALERT_LABELS[event]} : ${enabled ? "ON" : "OFF"}`, "ok");
-          // Refresh count.
-          const newCount = Array.from(list.querySelectorAll("input"))
+          showToast(`${ALERT_LABELS[event]} : ${en ? "ON" : "OFF"}`, "ok");
+          const n = Array.from(list.querySelectorAll("input"))
             .filter(i => i.checked).length;
-          statusEl.textContent = `${newCount}/${known.length} active`;
+          statusEl.textContent = `${n}/${known.length} active`;
         } catch (err) {
-          e.target.checked = !enabled;  // revert
+          e.target.checked = !en;  // revert
         }
       });
     }

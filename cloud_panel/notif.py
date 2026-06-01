@@ -88,8 +88,12 @@ def get_config() -> dict:
 
 
 def set_config(payload: dict) -> dict:
-    """Validate + persist config. Returns the merged effective config."""
-    merged = _merge(DEFAULT_CONFIG, payload)
+    """Validate + persist config. Returns the merged effective config.
+
+    Merges onto the CURRENT effective config (not bare defaults) so a partial
+    update — e.g. toggling one event's telegram flag — preserves everything
+    else (bot_token, other events, …)."""
+    merged = _merge(get_config(), payload)
     db.set_config("notif", merged)
     return merged
 

@@ -406,8 +406,14 @@ def api_account(account_id: int) -> dict:
 
 
 @app.get("/api/accounts/{account_id}/matches")
-def api_account_matches(account_id: int, limit: int = 200) -> list[dict]:
-    return db.recent_matches(account_id, limit=limit)
+def api_account_matches(account_id: int, limit: int = 50, offset: int = 0) -> dict:
+    """Paginated match history: {total, offset, limit, items}. Lets the UI
+    lazy-load more rows on scroll instead of capping at the first page."""
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    total = db.match_stats(account_id)["total"]
+    items = db.recent_matches(account_id, limit=limit, offset=offset)
+    return {"total": total, "offset": offset, "limit": limit, "items": items}
 
 
 @app.get("/api/accounts/{account_id}/dashboard")
