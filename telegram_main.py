@@ -260,7 +260,7 @@ class BotRunner:
                     return False, "push_max needs the owned-brawlers list."
                 self._push_max = PushMaxStrategy.from_owned(
                     owned_brawlers, brawler_max_trophies=per_brawler_max_trophies,
-                    no_swap=True)
+                    no_swap=False)
                 # Pick the starter brawler from the strategy.
                 first = self._push_max.pick_next()
                 if first is None:
