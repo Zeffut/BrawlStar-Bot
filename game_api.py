@@ -795,31 +795,35 @@ class GameAPI:
             img = self._grab()
             arr = np.array(img)
             text = extract_text_and_positions(arr)
-            keys_lower = {k.lower() for k in text.keys()}
-            # Detection heuristic: either the title or the REFUSER button.
-            has_invite = any(
-                ("invitation" in k and ("equipe" in k or "team" in k or "equip" in k))
-                or "invitation dequipe" in k
-                for k in keys_lower
+            # Match on the JOINED text, not per-token: "INVITATION" and
+            # "D'ÉQUIPE" come back as SEPARATE OCR tokens, so the old
+            # per-token "invitation AND equipe" check never fired and the
+            # popup blocked the lobby forever. The REFUSER+ACCEPTER button
+            # pair is also a dead giveaway of an invite popup.
+            joined = " ".join(k.lower() for k in text.keys())
+            has_invite = (
+                ("invitation" in joined
+                 and ("equipe" in joined or "team" in joined or "equip" in joined))
+                or ("refuser" in joined and "accepter" in joined)
+                or ("decline" in joined and "accept" in joined)
             )
-            refuser_pos = None
+            if not has_invite:
+                return False
+            # Prefer tapping the OCR'd REFUSER button precisely.
+            h, w = arr.shape[:2]
             for k, v in text.items():
                 kl = k.lower()
-                if "refuser" in kl or "decline" in kl or "refus" == kl:
-                    refuser_pos = v.get("center")
-                    break
-            if has_invite and refuser_pos:
-                h, w = arr.shape[:2]
-                cx, cy = refuser_pos
-                log.info("team invite detected -> tapping REFUSER at (%d,%d)", cx, cy)
-                self.tap(cx / w, cy / h)
-                return True
-            # Fallback: invite-shaped layout but OCR missed REFUSER text;
-            # tap the canonical position (left button of pair).
-            if has_invite:
-                log.info("team invite detected (REFUSER text missed) -> tapping (0.42, 0.63)")
-                self.tap(0.42, 0.63)
-                return True
+                if "refuser" in kl or "decline" in kl or "refus" in kl:
+                    cx, cy = v.get("center", [0, 0])
+                    if cx > 0 and cy > 0:
+                        log.info("team invite -> tapping REFUSER at (%d,%d)", cx, cy)
+                        self.tap(cx / w, cy / h)
+                        return True
+            # Fallback: REFUSER text missed — tap the red (left) button of
+            # the invite's button pair (≈38% width, ≈76% height).
+            log.info("team invite detected (REFUSER text missed) -> tap (0.38,0.76)")
+            self.tap(0.38, 0.76)
+            return True
         except Exception:
             log.debug("_dismiss_team_invite failed", exc_info=True)
         return False
