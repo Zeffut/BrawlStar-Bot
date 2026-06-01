@@ -13,6 +13,23 @@ from utils import extract_text_and_positions, count_hsv_pixels, load_toml_as_dic
 debug = load_toml_as_dict("cfg/general_config.toml")['super_debug'] == "yes"
 log = logging.getLogger(__name__)
 
+# Brawl Stars localizes some brawler names. brawlace (and push_max) use the
+# ENGLISH names, but the in-game menu (French here) shows the FRENCH names, so
+# the menu OCR never matches e.g. "barley" — the card reads "BARTABA". When
+# searching the menu we also try the localized alias. Only names that actually
+# DIFFER need an entry (most are identical: bea, shelly, colt, …). Add more as
+# they're discovered.
+BRAWLER_FR_ALIASES: dict[str, str] = {
+    "barley": "bartaba",
+    "crow": "corbac",
+    "el primo": "el primo",
+    "mr. p": "m. p",
+    "mrp": "m. p",
+    "mr p": "m. p",
+    "8-bit": "8-bit",
+    "8bit": "8-bit",
+}
+
 class LobbyAutomation:
 
     def __init__(self, window_controller):
@@ -191,7 +208,7 @@ class LobbyAutomation:
         # Two scroll passes: forward (down through the list) then reverse
         # (back up) in case we scrolled past the target. Big swipes cover
         # the whole grid in few steps.
-        for phase, swipes in enumerate([14, 9]):
+        for phase, swipes in enumerate([20, 16]):
             log.debug("select_brawler phase %d: %d swipes", phase, swipes)
             for i in range(swipes):
                 screenshot = self.window_controller.screenshot()
@@ -213,6 +230,12 @@ class LobbyAutomation:
                 # key with the closest match to the target, accepting
                 # any with similarity ≥ 0.7 (Ratcliff/Obershelp).
                 match_key = self._fuzzy_match(brawler, reworked_results.keys())
+                if match_key is None:
+                    # Try the localized (French) name — the game shows e.g.
+                    # "Bartaba" for barley, which never matches the English key.
+                    alias = BRAWLER_FR_ALIASES.get(brawler.lower().strip())
+                    if alias and alias != brawler.lower().strip():
+                        match_key = self._fuzzy_match(alias, reworked_results.keys())
                 if match_key is not None:
                     bx, by = reworked_results[match_key]['center']
                     real_x, real_y = int(bx * 1.5385), int(by * 1.5385)

@@ -266,7 +266,8 @@ async function refreshDetail() {
   // 3. Fire-and-forget secondary calls (alerts, session state, GC).
   refreshSessionState();
   gcRefreshAll();
-  loadAlerts();
+  // Telegram alerts are GLOBAL now — configured once via the ⚙️ Global Config
+  // modal (header), not per-account. (No per-instance alerts panel anymore.)
 }
 
 function _applyDashboard(dash) {
@@ -1621,69 +1622,6 @@ function _prependActivity(m) {
 }
 
 loadActivity();
-
-// ----------------- Telegram alerts config -----------------
-
-// Global alert events (cloud-side notif config — shared across all
-// instances, NOT per-instance). Keys match notif.py KNOWN_EVENTS.
-const ALERT_LABELS = {
-  match: "Chaque match",
-  target_reached: "Objectif atteint",
-  battery_low: "Batterie faible",
-  battery_resumed: "Batterie OK",
-  bot_stuck: "Bot bloqué",
-  instance_disconnected: "Instance déconnectée",
-  session_ended: "Session terminée",
-};
-
-async function loadAlerts() {
-  const list = document.getElementById("alerts-list");
-  const statusEl = document.getElementById("alerts-status");
-  if (!list) return;
-  statusEl.textContent = "loading…";
-  try {
-    // Global config — one set of toggles for ALL instances (the cloud
-    // dispatches the alerts), not a per-instance config.
-    const cfg = await api("/api/config/notif", {silent: true});
-    const events = (cfg && cfg.events) || {};
-    const known = Object.keys(ALERT_LABELS);
-    list.innerHTML = "";
-    const enabled = known.filter(k => events[k]?.telegram).length;
-    statusEl.textContent = `${enabled}/${known.length} active`;
-    for (const event of known) {
-      const on = !!(events[event] && events[event].telegram);
-      const row = document.createElement("div");
-      row.className = "alert-row";
-      row.innerHTML = `
-        <label class="toggle">
-          <input type="checkbox" ${on ? "checked" : ""} data-event="${event}">
-          <span class="slider"></span>
-        </label>
-        <div class="name">${ALERT_LABELS[event]}</div>
-        <div class="meta">${event}</div>
-      `;
-      list.appendChild(row);
-      row.querySelector("input").addEventListener("change", async (e) => {
-        const en = e.target.checked;
-        try {
-          // Partial update — set_config merges onto the current config.
-          await api("/api/config/notif", {
-            method: "PUT", body: {events: {[event]: {telegram: en}}},
-          });
-          showToast(`${ALERT_LABELS[event]} : ${en ? "ON" : "OFF"}`, "ok");
-          const n = Array.from(list.querySelectorAll("input"))
-            .filter(i => i.checked).length;
-          statusEl.textContent = `${n}/${known.length} active`;
-        } catch (err) {
-          e.target.checked = !en;  // revert
-        }
-      });
-    }
-  } catch (e) {
-    list.innerHTML = `<div class="empty-card" style="padding:14px"><div>Failed to load alerts</div></div>`;
-    statusEl.textContent = "error";
-  }
-}
 
 // ----------------- Mobile sidebar toggle + keyboard shortcuts -----------------
 
