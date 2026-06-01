@@ -691,6 +691,18 @@ class GameAPI:
             else:
                 same_state_count = 0
                 last_state = st
+            # Generic stuck bail-out: stuck on the SAME non-lobby state for
+            # several iterations means the shotgun isn't working (frozen match
+            # frame, unhandled popup…). Restart BS instead of looping until
+            # max_attempts — and, crucially, this also unblocks the deferred
+            # self-update, which only fires once we're back at the lobby.
+            if same_state_count >= 5:
+                log.warning("goto_lobby[%d]: stuck on %s for %d iters — "
+                            "restarting Brawl Stars", i, st, same_state_count)
+                self._restart_brawlstars(f"stuck on {st} during goto_lobby")
+                same_state_count = 0
+                last_state = None
+                continue
             # SHOTGUN: try multi-action dismiss for unknown / stuck states.
             log.info("goto_lobby[%d]: SHOTGUN dismiss (state=%s, stuck=%d)",
                      i, st, same_state_count)
