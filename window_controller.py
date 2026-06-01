@@ -231,8 +231,9 @@ class WindowController:
             return
         try:
             self.scrcpy_client.control.touch(int(x), int(y), action, pointer_id)
-        except OSError:
-            # Socket died — reconnect and retry once so movement resumes.
+        except Exception:
+            # Socket died (OSError 'Bad file descriptor', broken pipe, …) —
+            # reconnect and retry once so movement resumes.
             self._reconnect_scrcpy()
             if self._scrcpy_ok():
                 try:
@@ -295,9 +296,21 @@ class WindowController:
                 dx, dy = directions_xy_deltas_dict[key]
                 delta_x, delta_y = delta_x + dx, delta_y + dy
 
-        if not self.are_we_moving:
+        now = time.time()
+        need_down = not self.are_we_moving
+        # The joystick is ONE held DOWN + repeated MOVEs. On WiFi-ADB / after a
+        # capture respawn that held pointer can be silently dropped (no
+        # OSError), so MOVEs then go to a dead pointer: the bot stops moving
+        # but still shoots (attacks re-press their pointer every shot). Lift +
+        # re-press the joystick every couple seconds so a lost pointer
+        # self-heals — the one-frame lift is a negligible movement hiccup.
+        if self.are_we_moving and (now - getattr(self, "_joystick_down_at", 0)) > 2.0:
+            self.touch_up(self.joystick_x, self.joystick_y, pointer_id=self.PID_JOYSTICK)
+            need_down = True
+        if need_down:
             self.touch_down(self.joystick_x, self.joystick_y, pointer_id=self.PID_JOYSTICK)
             self.are_we_moving = True
+            self._joystick_down_at = now
 
         self.touch_move(self.joystick_x + delta_x, self.joystick_y + delta_y, pointer_id=self.PID_JOYSTICK)
 
