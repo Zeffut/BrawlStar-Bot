@@ -442,7 +442,30 @@ class BotRunner:
                 _self.Stage_manager = StageManager(data, _self.lobby_automator, _self.window_controller)
                 _self.states_requiring_data = ["lobby"]
                 if data[0]['automatically_pick']:
-                    _self.lobby_automator.select_brawler(data[0]['brawler'])
+                    # Initial brawler selection. If the menu OCR can't find it
+                    # (locked, or name fused with the trophy badge → unreadable),
+                    # mark it exhausted in push_max and try the next eligible
+                    # brawler instead of crashing the cycle on one bad target.
+                    while True:
+                        try:
+                            _self.lobby_automator.select_brawler(data[0]['brawler'])
+                            break
+                        except Exception:
+                            log.exception("initial select_brawler(%s) failed",
+                                          data[0]['brawler'])
+                            if self._push_max is None:
+                                break
+                            bad = self._push_max.brawlers.get(data[0]['brawler'])
+                            if bad:
+                                bad.exhausted = True
+                            nxt = self._push_max.pick_next()
+                            if nxt is None or nxt.name == data[0]['brawler']:
+                                log.warning("no other selectable brawler — "
+                                            "continuing with the equipped one")
+                                break
+                            log.info("initial selection: %s unselectable → "
+                                     "trying %s", data[0]['brawler'], nxt.name)
+                            data[0]['brawler'] = nxt.name
                 _self.Play.current_brawler = data[0]['brawler']
                 _self.no_detections_action_threshold = 60 * 8
                 _self.initialize_stage_manager()
