@@ -316,53 +316,75 @@ class BotRunner:
             self._start_stuck_watchdog()
             return True, f"Started bot for {brawler} (target {trophies} trophies)."
 
-    def _start_stuck_watchdog(self) -> None:
-        """Background thread: alerts via Telegram if no match completes for
-        too long while a session is active.
+    # Stuck thresholds (minutes of no completed match). The legitimate gap
+    # between two match-ends maxes out around 12 min (a 3-5 min match + a
+    # ~4.5 min brawler-swap selection + post-match screens), so recovery only
+    # kicks in well past that to avoid disrupting a slow-but-healthy cycle.
+    STUCK_RECOVERY_MIN = 12      # start active recovery (goto_lobby, retried)
+    STUCK_HARD_RESTART_MIN = 18  # still stuck → hard-restart the worker
 
-        Threshold read from cfg/alerts.toml `[bot_stuck] threshold_minutes`
-        (default 8 min). Alert is fired ONCE per stuck episode (cleared on
-        any match progress).
+    def _start_stuck_watchdog(self) -> None:
+        """Background thread: detect a wedged session (no match completing for
+        too long) and recover with ESCALATION, not just a one-shot alert.
+
+        - alert (once) at cfg/alerts.toml `[bot_stuck] threshold_minutes` (8);
+        - from STUCK_RECOVERY_MIN: call goto_lobby every tick — it dismisses
+          star drops / team invites / reward popups and restarts Brawl Stars
+          if it's wedged on a frozen screen;
+        - from STUCK_HARD_RESTART_MIN: goto_lobby couldn't fix it → the worker
+          itself is wedged, so hard-exit. systemd (Restart=always) relaunches
+          and the cloud resume-state brings the grind straight back.
+        `_stuck_alerted` is reset on any match progress (see the match hook).
         """
         def watch():
+            import os as _os
             from alerts import _load as _alerts_load
+            hard_restart_done = False
             while self.is_running():
                 time.sleep(60)
                 try:
                     elapsed = time.time() - self._last_match_at
                     cfg = _alerts_load().get("bot_stuck", {})
-                    threshold_min = float(cfg.get("threshold_minutes", 8))
-                    if elapsed > threshold_min * 60 and not self._stuck_alerted:
+                    alert_min = float(cfg.get("threshold_minutes", 8))
+                    cur_brawler = (self.brawler_data[0]["brawler"]
+                                   if self.brawler_data else "?")
+                    # Alert once when first stuck (informational).
+                    if elapsed > alert_min * 60 and not self._stuck_alerted:
                         log.warning("STUCK detected: no match for %.0f min", elapsed / 60)
                         self._stuck_alerted = True
-                        msg = alerts.format_alert(
-                            "bot_stuck",
-                            minutes=int(elapsed / 60),
-                            brawler=(self.brawler_data[0]["brawler"]
-                                     if self.brawler_data else "?"),
-                            matches=self._match_count,
-                        )
+                        msg = alerts.format_alert("bot_stuck", minutes=int(elapsed / 60),
+                                                  brawler=cur_brawler, matches=self._match_count)
                         if msg and self.notify:
                             try: self.notify(msg)
                             except Exception: log.exception("stuck alert send failed")
-                        # Panel notif (cloud-side).
                         try:
-                            cloud_sync.event("bot_stuck", {
-                                "minutes": int(elapsed / 60),
-                                "brawler": (self.brawler_data[0]["brawler"]
-                                            if self.brawler_data else "?"),
-                                "matches": self._match_count,
-                            })
+                            cloud_sync.event("bot_stuck", {"minutes": int(elapsed / 60),
+                                "brawler": cur_brawler, "matches": self._match_count})
                         except Exception:
                             log.exception("cloud_sync.event(bot_stuck) failed")
-                        # Best-effort recovery: try to dismiss any popup back to lobby
+                    # Escalating recovery.
+                    if elapsed > self.STUCK_HARD_RESTART_MIN * 60:
+                        if not hard_restart_done:
+                            hard_restart_done = True
+                            log.warning("STUCK %.0f min — goto_lobby didn't recover; "
+                                        "hard-restarting worker (resume will relaunch)",
+                                        elapsed / 60)
+                            try:
+                                cloud_sync.event("bot_stuck", {"recovery": "worker_restart",
+                                                               "brawler": cur_brawler})
+                            except Exception:
+                                pass
+                            time.sleep(1)
+                            _os._exit(1)   # systemd Restart=always + cloud resume
+                    elif elapsed > self.STUCK_RECOVERY_MIN * 60:
+                        log.warning("STUCK %.0f min — recovery: goto_lobby", elapsed / 60)
                         try:
                             import game_api as _ga
                             api = _ga.get()
                             if api is not None:
-                                api.goto_lobby(max_attempts=10)
+                                api.goto_lobby(max_attempts=15)
                         except Exception:
-                            log.exception("auto-recovery failed")
+                            log.exception("stuck recovery goto_lobby failed")
                 except Exception:
                     log.exception("stuck watchdog iteration crashed")
         t = threading.Thread(target=watch, daemon=True, name="stuck-watchdog")
