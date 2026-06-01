@@ -417,6 +417,17 @@ main {
   color: var(--muted);
   letter-spacing: 0.02em;
 }
+.inst-doing {
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent, #34c778);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.inst-doing[hidden] { display: none; }
 
 .inst-status-pill {
   font-size: 10px;

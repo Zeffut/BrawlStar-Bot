@@ -368,6 +368,10 @@ def api_instances() -> list[dict]:
             i["status"] = "offline"
         i["battery_paused"] = battery_paused
         i["battery_level"] = snap.get("battery_pct")
+        # Rich "what is the bot doing" line (Selecting Brock, Playing as
+        # Shelly, …) published by the worker. Only meaningful while fresh.
+        i["activity"] = snap.get("activity") if not i["snapshot_stale"] else None
+        i["game_state"] = snap.get("state") if not i["snapshot_stale"] else None
         out.append(i)
     return out
 

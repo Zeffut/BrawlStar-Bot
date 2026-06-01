@@ -98,6 +98,48 @@ log = logging.getLogger("telegram_main")
 _SHARED_RUNTIME: dict = {}
 
 
+# ----------------------------- Activity status ---------------------
+# Publish a short human-readable "what is the bot doing right now" string
+# to game_api (snapshot() picks it up → cloud panel). Best-effort: never
+# let a status update break the grind.
+def _set_activity(text: "str | None") -> None:
+    try:
+        import game_api as _gapi
+        _gapi.set_activity(text)
+    except Exception:
+        pass
+
+
+def _title(name: "str | None") -> str:
+    return (name or "").strip().title()
+
+
+# Maps a detected screen state (+ the brawler being ground) to a friendly
+# activity phrase. Returns None for states with no meaningful label so the
+# previous activity is kept (avoids flicker on transient OCR misreads).
+def _activity_for_state(state: "str | None", brawler: "str | None") -> "str | None":
+    bw = _title(brawler)
+    if state == "match":
+        return f"Playing as {bw}" if bw else "Playing a match"
+    if state == "lobby":
+        return f"In lobby — {bw}" if bw else "In lobby"
+    if state == "brawler_selection":
+        return f"Selecting {bw}" if bw else "Selecting brawler"
+    if state == "end":
+        return "Match ended — reading result"
+    if state == "star_drop":
+        return "Opening Star Drop"
+    if state == "trophy_reward":
+        return "Collecting trophy reward"
+    if state == "shop":
+        return "Closing shop"
+    if state == "popup":
+        return "Dismissing popup"
+    if state == "play_store":
+        return "Reopening Brawl Stars"
+    return None
+
+
 # ----------------------------- Resume-state persistence ------------
 # When a session is active and the bot restarts (self-update, crash,
 # reboot…), we want to resume the same task automatically. The state
@@ -385,6 +427,7 @@ class BotRunner:
                             _os._exit(1)   # systemd Restart=always + cloud resume
                     elif elapsed > self.STUCK_RECOVERY_MIN * 60:
                         log.warning("STUCK %.0f min — recovery: goto_lobby", elapsed / 60)
+                        _set_activity(f"⚠ Recovering (stuck {int(elapsed / 60)}m)")
                         try:
                             import game_api as _ga
                             api = _ga.get()
@@ -486,6 +529,7 @@ class BotRunner:
                     # brawler instead of crashing the cycle on one bad target.
                     while True:
                         try:
+                            _set_activity(f"Selecting {_title(data[0]['brawler'])}")
                             _self.lobby_automator.select_brawler(data[0]['brawler'])
                             break
                         except Exception:
@@ -540,6 +584,18 @@ class BotRunner:
                     if state != "match":
                         _self.Play.time_since_last_proceeding = time.time()
                     _self.Stage_manager.do_state(state, None)
+                # Refresh the published activity every tick (cheap) so it never
+                # goes stale while the loop spins. Uses the last known state +
+                # the brawler currently being ground. Done OUTSIDE the
+                # state_check gate on purpose: keeps the panel status live even
+                # between state polls.
+                try:
+                    cur_brawler = _self.Stage_manager.brawlers_pick_data[0]['brawler']
+                except Exception:
+                    cur_brawler = None
+                act = _activity_for_state(_self.state, cur_brawler)
+                if act is not None:
+                    _set_activity(act)
                 if _self.Time_management.no_detections_check():
                     frame_data = _self.Play.time_since_detections
                     for key, value in frame_data.items():
@@ -596,6 +652,7 @@ class BotRunner:
                     pass
 
         try:
+            _set_activity("Starting up — loading models")
             self.main_instance = Main()
             if self.stop_flag.is_set():
                 log.info("force_stop received during init — skipping main loop")
@@ -641,6 +698,9 @@ class BotRunner:
                     log.exception("cloud session_end push failed")
                 self._session_id = None
             self.main_instance = None
+            # Clear the published activity so the panel falls back to the raw
+            # screen state (idle / manual) instead of showing a frozen phase.
+            _set_activity(None)
             log.info("Bot run ended")
 
 

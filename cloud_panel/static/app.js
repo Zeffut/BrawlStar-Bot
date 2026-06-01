@@ -14,6 +14,31 @@ const TAG_TO_INSTANCE = {};
 // Track last failure per endpoint so silent background polls don't spam toasts.
 const _failedRecently = new Set();
 
+// Friendly labels for the raw screen states the worker detects. Used as a
+// fallback when the bot hasn't published a rich activity (idle / manual play).
+const STATE_LABELS = {
+  lobby: "In lobby",
+  match: "Playing",
+  end: "Match ended",
+  brawler_selection: "Selecting brawler",
+  star_drop: "Opening Star Drop",
+  trophy_reward: "Trophy reward",
+  shop: "In shop",
+  popup: "Dismissing popup",
+  play_store: "Reopening Brawl Stars",
+  unknown: "—",
+};
+
+// The single source of truth for "what is the bot doing" shown across the UI.
+// Prefers the worker-published activity ("Selecting Brock", "Playing as
+// Shelly", "Waiting — charging 42%"), then the prettified screen state.
+function statusText(snap) {
+  if (!snap) return "—";
+  if (snap.activity) return snap.activity;
+  if (snap.state) return STATE_LABELS[snap.state] || snap.state;
+  return "—";
+}
+
 async function api(path, opts = {}) {
   const {silent = false, method = "GET", body = null} = opts;
   try {
@@ -98,6 +123,7 @@ async function refreshAll() {
   for (const inst of instances) {
     const card = document.createElement("div");
     card.className = "instance-card";
+    card.dataset.instance = inst.instance_id;
     const instAccounts = accountsByInstance[inst.instance_id] || [];
     const isSelected = instAccounts.some(a => a.id === selectedAccountId);
     if (isSelected) card.classList.add("selected");
@@ -121,11 +147,15 @@ async function refreshAll() {
     const statusLabel = inst.status;  // running/ready/preparing/booting/stale/offline
     const expandedKey = `inst-expanded:${inst.instance_id}`;
     const isExpandedNow = localStorage.getItem(expandedKey) === "1";
+    // "What is the bot doing" line — rich activity, else prettified state.
+    const doing = inst.activity
+      || (inst.game_state ? (STATE_LABELS[inst.game_state] || inst.game_state) : "");
     head.innerHTML = `
       <span class="inst-dot ${inst.status}"></span>
       <div class="inst-main">
         <div class="inst-name">${inst.name || inst.instance_id}</div>
         <div class="inst-id">${inst.instance_id} · ${ago(inst.last_seen_at)}</div>
+        <div class="inst-doing"${doing ? "" : " hidden"}>▸ ${doing}</div>
       </div>
       <span class="inst-chevron ${isExpandedNow ? 'expanded' : ''}" aria-hidden="true">▾</span>
       <span class="inst-status-pill ${inst.status}">
@@ -1353,10 +1383,10 @@ async function gcRefreshAll() {
   const acc = _lastAccounts.find(a => a.id === selectedAccountId);
   const snap = acc ? SNAPSHOTS[acc.instance_uid] : null;
   if (snap) {
-    if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state;
+    document.getElementById("gc-state").textContent = statusText(snap);
     if (snap.trophies != null) document.getElementById("gc-trophies").textContent = snap.trophies + " 🏆";
   } else {
-    document.getElementById("gc-state").textContent = "state: —";
+    document.getElementById("gc-state").textContent = "—";
   }
   // Note: current_brawler isn't reliably OCR-able from the lobby (no
   // text on screen). The dropdown selection is the source of truth.
@@ -1614,7 +1644,7 @@ function onSnapshot(snap) {
   const acc = _lastAccounts.find(a => a.id === selectedAccountId);
   if (acc && acc.instance_uid === snap.instance_id) {
     const staleTag = snap.stale ? " (last seen)" : "";
-    if (snap.state) document.getElementById("gc-state").textContent = "state: " + snap.state + staleTag;
+    document.getElementById("gc-state").textContent = statusText(snap) + staleTag;
     // Trophies: brawlace cache is the authoritative source (set by
     // _renderAuthoritativeTrophies). The OCR-read snap.trophies is only
     // a fallback when brawlace has no data yet.
@@ -1626,9 +1656,21 @@ function onSnapshot(snap) {
     }
   }
 
-  // Update sidebar pills (running/available transitions) — cheap.
-  const dotOrPill = document.querySelector(`[data-instance="${snap.instance_id}"] .inst-dot`);
-  // (Sidebar full redraw happens via refreshAll; this is just live state hints.)
+  // Update the sidebar "doing" line live (between structural redraws) so the
+  // status follows the bot in real time instead of every 15s.
+  const card = document.querySelector(`.instance-card[data-instance="${snap.instance_id}"]`);
+  if (card) {
+    const doingEl = card.querySelector(".inst-doing");
+    if (doingEl) {
+      const t = snap.stale ? "" : statusText(snap);
+      if (t && t !== "—") {
+        doingEl.textContent = "▸ " + t;
+        doingEl.hidden = false;
+      } else {
+        doingEl.hidden = true;
+      }
+    }
+  }
 }
 
 // Cache last accounts list (set by refreshAll) so SSE handler can correlate.

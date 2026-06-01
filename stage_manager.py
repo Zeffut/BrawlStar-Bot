@@ -91,6 +91,11 @@ class StageManager:
             log.info("start_game: executing pending brawler swap → %s", pending)
             self._pending_swap = None
             try:
+                try:
+                    import game_api
+                    game_api.set_activity(f"Swapping to {pending.strip().title()}")
+                except Exception:
+                    pass
                 self.Lobby_automation.select_brawler(pending)
                 # Update brawlers_pick_data so subsequent logic uses the new brawler.
                 self.brawlers_pick_data[0]['brawler'] = pending
@@ -141,6 +146,11 @@ class StageManager:
             self.Trophy_observer.win_streak = self.brawlers_pick_data[0]['win_streak']
             next_brawler_name = self.brawlers_pick_data[0]['brawler']
             if self.brawlers_pick_data[0]["automatically_pick"]:
+                try:
+                    import game_api
+                    game_api.set_activity(f"Selecting {next_brawler_name.strip().title()}")
+                except Exception:
+                    pass
                 self.Lobby_automation.select_brawler(next_brawler_name)
 
         self.window_controller.keys_up(list("wasd"))

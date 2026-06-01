@@ -36,6 +36,40 @@ log = logging.getLogger(__name__)
 _API: "GameAPI | None" = None
 _LOCK = threading.Lock()
 
+# --- Bot activity status ----------------------------------------------------
+# A short human-readable description of what the worker is *currently doing*
+# ("Selecting Brock", "Playing as Shelly", "Swapping to Bartaba", …).
+# Published by the bot runner as it moves through phases (telegram_main.py,
+# stage_manager.py) and surfaced in snapshot() so the cloud panel can show a
+# rich status instead of the raw screen-state string. Falls back to the
+# detected screen state when no activity is published (idle / manual play).
+#
+# The runner refreshes it continuously while the main loop spins, so a stale
+# value (> TTL) means the bot stopped/crashed → we drop it and let the panel
+# fall back to the screen state.
+_ACTIVITY: dict = {"text": None, "ts": 0.0}
+_ACTIVITY_LOCK = threading.Lock()
+_ACTIVITY_TTL_S = 150.0
+
+
+def set_activity(text: "str | None") -> None:
+    """Publish (or clear, with None) the worker's current activity."""
+    with _ACTIVITY_LOCK:
+        _ACTIVITY["text"] = text or None
+        _ACTIVITY["ts"] = time.time()
+
+
+def get_activity() -> "str | None":
+    """Current activity, or None if never set / gone stale (bot stopped)."""
+    with _ACTIVITY_LOCK:
+        text = _ACTIVITY["text"]
+        ts = _ACTIVITY["ts"]
+    if not text:
+        return None
+    if time.time() - ts > _ACTIVITY_TTL_S:
+        return None
+    return text
+
 def _is_emulator_serial() -> bool:
     """Detect whether cfg/device.toml points at an emulator.
 
@@ -479,8 +513,18 @@ class GameAPI:
         else:
             paused = False
         self._battery_paused = paused
+        # Rich "what am I doing" status. Battery pause overrides any published
+        # activity (it's the real reason the bot is idle), and works even when
+        # no session is running. Otherwise use the runner-published activity,
+        # which is None when idle → the panel falls back to the screen state.
+        if paused:
+            activity = (f"Waiting — charging ({lvl}%)" if lvl is not None
+                        else "Waiting — battery gate")
+        else:
+            activity = get_activity()
         return {
             "state": st,
+            "activity": activity,
             "trophies": trophies,
             "battery_pct": lvl,
             "battery_charging": chg,
