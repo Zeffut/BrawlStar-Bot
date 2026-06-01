@@ -882,25 +882,33 @@ class BotRunner:
                 # session start can be stale-LOW (served from an old cache), so
                 # push_max's tracked value lags reality and the ceiling never
                 # fires — that's how barley got pushed past 1000. Correct
-                # upward only (the bot climbs; never trust a stale-low read).
-                if runner._match_count % 3 == 0:
-                    try:
-                        acc = db.get_account(runner._account_id) if runner._account_id else None
-                        if acc:
+                # upward only. Run in a BACKGROUND thread: it's a network call
+                # and MUST NOT block the match loop (a slow/504 brawlace fetch
+                # in the hot path stalls the grind = looks stuck).
+                if runner._match_count % 3 == 0 and runner._account_id is not None:
+                    def _resync(acc_id, brawler_name, pm, obs):
+                        try:
+                            acc = db.get_account(acc_id)
+                            if not acc:
+                                return
                             from account_detect import fetch_account_profile
                             prof = fetch_account_profile(acc["tag"])
                             for b in prof.get("brawlers", []):
-                                if b.get("name", "").lower() == current_brawler.lower():
+                                if b.get("name", "").lower() == brawler_name.lower():
                                     real = b.get("trophies") or 0
-                                    bs = runner._push_max.brawlers.get(current_brawler)
+                                    bs = pm.brawlers.get(brawler_name)
                                     if bs and real > bs.trophies:
                                         log.info("brawlace re-sync: %s %d → %d",
-                                                 current_brawler, bs.trophies, real)
+                                                 brawler_name, bs.trophies, real)
                                         bs.trophies = real
-                                        observer.current_trophies = real
+                                        obs.current_trophies = real
                                     break
-                    except Exception:
-                        log.exception("brawlace trophy re-sync failed")
+                        except Exception:
+                            log.exception("brawlace trophy re-sync failed")
+                    threading.Thread(target=_resync, daemon=True,
+                                     args=(runner._account_id, current_brawler,
+                                           runner._push_max, observer),
+                                     name="brawlace-resync").start()
                 if runner._push_max.no_swap:
                     # Stay-on-equipped: never swap. Only the per-brawler cap
                     # stops us here (the global target is handled above).
