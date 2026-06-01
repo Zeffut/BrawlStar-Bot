@@ -4,6 +4,12 @@ Pricing grid sourced from revente/grille_prix.md (benchmark 2026-05-31).
 Amorçage prices (new-seller, -10/-15% under market) are used as the
 default output range.
 """
+# PEP 604 unions (int | None) in annotations need this on Python 3.9 (the
+# Mac dev env runs 3.9; the HP worker runs 3.12). Without it the dataclass
+# annotation is evaluated at class-definition time and raises TypeError,
+# which broke pytest collection for the WHOLE suite.
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 
 

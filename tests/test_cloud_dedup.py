@@ -10,14 +10,28 @@ import pytest
 
 
 @pytest.fixture
-def cdb(tmp_path):
-    os.environ["CLOUD_DB_PATH"] = str(tmp_path / "test.db")
+def cdb(monkeypatch):
+    """Clean cloud_panel.db pointing at a TEST Postgres (skips without it).
+
+    Requires TEST_DATABASE_URL (a throwaway DB whose URL contains 'test' —
+    the fixture DROPs all tables). Mirrors tests/test_cloud_db.py."""
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set — Postgres needed for db tests")
+    if "test" not in url.lower():
+        pytest.skip("refusing to run destructive db tests on a non-'test' DB URL")
+    os.environ["DATABASE_URL"] = url
     for mod in list(sys.modules):
         if mod == "db" or mod.endswith(".db"):
             sys.modules.pop(mod, None)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "cloud_panel"))
     import db as cdb
     cdb._conn = None
+    with cdb.conn().cursor() as c:
+        c.execute(
+            "DROP TABLE IF EXISTS matches, sessions, events, instance_state, "
+            "accounts, instances, config CASCADE"
+        )
     cdb.init()
     return cdb
 
