@@ -131,6 +131,33 @@ def test_zero_trophy_brawlers_never_picked():
     assert s.pick_next().name == "shelly"
 
 
+def test_no_swap_stays_on_equipped_and_ignores_stagnation():
+    owned = [{"name": "bea", "trophies": 484}, {"name": "shelly", "trophies": 50}]
+    s = PushMaxStrategy.from_owned(owned, no_swap=True)
+    # The equipped brawler is set explicitly (telegram_main does this from OCR).
+    s.current = "bea"
+    assert s.pick_next().name == "bea"
+    # Losses / stagnation must NOT exhaust it (we can't reliably swap away).
+    t = 484
+    for _ in range(10):
+        t -= 5
+        s.record_match("bea", "defeat", t)
+    assert not s.brawlers["bea"].exhausted
+    assert s.pick_next().name == "bea"
+
+
+def test_no_swap_stops_only_on_cap():
+    owned = [{"name": "bea", "trophies": 480}]
+    s = PushMaxStrategy.from_owned(owned, brawler_max_trophies=500, no_swap=True)
+    s.current = "bea"
+    s.record_match("bea", "victory", 495)        # under cap → keep grinding
+    assert not s.brawlers["bea"].exhausted
+    assert s.pick_next().name == "bea"
+    s.record_match("bea", "victory", 505)        # cap reached → done, no swap
+    assert s.brawlers["bea"].exhausted
+    assert s.pick_next() is None
+
+
 def test_no_cap_keeps_pushing():
     owned = [{"name": "brock", "trophies": 1500}]
     s = PushMaxStrategy.from_owned(owned)          # no cap

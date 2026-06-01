@@ -106,14 +106,23 @@ class PushMaxStrategy:
     # trophies, it's marked exhausted and the bot moves to the next one.
     # None = no cap (push until stagnation, the original behavior).
     brawler_max_trophies: int | None = None
+    # "Stay on equipped" mode: never auto-swap brawler (the brawler-menu
+    # OCR/scroll is too unreliable to pick a specific one of 102 cards).
+    # pick_next always returns `current` (the equipped brawler), and the
+    # brawler is only ever stopped by the per-brawler cap or global target —
+    # not by stagnation/defeat-streak (which would need a swap we can't do
+    # reliably). The bot grinds whatever is equipped, zero menu navigation.
+    no_swap: bool = False
 
     @classmethod
     def from_owned(cls, owned: list[dict],
                    defeat_limit: int = DEFAULT_DEFEAT_LIMIT,
-                   brawler_max_trophies: int | None = None) -> "PushMaxStrategy":
+                   brawler_max_trophies: int | None = None,
+                   no_swap: bool = False) -> "PushMaxStrategy":
         """Build a strategy from the brawlace `fetch_owned_brawlers` list."""
         state = cls(defeat_limit=defeat_limit,
-                    brawler_max_trophies=brawler_max_trophies)
+                    brawler_max_trophies=brawler_max_trophies,
+                    no_swap=no_swap)
         for b in owned:
             name = b["name"]
             bs = BrawlerState(
@@ -150,6 +159,13 @@ class PushMaxStrategy:
         Stickiness: keep the current brawler while it's still below the
         ceiling and not exhausted.
         """
+        # Stay-on-equipped: never navigate the brawler menu. Once a `current`
+        # brawler is set, always return it (until its cap/the global target
+        # stops it) — no swapping = zero flaky menu navigation. When current
+        # is not set yet, fall through once to bootstrap it from the pool.
+        if self.no_swap and self.current:
+            cur = self.brawlers.get(self.current)
+            return cur if (cur and not cur.exhausted) else None
         if self.current:
             cur = self.brawlers.get(self.current)
             if cur and not cur.exhausted and cur.trophies < EFFICIENCY_CEILING:
@@ -192,6 +208,15 @@ class PushMaxStrategy:
             b.exhausted = True
             log.info("PushMax: %s reached cap (%d/%d) — moving to next brawler",
                      b.name, b.trophies, self.brawler_max_trophies)
+            return
+        # Stay-on-equipped: don't auto-exhaust on defeat-streak/stagnation —
+        # we can't reliably swap to another brawler, so keep grinding this one
+        # toward the global target (only the cap above stops it).
+        if self.no_swap:
+            if result != "defeat":
+                b.defeat_streak = 0
+            else:
+                b.defeat_streak += 1
             return
         if result == "defeat":
             b.defeat_streak += 1

@@ -259,7 +259,8 @@ class BotRunner:
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
                 self._push_max = PushMaxStrategy.from_owned(
-                    owned_brawlers, brawler_max_trophies=per_brawler_max_trophies)
+                    owned_brawlers, brawler_max_trophies=per_brawler_max_trophies,
+                    no_swap=True)
                 # Pick the starter brawler from the strategy.
                 first = self._push_max.pick_next()
                 if first is None:
@@ -441,7 +442,15 @@ class BotRunner:
                 _self.lobby_automator = _SHARED_RUNTIME.get("la") or LobbyAutomation(_self.window_controller)
                 _self.Stage_manager = StageManager(data, _self.lobby_automator, _self.window_controller)
                 _self.states_requiring_data = ["lobby"]
-                if data[0]['automatically_pick']:
+                _no_swap = bool(self._push_max and self._push_max.no_swap)
+                if _no_swap:
+                    # Stay-on-equipped push_max: do NOT navigate the brawler
+                    # menu (its OCR/scroll over 102 cards is too unreliable).
+                    # Grind whatever brawler is already equipped; its real name
+                    # is detected + recorded in _install_match_hook.
+                    log.info("push_max no_swap: skipping menu selection, "
+                             "grinding the equipped brawler")
+                elif data[0]['automatically_pick']:
                     # Initial brawler selection. If the menu OCR can't find it
                     # (locked, or name fused with the trophy badge → unreadable),
                     # mark it exhausted in push_max and try the next eligible
@@ -669,6 +678,31 @@ class BotRunner:
         brawler = (self.brawler_data[0].get('brawler') if self.brawler_data else '?')
         log.info("_install_match_hook: brawler=%s target=%d", brawler, target)
 
+        # Stay-on-equipped push_max: grind the brawler actually equipped on the
+        # lobby card (we skipped the menu). Read it via OCR and fuzzy-match to
+        # the owned names so the label + trophy tracking are correct. Falls
+        # back to the placeholder pick if the read is unusable.
+        if self._push_max is not None and self._push_max.no_swap:
+            try:
+                import game_api as _gapi
+                from difflib import SequenceMatcher
+                api = _gapi.get()
+                eq = api.read_current_brawler() if api else None
+                if eq:
+                    owned_names = list(self._push_max.brawlers.keys())
+                    best = max(owned_names,
+                               key=lambda n: SequenceMatcher(None, eq, n.lower()).ratio(),
+                               default=None)
+                    if best and SequenceMatcher(None, eq, best.lower()).ratio() >= 0.6:
+                        brawler = best
+                    log.info("push_max no_swap: equipped OCR=%r → grinding %r",
+                             eq, brawler)
+                self._push_max.current = brawler
+                if self.brawler_data:
+                    self.brawler_data[0]['brawler'] = brawler
+            except Exception:
+                log.exception("equipped-brawler detection failed; using %s", brawler)
+
         # Seed trophy totals from the brawlace profile (reliable), not the
         # on-screen OCR (which reads 0 / stray digits and, once it seeds the
         # session wrong, makes record_match overwrite each brawler's real
@@ -817,37 +851,48 @@ class BotRunner:
                     except Exception:
                         log.exception("cloud_sync.event(target_reached) failed")
 
-            # push_max: record match, swap brawler if current one is exhausted.
+            # push_max: record match; swap brawler if current is exhausted
+            # (swap mode only — no_swap grinds the equipped brawler).
             if runner._push_max is not None:
-                # Brawlers that failed selection (menu OCR couldn't find them)
-                # get marked exhausted so push_max stops trying to swap to them
-                # and grinds one it CAN select instead.
-                unsel = getattr(main_instance.Stage_manager,
-                                "_unselectable_brawlers", None)
-                if unsel:
-                    for bad in list(unsel):
-                        b = runner._push_max.brawlers.get(bad)
-                        if b and not b.exhausted:
-                            b.exhausted = True
-                            log.warning("push_max: %s unselectable (menu OCR) — "
-                                        "marking exhausted", bad)
-                    unsel.clear()
                 runner._push_max.record_match(current_brawler, game_result, after)
-                if runner._push_max.all_done():
-                    log.info("push_max: all brawlers exhausted — stopping bot")
-                    main_instance.time_to_stop = True
-                    _clear_resume_state()
-                else:
+                if runner._push_max.no_swap:
+                    # Stay-on-equipped: never swap. Only the per-brawler cap
+                    # stops us here (the global target is handled above).
                     cur = runner._push_max.brawlers.get(current_brawler)
                     if cur and cur.exhausted:
-                        nxt = runner._push_max.pick_next()
-                        if nxt is not None and nxt.name != current_brawler:
-                            log.info("push_max: scheduling brawler swap %s → %s",
-                                     current_brawler, nxt.name)
-                            main_instance.Stage_manager._pending_swap = nxt.name
-                            # Tell the new brawler's trophies to the
-                            # observer so subsequent matches log correctly.
-                            main_instance.Stage_manager.Trophy_observer.current_trophies = nxt.trophies
+                        log.info("push_max no_swap: %s hit its cap — stopping bot",
+                                 current_brawler)
+                        main_instance.time_to_stop = True
+                        _clear_resume_state()
+                else:
+                    # Brawlers that failed selection (menu OCR couldn't find
+                    # them) get marked exhausted so push_max stops trying to
+                    # swap to them and grinds one it CAN select instead.
+                    unsel = getattr(main_instance.Stage_manager,
+                                    "_unselectable_brawlers", None)
+                    if unsel:
+                        for bad in list(unsel):
+                            b = runner._push_max.brawlers.get(bad)
+                            if b and not b.exhausted:
+                                b.exhausted = True
+                                log.warning("push_max: %s unselectable (menu OCR)"
+                                            " — marking exhausted", bad)
+                        unsel.clear()
+                    if runner._push_max.all_done():
+                        log.info("push_max: all brawlers exhausted — stopping bot")
+                        main_instance.time_to_stop = True
+                        _clear_resume_state()
+                    else:
+                        cur = runner._push_max.brawlers.get(current_brawler)
+                        if cur and cur.exhausted:
+                            nxt = runner._push_max.pick_next()
+                            if nxt is not None and nxt.name != current_brawler:
+                                log.info("push_max: scheduling brawler swap %s → %s",
+                                         current_brawler, nxt.name)
+                                main_instance.Stage_manager._pending_swap = nxt.name
+                                # Tell the new brawler's trophies to the
+                                # observer so subsequent matches log correctly.
+                                main_instance.Stage_manager.Trophy_observer.current_trophies = nxt.trophies
 
             sign = "+" if delta >= 0 else ""
             session_delta = after - runner._initial_trophies
