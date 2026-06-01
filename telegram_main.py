@@ -104,7 +104,10 @@ _SHARED_RUNTIME: dict = {}
 # now lives entirely on the cloud panel — workers are stateless so a
 # disk wipe / fresh deploy / different machine all pick up the same
 # session if the user had one running.
-_RESUME_MAX_AGE_S = 2 * 3600  # don't auto-resume sessions older than 2h
+# Don't auto-resume a session whose state hasn't been touched in this long.
+# The match hook refreshes `started_at` on activity, so an actively-grinding
+# session never hits this — it only discards a genuinely abandoned one.
+_RESUME_MAX_AGE_S = 24 * 3600
 
 
 def _save_resume_state(state: dict) -> None:
@@ -203,6 +206,7 @@ class BotRunner:
         # When non-None we're in "push max" mode and this controls
         # brawler rotation between matches.
         self._push_max: PushMaxStrategy | None = None
+        self._resume_state: dict | None = None
         # Running account-wide trophy total (sum across all brawlers).
         # Seeded from brawlace at session start, then updated by deltas
         # from each match. Used by the panel for the progression chart.
@@ -287,8 +291,10 @@ class BotRunner:
             self._last_match_at = time.time()
             self._stuck_alerted = False
             # Persist the resume state so a restart can pick up where
-            # we left off (self-update, crash, reboot…).
-            _save_resume_state({
+            # we left off (self-update, crash, reboot…). Stored on the runner
+            # so the match hook can re-save it with a fresh `started_at` — an
+            # actively-grinding session must never be discarded as "too old".
+            self._resume_state = {
                 "mode": mode,
                 "brawler": brawler,
                 "wins": wins,
@@ -298,7 +304,8 @@ class BotRunner:
                 "per_brawler_max_trophies": per_brawler_max_trophies,
                 "owned_brawlers": owned_brawlers,
                 "started_at": time.time(),
-            })
+            }
+            _save_resume_state(self._resume_state)
             try:
                 save_brawler_data(data)
             except Exception as exc:
@@ -838,6 +845,17 @@ class BotRunner:
             runner._match_count += 1
             runner._last_match_at = time.time()
             runner._stuck_alerted = False  # reset on any progress
+            # Keep the resume state fresh: refresh its timestamp + current
+            # brawler each match so an actively-grinding session is NEVER
+            # discarded as "too old" after a restart (the bug that left the
+            # bot idle at the lobby, not grinding). Cheap PUT to our cloud.
+            if runner._resume_state is not None:
+                runner._resume_state["started_at"] = time.time()
+                runner._resume_state["brawler"] = current_brawler
+                try:
+                    _save_resume_state(runner._resume_state)
+                except Exception:
+                    log.debug("resume-state refresh failed", exc_info=True)
             if game_result == "victory":
                 runner._win_count += 1
             elif game_result == "defeat":
