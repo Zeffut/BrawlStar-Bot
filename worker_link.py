@@ -910,6 +910,7 @@ async def _run_ws_client():
                 async def sender_loop():
                     nonlocal last_log_offset, last_health_at, last_snapshot_at
                     log_path = Path(__file__).resolve().parent / "logs" / "bot.log"
+                    last_activity_sent = "\0"  # sentinel: force first comparison
                     while True:
                         await asyncio.sleep(2.0)
                         # log tail (delta)
@@ -945,13 +946,25 @@ async def _run_ws_client():
                                 return
                             except Exception:
                                 log.debug("health push failed")
-                        # game snapshot every 10s (state + trophies, no image)
-                        if now - last_snapshot_at >= 10:
+                        # Game snapshot: every 10s as a heartbeat, OR immediately
+                        # when the bot's published activity changed — so phase
+                        # transitions (Selecting → Playing → Swapping → …) reach
+                        # the panel within ~2s instead of being aliased by the
+                        # 10s tick. The activity check is in-process + cheap (no
+                        # HTTP), so polling it every 2s is free.
+                        cur_activity = None
+                        try:
+                            import game_api as _ga
+                            cur_activity = _ga.get_activity()
+                        except Exception:
+                            pass
+                        if (now - last_snapshot_at >= 10) or (cur_activity != last_activity_sent):
                             try:
                                 snap = await asyncio.get_running_loop().run_in_executor(
                                     None, _local_snapshot)
                                 if snap:
                                     await ws.send(json.dumps({"type": "snapshot", "data": snap}))
+                                last_activity_sent = cur_activity
                                 last_snapshot_at = now
                             except websockets.exceptions.ConnectionClosed:
                                 return

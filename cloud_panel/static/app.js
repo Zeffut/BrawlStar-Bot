@@ -332,11 +332,15 @@ function _applyDashboard(dash) {
   document.getElementById("kpi-wr").textContent = wr;
   document.getElementById("kpi-seen").textContent = ago(acc.last_seen_at);
 
+  // Seed the chart from the dashboard's (capped) matches so something shows
+  // instantly, then replace with the FULL downsampled history below.
   const ordered = [...matches].reverse().filter(m=>m.account_trophies_after!=null);
-  // Cache for the range filter — re-render on button click without
-  // re-hitting the API.
   _progressionFullData = ordered;
   renderProgression(_filterByRange(_progressionFullData, _progressionRange));
+  // Full history (all matches, not just the last 200) so the chart isn't
+  // truncated to "only after 16h". Lightweight {t,y} points, downsampled
+  // server-side; Chart.js LTTB decimation thins them further for display.
+  _loadProgression(acc.id);
   renderWinRate(acc.win_rate_by_brawler || []);
 
   // Cap displayed rows to keep the page lightweight. The full history
@@ -448,6 +452,22 @@ function _filterByRange(data, range) {
   return data.filter(m => m.timestamp >= cutoff);
 }
 
+// Fetch the FULL account-trophy history (lightweight {t,y}, downsampled
+// server-side) and re-render the chart. This is what fixes "no data before
+// 16h" — the dashboard endpoint only returns the last 200 matches for the
+// table, which on a busy day starts mid-afternoon.
+async function _loadProgression(accId) {
+  let res;
+  try {
+    res = await api(`/api/accounts/${accId}/progression?max_points=2000`, {silent: true});
+  } catch (e) { return; }  // keep the dashboard-seeded chart on failure
+  if (selectedAccountId !== accId) return;  // user switched accounts
+  const pts = (res && res.points) || [];
+  if (!pts.length) return;
+  _progressionFullData = pts.map(p => ({timestamp: p.t, account_trophies_after: p.y}));
+  renderProgression(_filterByRange(_progressionFullData, _progressionRange));
+}
+
 function _formatTimeTick(ts, rangeSpan) {
   const d = new Date(ts * 1000);
   if (rangeSpan != null && rangeSpan <= 86400) {
@@ -513,7 +533,13 @@ function renderProgression(rows) {
         // point on the X axis. Vertical line + hover ring make the
         // current reading position obvious.
         interaction: { mode: "nearest", intersect: false, axis: "x" },
+        // LTTB decimation: thins dense series to ~150 points while preserving
+        // the curve's shape (peaks/dips). Cuts render cost + visual clutter
+        // when the full history has hundreds/thousands of matches. Requires
+        // parsing:false + linear x scale + animation:false (all set).
+        parsing: false,
         plugins: {
+          decimation: { enabled: true, algorithm: "lttb", samples: 150 },
           legend: { display: false },
           tooltip: {
             backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1,

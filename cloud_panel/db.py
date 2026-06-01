@@ -508,6 +508,34 @@ def recent_matches(account_id: int, limit: int = 200, offset: int = 0) -> list[d
     return [dict(r) for r in rows]
 
 
+def progression_series(account_id: int, max_points: int = 2000) -> list[dict]:
+    """Lightweight account-trophy series over the WHOLE history (oldest→newest).
+
+    Only two fields per point (timestamp, y) so the payload stays tiny even
+    over thousands of matches — this is what feeds the progression chart, so
+    it must NOT be capped to the last N matches (that's why pre-16h data was
+    missing). Downsampled server-side to `max_points` with a uniform stride
+    (first & last always kept) to bound the payload; the client further
+    decimates for display."""
+    with _lock, _cur() as c:
+        c.execute(
+            "SELECT timestamp AS t, account_trophies_after AS y FROM matches "
+            "WHERE account_id = %s AND account_trophies_after IS NOT NULL "
+            "ORDER BY timestamp ASC",
+            (account_id,),
+        )
+        rows = c.fetchall()
+    pts = [{"t": r["t"], "y": r["y"]} for r in rows]
+    n = len(pts)
+    if n <= max_points or max_points <= 2:
+        return pts
+    step = n / max_points
+    out = [pts[int(i * step)] for i in range(max_points)]
+    if out[-1] is not pts[-1]:
+        out.append(pts[-1])
+    return out
+
+
 def match_stats(account_id: int) -> dict:
     """Account-wide match totals over the WHOLE history (not just the page
     of recent matches loaded for the table). Lets the KPI show the real

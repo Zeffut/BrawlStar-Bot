@@ -122,7 +122,11 @@ def _activity_for_state(state: "str | None", brawler: "str | None") -> "str | No
     if state == "match":
         return f"Playing as {bw}" if bw else "Playing a match"
     if state == "lobby":
-        return f"In lobby — {bw}" if bw else "In lobby"
+        # The runner only publishes activity while a grind is active, and an
+        # active grind taps PLAY the instant it's back at the lobby — so
+        # "lobby" here means "queuing for the next match", not idling. (Idle /
+        # manual lobby falls back to the STATE_LABELS "In lobby" on the panel.)
+        return f"Searching for match — {bw}" if bw else "Searching for match"
     if state == "brawler_selection":
         return f"Selecting {bw}" if bw else "Selecting brawler"
     if state == "end":
@@ -198,13 +202,32 @@ def _try_resume_session(bot) -> None:
     log.info("RESUMING %s session (started %.0fs ago): brawler=%s target_total=%s",
              mode, time.time() - state.get("started_at", 0),
              state.get("brawler"), state.get("target_total_trophies"))
+    # The persisted `owned_brawlers` snapshot is STALE (captured when the
+    # session first started). push_max's efficiency ceiling works on these
+    # trophy counts, so a stale-low value makes a 1000+ brawler look "easy"
+    # and get picked (the shelly/bartaba bug). Re-fetch fresh trophies from
+    # brawlace at resume; fall back to the stale snapshot only if it fails.
+    owned = state.get("owned_brawlers")
+    if mode == "push_max":
+        try:
+            from account_detect import fetch_account_profile
+            accs = db.list_accounts()
+            if accs:
+                prof = fetch_account_profile(accs[0]["tag"])
+                fresh = prof.get("brawlers")
+                if fresh:
+                    owned = fresh
+                    log.info("resume: refreshed %d owned brawlers from brawlace "
+                             "(stale snapshot discarded)", len(fresh))
+        except Exception:
+            log.exception("resume: brawler refresh failed — using stale snapshot")
     try:
         ok, msg = bot.runner.start(
             brawler=state.get("brawler") or "shelly",
             trophies=state.get("trophies", 99999),
             wins=state.get("wins", 0),
             mode=mode,
-            owned_brawlers=state.get("owned_brawlers"),
+            owned_brawlers=owned,
             max_matches=state.get("max_matches"),
             target_total_trophies=state.get("target_total_trophies"),
             per_brawler_max_trophies=state.get("per_brawler_max_trophies"),
@@ -899,15 +922,18 @@ class BotRunner:
             # (swap mode only — no_swap grinds the equipped brawler).
             if runner._push_max is not None:
                 runner._push_max.record_match(current_brawler, game_result, after)
-                # Periodically re-sync the current brawler's REAL trophies from
-                # brawlace (refreshed every few min). The one-shot seed at
-                # session start can be stale-LOW (served from an old cache), so
-                # push_max's tracked value lags reality and the ceiling never
-                # fires — that's how barley got pushed past 1000. Correct
-                # upward only. Run in a BACKGROUND thread: it's a network call
-                # and MUST NOT block the match loop (a slow/504 brawlace fetch
-                # in the hot path stalls the grind = looks stuck).
-                if runner._match_count % 3 == 0 and runner._account_id is not None:
+                # Re-sync REAL trophies from brawlace (source of truth). The
+                # seed at session start (and the resume snapshot) can be
+                # stale-LOW, so push_max's tracked values lag reality and the
+                # efficiency ceiling never fires — that's how shelly/barley got
+                # picked at 1000+. We correct ALL brawlers, not just the current
+                # one: a stale-low NON-current brawler (e.g. nita tracked 490 but
+                # really 798) otherwise stays in the "easy" pool and keeps being
+                # picked. Run on match #1 (close the stale-seed window fast) then
+                # every 3. BACKGROUND thread: a slow/504 brawlace fetch in the
+                # hot path would stall the grind (looks stuck).
+                if ((runner._match_count == 1 or runner._match_count % 3 == 0)
+                        and runner._account_id is not None):
                     def _resync(acc_id, brawler_name, pm, obs):
                         try:
                             acc = db.get_account(acc_id)
@@ -918,27 +944,36 @@ class BotRunner:
                             brawlers = prof.get("brawlers", [])
                             if not brawlers:
                                 return
-                            # RE-ANCHOR the account total on the brawlace SUM —
-                            # the API is the source of truth. This kills the
-                            # ~1000-trophy drift from accumulating per-match
-                            # delta ESTIMATES indefinitely; deltas only fill the
-                            # gap between re-syncs now.
-                            total = sum(b.get("trophies", 0) for b in brawlers)
-                            if total > 0:
-                                if abs(total - runner._account_trophies) > 5:
-                                    log.info("brawlace re-anchor: account total %d → %d",
-                                             runner._account_trophies, total)
-                                runner._account_trophies = total
-                            # Correct the current brawler's tracked trophies
-                            # upward (for the efficiency ceiling).
-                            for b in brawlers:
-                                if b.get("name", "").lower() == brawler_name.lower():
-                                    real = b.get("trophies") or 0
-                                    bs = pm.brawlers.get(brawler_name)
-                                    if bs and real > bs.trophies:
-                                        bs.trophies = real
-                                        obs.current_trophies = real
-                                    break
+                            # NOTE: we do NOT re-anchor the account total to the
+                            # brawlace SUM anymore. The per-match deltas are read
+                            # from the result screen and are EXACT (winning gives
+                            # the current brawler +X = account +X), so summing
+                            # them is precise. brawlace lags per-brawler (a value
+                            # can read 501 minutes after the bot pushed it to
+                            # 1075), so re-anchoring to its sum made the global
+                            # counter jump erratically — losses showing +30 etc.
+                            # The total is seeded once from brawlace at session
+                            # start, then driven purely by match deltas.
+                            #
+                            # Per-brawler trophies are corrected UPWARD ONLY (for
+                            # the efficiency-ceiling decision). Never downward:
+                            # brawlace lag would otherwise drop a just-pushed
+                            # brawler back below the ceiling and it'd be re-picked
+                            # at 1000+ (the shelly bug).
+                            real_by_name = {
+                                (b.get("name") or "").lower(): (b.get("trophies") or 0)
+                                for b in brawlers
+                            }
+                            is_current = (brawler_name or "").lower()
+                            for bname, bs in pm.brawlers.items():
+                                real = real_by_name.get(bname.lower())
+                                if real is None or real <= bs.trophies:
+                                    continue
+                                log.info("brawlace sync (up): %s %d → %d",
+                                         bname, bs.trophies, real)
+                                bs.trophies = real
+                                if bname.lower() == is_current:
+                                    obs.current_trophies = real
                         except Exception:
                             log.exception("brawlace trophy re-sync failed")
                     threading.Thread(target=_resync, daemon=True,

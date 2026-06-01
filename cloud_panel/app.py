@@ -420,6 +420,21 @@ def api_account_matches(account_id: int, limit: int = 50, offset: int = 0) -> di
     return {"total": total, "offset": offset, "limit": limit, "items": items}
 
 
+@app.get("/api/accounts/{account_id}/progression")
+def api_account_progression(account_id: int, max_points: int = 2000) -> dict:
+    """Full-history account-trophy series for the chart (oldest→newest).
+
+    Unlike /dashboard (capped at the last 200 matches for the table), this
+    returns the ENTIRE history as lightweight {t, y} points — so the chart
+    shows everything, not just the most recent hours. Downsampled to
+    `max_points` to keep the payload small."""
+    if not db.get_account(account_id):
+        raise HTTPException(404, "not found")
+    max_points = max(50, min(max_points, 5000))
+    pts = db.progression_series(account_id, max_points=max_points)
+    return {"points": pts, "count": len(pts)}
+
+
 @app.get("/api/accounts/{account_id}/dashboard")
 def api_account_dashboard(account_id: int, matches_limit: int = 200) -> dict:
     """Single round-trip combining everything the panel detail view needs.
