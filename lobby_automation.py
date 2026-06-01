@@ -229,13 +229,15 @@ class LobbyAutomation:
                 # (colt→cowt, shelly→shey, bibi→bbi, …). Pick the OCR
                 # key with the closest match to the target, accepting
                 # any with similarity ≥ 0.7 (Ratcliff/Obershelp).
-                match_key = self._fuzzy_match(brawler, reworked_results.keys())
+                # Game is in French → try the localized name FIRST (the card
+                # shows e.g. "Bartaba" for barley), then fall back to the
+                # English name from brawlace (most brawlers are identical).
+                match_key = None
+                alias = BRAWLER_FR_ALIASES.get(brawler.lower().strip())
+                if alias and alias != brawler.lower().strip():
+                    match_key = self._fuzzy_match(alias, reworked_results.keys())
                 if match_key is None:
-                    # Try the localized (French) name — the game shows e.g.
-                    # "Bartaba" for barley, which never matches the English key.
-                    alias = BRAWLER_FR_ALIASES.get(brawler.lower().strip())
-                    if alias and alias != brawler.lower().strip():
-                        match_key = self._fuzzy_match(alias, reworked_results.keys())
+                    match_key = self._fuzzy_match(brawler, reworked_results.keys())
                 if match_key is not None:
                     bx, by = reworked_results[match_key]['center']
                     real_x, real_y = int(bx * 1.5385), int(by * 1.5385)
