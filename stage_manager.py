@@ -173,14 +173,38 @@ class StageManager:
             self.window_controller.click(x=x + 50, y=y)
 
     def click_trophy_reward(self):
-        """Tap CONTINUE button at bottom-center of screen (covers both the
-        old 'GO' trophy reward popup AND the new POWER/COINS/etc. result
-        screens that show a single CONTINUE button)."""
-        log.info("state=trophy_reward → tapping CONTINUE")
+        """Tap the CONTINUE/CONTINUER button on a post-match reward/result
+        screen.
+
+        OCR-locates the button instead of a fixed bottom-center tap: on the
+        "TEMPS FORTS" (match-highlights) screen the continue button is bottom-
+        RIGHT while bottom-center is REJOUER (replay!) — a fixed center tap
+        replayed the match and the result never logged, so the no-match
+        watchdog kept restarting BS. Falls back to bottom-center."""
+        log.info("state=trophy_reward → tapping CONTINUE (OCR-located)")
         import subprocess
+        # 1. Try to OCR-locate the continue button in the bottom strip.
+        try:
+            frame = self.window_controller.screenshot()
+            arr = np.array(frame)
+            h, w = arr.shape[:2]
+            y0 = int(h * 0.80)
+            strip = arr[y0:, :]
+            data = extract_text_and_positions(strip)
+            for key, val in data.items():
+                k = key.lower().strip()
+                # Match the continue button; never "rejouer"/"replay".
+                if any(t in k for t in ("continuer", "continue", "suivant")) \
+                        and "rejou" not in k and "replay" not in k:
+                    cx, cy = val['center']
+                    self.window_controller.click(int(cx), int(cy) + y0,
+                                                 already_include_ratio=True)
+                    return
+        except Exception:
+            log.debug("trophy continue OCR failed", exc_info=True)
+        # 2. Fallback: fixed bottom-center (old trophy/reward popups).
         sw = self.window_controller.width or 1920
         sh = self.window_controller.height or 1080
-        # CONTINUE button is around 90-95% of screen height, centered.
         cx, cy = sw // 2, int(sh * 0.92)
         serial = getattr(self.window_controller, "device_serial", None) or device.adb_serial()
         try:

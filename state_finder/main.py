@@ -247,6 +247,15 @@ def is_in_trophy_reward(image):
     text_cb = (" ".join(extract_text_and_positions(center_bottom).keys())).lower()
     if "continue" in text_cb:
         return True
+    # "TEMPS FORTS" (match-highlights) end screen: CONTINUER is bottom-RIGHT
+    # (outside the center strip above) next to a REJOUER button. Scan the whole
+    # bottom strip for it so click_trophy_reward dismisses it (OCR-locating the
+    # button) instead of the bot getting stuck — that was the no-match→restart
+    # loop. Detect the screen via "temps forts"/"continuer" anywhere low.
+    bottom = image[int(image.shape[0] * 0.82):, :]
+    text_b = (" ".join(extract_text_and_positions(bottom).keys())).lower()
+    if "temps forts" in text_b or "continuer" in text_b:
+        return True
     return False
 
 def is_in_brawl_pass(image):
