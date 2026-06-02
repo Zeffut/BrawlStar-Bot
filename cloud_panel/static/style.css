@@ -1212,28 +1212,29 @@ main {
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
 .chart-card.chart-wide { grid-column: 1 / -1; }
 
-/* Fleet overview. CLAMPED heights (not flex-fill-the-viewport): the hero chart
-   used to be flex:1 and grew to fill ALL remaining height → on a tall window it
-   became giant and overflowed. clamp(min, vh, max) keeps every chart a sensible
-   size on any window/zoom/DPR: never tiny, never giant, gently responsive. */
+/* Fleet overview. The dashboard fills #account-detail EXACTLY (height:100%) and
+   splits the leftover height between the hero (flex 3) and the bottom row
+   (flex 2) — both min-height:0 so they shrink on short windows. Result: the
+   page never overflows (no annoying mini-scroll) and never leaves empty space,
+   on any window height. Charts are sized by their wrapper (canvas height:100%),
+   which is DPR-safe — no Retina blow-up. */
 #empty-state {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding-top: 2px;
+  height: 100%;
 }
 #empty-state .cards { margin-bottom: 0; flex: 0 0 auto; }
-.fleet-hero { flex: 0 0 auto; display: flex; }
+.fleet-hero { flex: 3 1 0; min-height: 0; display: flex; }
 .fleet-hero .chart-card {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: clamp(240px, 38vh, 440px);
 }
 .fleet-bottom {
-  flex: 0 0 auto;
-  height: clamp(200px, 28vh, 300px);
+  flex: 2 1 0;
+  min-height: 0;
   display: grid;
   grid-template-columns: 1fr 1fr 1.3fr;   /* /jour | /heure | comptes */
   gap: 12px;
