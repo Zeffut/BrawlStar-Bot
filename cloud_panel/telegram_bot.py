@@ -21,6 +21,7 @@ import html
 import json as _json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -70,9 +71,17 @@ def _post(method: str, **payload) -> dict:
             _API.format(token=token, method=method), data=data, method="POST")
         with urllib.request.urlopen(req, timeout=20) as resp:
             return _json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        # Telegram returns a JSON error body even on 4xx (e.g. 401 bad token).
+        try:
+            body = _json.loads(e.read().decode())
+        except Exception:
+            body = {"ok": False, "error_code": e.code}
+        log.warning("telegram %s HTTP %s: %s", method, e.code, body.get("description"))
+        return body
     except Exception as exc:
         log.warning("telegram %s failed: %s", method, exc)
-        return {}
+        return {"ok": False, "error": str(exc)}
 
 
 def _esc(s) -> str:
