@@ -1238,7 +1238,12 @@ main {
   min-height: 0;
 }
 .fleet-charts .chart-card h3 { margin: 0 0 10px; font-size: 13px; }
-.fleet-charts .chart-card canvas { flex: 1 1 auto; min-height: 0; }
+/* Canvas wrapper: grows to fill the card; Chart.js (maintainAspectRatio:false)
+   then fills the wrapper. The canvas is absolutely positioned so its intrinsic
+   aspect ratio can't shrink it — fixes the "chart only fills the top, big empty
+   space below" bug. */
+.fleet-charts .cc-canvas { flex: 1 1 auto; min-height: 0; position: relative; }
+.fleet-charts .cc-canvas canvas { position: absolute; inset: 0; }
 .chart-card {
   background: var(--surface);
   border: 1px solid var(--border);

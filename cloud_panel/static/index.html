@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260602u" />
+<link rel="stylesheet" href="/static/style.css?v=20260602v" />
 </head>
 <body>
 <header>
@@ -110,15 +110,15 @@
       <section class="charts fleet-charts">
         <div class="chart-card">
           <h3>Trophées flotte cumulés</h3>
-          <canvas id="fleet-cum-chart"></canvas>
+          <div class="cc-canvas"><canvas id="fleet-cum-chart"></canvas></div>
         </div>
         <div class="chart-card">
           <h3>Trophées gagnés / jour</h3>
-          <canvas id="fleet-daily-chart"></canvas>
+          <div class="cc-canvas"><canvas id="fleet-daily-chart"></canvas></div>
         </div>
         <div class="chart-card">
           <h3>Activité par heure <span class="muted" style="font-size:11px;font-weight:400">(locale)</span></h3>
-          <canvas id="fleet-hourly-chart"></canvas>
+          <div class="cc-canvas"><canvas id="fleet-hourly-chart"></canvas></div>
         </div>
       </section>
       <section class="lists" style="grid-template-columns:1fr">
@@ -314,6 +314,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260602u"></script>
+<script src="/static/app.js?v=20260602v"></script>
 </body>
 </html>
