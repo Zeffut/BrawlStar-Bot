@@ -1160,15 +1160,16 @@ main {
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px;
+  /* Denser grid: ≥2 cards per row even on a narrow viewport, more on desktop. */
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
   margin-bottom: 24px;
 }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 16px 18px;
+  padding: 12px 14px;
   position: relative;
   overflow: hidden;
   transition: transform var(--base), border-color var(--base);
@@ -1186,15 +1187,18 @@ main {
 .card:hover::before { opacity: 1; }
 .card label {
   display: block;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .card > div {
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--text);
   letter-spacing: -0.02em;
