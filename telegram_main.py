@@ -239,6 +239,7 @@ def _try_resume_session(bot) -> None:
             target_total_trophies=state.get("target_total_trophies"),
             per_brawler_max_trophies=state.get("per_brawler_max_trophies"),
             efficiency_ceiling=state.get("efficiency_ceiling"),
+            last_equipped=state.get("last_equipped") or state.get("brawler"),
             unselectable=state.get("unselectable"),
         )
         log.info("resume result: ok=%s msg=%s", ok, msg)
@@ -291,6 +292,14 @@ class BotRunner:
         # from each match. Used by the panel for the progression chart.
         self._account_trophies: int = 0
         self._target_reached_notified: bool = False
+        # Name of the brawler the bot last PLAYED a match with → the one Brawl
+        # Stars still has equipped (BS persists the equipped brawler across app
+        # restarts). On resume we use this to SKIP re-opening the brawler menu
+        # when the target is already equipped — otherwise a restart re-selects
+        # the same brawler via the menu (2+ min of OCR/scroll), and for menu-
+        # unselectable brawlers (8-bit/Arcade, tick) it fails outright. This is
+        # deterministic (no OCR) so it works where _is_already_equipped doesn't.
+        self._last_equipped: str | None = None
         # Wall-clock of the last brawlace re-sync ATTEMPT (set when we launch
         # the background fetch). The resync is throttled to one per
         # BRAWLACE_SYNC_MIN_INTERVAL seconds — this both REDUCES trophy lag
@@ -308,6 +317,7 @@ class BotRunner:
               target_total_trophies: int | None = None,
               per_brawler_max_trophies: int | None = None,
               efficiency_ceiling: int | None = None,
+              last_equipped: str | None = None,
               unselectable: list[str] | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
@@ -390,6 +400,7 @@ class BotRunner:
             self._max_matches = max_matches
             self._target_total_trophies = target_total_trophies
             self._last_brawlace_sync = 0.0   # force a sync on the first match
+            self._last_equipped = last_equipped
             self._last_match_at = time.time()
             self._stuck_alerted = False
             # Persist the resume state so a restart can pick up where
@@ -405,6 +416,7 @@ class BotRunner:
                 "target_total_trophies": target_total_trophies,
                 "per_brawler_max_trophies": per_brawler_max_trophies,
                 "efficiency_ceiling": efficiency_ceiling,
+                "last_equipped": last_equipped,
                 "owned_brawlers": owned_brawlers,
                 "unselectable": sorted(self._unselectable),
                 "started_at": time.time(),
@@ -584,6 +596,20 @@ class BotRunner:
                     # is detected + recorded in _install_match_hook.
                     log.info("push_max no_swap: skipping menu selection, "
                              "grinding the equipped brawler")
+                elif (self._last_equipped
+                      and data[0]['brawler'].strip().lower()
+                          == self._last_equipped.strip().lower()):
+                    # The target is the brawler we were last playing → BS still
+                    # has it equipped (it persists across app restarts). Skip the
+                    # menu entirely: re-selecting it would waste 2+ min of OCR/
+                    # scroll, and for menu-unselectable brawlers (8-bit/Arcade,
+                    # tick) it fails outright then churns through the roster.
+                    # This is the "re-selects Arcade after already playing it"
+                    # bug on every git_update/restart.
+                    log.info("initial selection: %s already equipped (resumed) "
+                             "— skipping menu", data[0]['brawler'])
+                    if self._push_max is not None:
+                        self._push_max.current = data[0]['brawler']
                 elif data[0]['automatically_pick']:
                     # Initial brawler selection. If the menu OCR can't find it
                     # (locked, or name fused with the trophy badge → unreadable),
@@ -924,6 +950,9 @@ class BotRunner:
             runner._match_count += 1
             runner._last_match_at = time.time()
             runner._stuck_alerted = False  # reset on any progress
+            # We just played this brawler → it's the one BS has equipped. Record
+            # it so a resume skips re-selecting it through the menu.
+            runner._last_equipped = current_brawler
             # Keep the resume state fresh: refresh its timestamp + current
             # brawler each match so an actively-grinding session is NEVER
             # discarded as "too old" after a restart (the bug that left the
@@ -931,6 +960,7 @@ class BotRunner:
             if runner._resume_state is not None:
                 runner._resume_state["started_at"] = time.time()
                 runner._resume_state["brawler"] = current_brawler
+                runner._resume_state["last_equipped"] = current_brawler
                 try:
                     _save_resume_state(runner._resume_state)
                 except Exception:
