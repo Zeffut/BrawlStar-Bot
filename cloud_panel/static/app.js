@@ -610,7 +610,9 @@ document.addEventListener("click", (e) => {
 });
 
 function renderWinRate(data) {
-  const sorted = data.slice().sort((a,b)=>b.total-a.total).slice(0,8);
+  // Show ALL played brawlers (was capped at the top 8). The DB only returns
+  // brawlers that have matches, so this is every brawler the bot has played.
+  const sorted = data.slice().sort((a,b)=>b.total-a.total);
   if (!winrateChart) {
     winrateChart = new Chart(document.getElementById("chart-winrate"), {
       type: "bar",
@@ -622,7 +624,7 @@ function renderWinRate(data) {
       options: { responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { labels: { color: "#c4ccd8", font: { family: "Inter", size: 11 }, boxWidth: 10, padding: 12 } },
                    tooltip: { backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1, titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10 } },
-        scales: { x: {stacked:true,grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10}},border:{display:false}},
+        scales: { x: {stacked:true,grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10},autoSkip:false,maxRotation:90,minRotation:45},border:{display:false}},
                   y: {stacked:true,grid:{color:"rgba(255,255,255,.03)"},ticks:{color:"#7a8597",font:{family:"Inter",size:10}},border:{display:false}} } }
     });
   }
