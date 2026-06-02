@@ -1245,13 +1245,15 @@ main {
 #empty-state .chart-card h3 { margin: 0 0 8px; font-size: 13px; }
 /* Wrapper grows; Chart.js fills it. CRUCIAL: lift the global ".chart-card
    canvas { max-height:240px }" cap (for the detail-page charts) — it was
-   clamping every fleet chart to 240px regardless of flex/resize. */
+   clamping every fleet chart to 240px regardless of flex/resize.
+   DO NOT force height/width:auto here: that made the canvas render at its
+   *intrinsic* pixel size (= CSS size × devicePixelRatio), so on a Retina/HiDPI
+   Mac (DPR=2) every fleet chart rendered 2× too big ("graphiques géants").
+   Let Chart.js set the inline CSS height/width itself — only lift the cap. */
 #empty-state .cc-canvas { flex: 1 1 auto; min-height: 0; }
 #empty-state .cc-canvas canvas {
   display: block;
   max-height: none !important;
-  height: auto !important;
-  width: auto !important;
 }
 .chart-card {
   background: var(--surface);
