@@ -1238,12 +1238,17 @@ main {
   min-height: 0;
 }
 .fleet-charts .chart-card h3 { margin: 0 0 10px; font-size: 13px; }
-/* Standard Chart.js responsive container: a position:relative wrapper that
-   grows (flex:1) and gives the canvas a real height. Chart.js
-   (maintainAspectRatio:false) fills it. The canvas must NOT be absolutely
-   positioned (that breaks Chart.js's size measurement → it stayed short). */
-.fleet-charts .cc-canvas { flex: 1 1 auto; min-height: 0; position: relative; }
-.fleet-charts .cc-canvas canvas { display: block; width: 100% !important; height: 100% !important; }
+/* The wrapper grows (flex:1) to fill the card; Chart.js then sizes the canvas
+   to it. CRUCIAL: lift the global ".chart-card canvas { max-height:240px }" cap
+   (meant for the detail-page charts) — it was clamping the fleet charts to
+   240px no matter what. With max-height:none, Chart.js fills the tall wrapper. */
+.fleet-charts .cc-canvas { flex: 1 1 auto; min-height: 0; }
+.fleet-charts .cc-canvas canvas {
+  display: block;
+  max-height: none !important;
+  height: auto !important;
+  width: auto !important;
+}
 .chart-card {
   background: var(--surface);
   border: 1px solid var(--border);
