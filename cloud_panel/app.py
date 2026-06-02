@@ -442,6 +442,12 @@ def api_account(account_id: int) -> dict:
     return acc
 
 
+@app.get("/api/accounts/{account_id}/brawler_efficiency")
+def api_account_brawler_efficiency(account_id: int, days: int = 7) -> dict:
+    days = max(1, min(days, 90))
+    return {"days": days, "brawlers": db.brawler_efficiency(account_id, days=days)}
+
+
 @app.get("/api/accounts/{account_id}/matches")
 def api_account_matches(account_id: int, limit: int = 50, offset: int = 0) -> dict:
     """Paginated match history: {total, offset, limit, items}. Lets the UI

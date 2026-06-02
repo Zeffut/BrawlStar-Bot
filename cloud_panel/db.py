@@ -674,6 +674,68 @@ def fleet_timeseries(now: float | None = None, days: int = 14) -> dict:
     return {"daily": daily, "hourly": hourly}
 
 
+def brawler_efficiency(account_id: int, days: int = 7,
+                       now: float | None = None) -> list[dict]:
+    """Per-brawler efficiency over the last `days`: net trophies, matches, win
+    rate, net-per-match, and an estimated trophies/HOUR.
+
+    Trophies/hour needs an "active time" per brawler. Wall-clock (max-min ts)
+    would count the hours the brawler wasn't being played, so instead we sum the
+    gaps between that brawler's consecutive matches, CAPPING each gap (a gap
+    longer than GAP_CAP means the bot was elsewhere / idle, not grinding this
+    brawler) and giving an isolated match a nominal duration. Returns the list
+    sorted by trophies/hour desc (best grind targets first); brawlers with too
+    little active time get tph=None and sort last."""
+    now = now or time.time()
+    since = now - days * 86400
+    GAP_CAP = 8 * 60          # 8 min: longer gap = not actively on this brawler
+    NOMINAL_MATCH_S = 150     # a lone match counts as ~2.5 min of activity
+    with _lock, _cur() as c:
+        c.execute(
+            "SELECT brawler, result, timestamp, "
+            "       (trophies_after - trophies_before) AS d "
+            "FROM matches WHERE account_id=%s AND timestamp>=%s "
+            "  AND trophies_before IS NOT NULL AND trophies_after IS NOT NULL "
+            "ORDER BY brawler, timestamp",
+            (account_id, since),
+        )
+        rows = c.fetchall()
+    by: dict[str, dict] = {}
+    for r in rows:
+        b = r["brawler"]
+        st = by.setdefault(b, {"brawler": b, "matches": 0, "wins": 0,
+                               "losses": 0, "draws": 0, "net": 0,
+                               "active_s": 0.0, "_prev_ts": None, "last_ts": 0.0})
+        st["matches"] += 1
+        st["net"] += int(r["d"] or 0)
+        res = r["result"]
+        if res == "victory": st["wins"] += 1
+        elif res == "defeat": st["losses"] += 1
+        elif res == "draw": st["draws"] += 1
+        ts = float(r["timestamp"])
+        if st["_prev_ts"] is None:
+            st["active_s"] += NOMINAL_MATCH_S
+        else:
+            st["active_s"] += min(ts - st["_prev_ts"], GAP_CAP)
+        st["_prev_ts"] = ts
+        st["last_ts"] = ts
+    out = []
+    for st in by.values():
+        st.pop("_prev_ts", None)
+        m = st["matches"]
+        hours = st["active_s"] / 3600.0
+        st["win_rate"] = round(st["wins"] / m * 100) if m else None
+        st["net_per_match"] = round(st["net"] / m, 1) if m else 0.0
+        # Only report tph with at least ~10 min of active time (else noisy).
+        st["trophies_per_hour"] = round(st["net"] / hours) if hours >= (600 / 3600) else None
+        st["active_minutes"] = round(st["active_s"] / 60)
+        out.append(st)
+    # Best grinders first: tph desc (None last), then net desc.
+    out.sort(key=lambda s: (s["trophies_per_hour"] is None,
+                            -(s["trophies_per_hour"] or 0), -s["net"]))
+    return out
+
+
 def win_rate_by_brawler(account_id: int) -> list[dict]:
     with _lock, _cur() as c:
         c.execute(

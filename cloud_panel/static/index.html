@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260603e" />
+<link rel="stylesheet" href="/static/style.css?v=20260603f" />
 </head>
 <body>
 <header>
@@ -240,6 +240,13 @@
           <h3>Activité par heure <span class="muted" style="font-size:11px;font-weight:400">(heure locale)</span></h3>
           <canvas id="chart-activity"></canvas>
         </div>
+        <div class="list-card chart-wide" id="brawler-eff-card">
+          <h3>Efficacité par brawler <span class="muted" style="font-size:11px;font-weight:400">(7 jours)</span></h3>
+          <table id="brawler-eff-table">
+            <thead><tr><th>Brawler</th><th>🏆/h</th><th>Net</th><th>/match</th><th>WR</th><th>Matchs</th><th>Temps</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </section>
       <section class="device-panel" id="device-panel" hidden>
         <div class="device-panel-header">
@@ -324,6 +331,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260603e"></script>
+<script src="/static/app.js?v=20260603f"></script>
 </body>
 </html>

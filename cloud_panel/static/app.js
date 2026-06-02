@@ -462,6 +462,7 @@ function _applyDashboard(dash) {
   // renders with different X-axis extents (last-200 vs full) → visible flicker
   // on every match. _loadProgression is idempotent + dedupes redundant renders.
   renderWinRate(acc.win_rate_by_brawler || []);
+  loadBrawlerEfficiency(acc.id);
 
   // Cap displayed rows to keep the page lightweight. The full history
   // is still available via the API; tables also become scrollable
@@ -755,6 +756,36 @@ function renderWinRate(data) {
   winrateChart.data.datasets[1].data = sorted.map(d=>d.losses);
   winrateChart.data.datasets[2].data = sorted.map(d=>d.draws);
   winrateChart.update("none");
+}
+
+async function loadBrawlerEfficiency(accountId) {
+  const tbody = document.querySelector("#brawler-eff-table tbody");
+  if (!tbody) return;
+  try {
+    const r = await api(`/api/accounts/${accountId}/brawler_efficiency?days=7`, {silent: true});
+    const rows = (r && r.brawlers) || [];
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">Pas encore de données.</td></tr>`;
+      return;
+    }
+    const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+    const tphTxt = (v) => v == null ? '<span class="muted">—</span>'
+      : `<strong class="${v > 0 ? 'delta-pos' : (v < 0 ? 'delta-neg' : '')}">${v > 0 ? '+' : ''}${v}</strong>`;
+    const netTxt = (v) => `<span class="${v > 0 ? 'delta-pos' : (v < 0 ? 'delta-neg' : '')}">${v > 0 ? '+' : ''}${v}</span>`;
+    const fmtTime = (min) => min >= 60 ? `${Math.floor(min/60)}h${String(min%60).padStart(2,'0')}` : `${min}m`;
+    tbody.innerHTML = rows.map(b => `
+      <tr>
+        <td>${cap(b.brawler)}</td>
+        <td>${tphTxt(b.trophies_per_hour)}</td>
+        <td>${netTxt(b.net)}</td>
+        <td>${b.net_per_match > 0 ? '+' : ''}${b.net_per_match}</td>
+        <td>${b.win_rate != null ? b.win_rate + '%' : '—'}</td>
+        <td>${b.matches}</td>
+        <td class="muted">${fmtTime(b.active_minutes)}</td>
+      </tr>`).join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:14px">Erreur de chargement.</td></tr>`;
+  }
 }
 
 // Capitalize a brawler name for display (FR names are lowercase from brawlace).
