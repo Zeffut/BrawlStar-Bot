@@ -123,10 +123,25 @@ def test_pushes_easiest_skips_above_ceiling():
     assert s.pick_next().name == "shelly"
 
 
-def test_above_ceiling_only_as_last_resort():
+def test_above_ceiling_never_picked():
+    # New contract: an above-ceiling brawler is NEVER auto-picked. When nothing
+    # below the efficiency ceiling is left to grind, pick_next returns None so
+    # the caller STOPS (grinding a 1000+ brawler nets ~0 = wasted battery).
     owned = [{"name": "brock", "trophies": 940}]   # only brawler, above ceiling
     s = PushMaxStrategy.from_owned(owned)
-    assert s.pick_next().name == "brock"           # nothing easier → still pick it
+    assert s.pick_next() is None
+
+    # A below-ceiling brawler IS picked, above-ceiling ones ignored.
+    owned = [
+        {"name": "brock", "trophies": 940},    # S, above ceiling → ignored
+        {"name": "buzz", "trophies": 300},     # B, below ceiling → picked
+    ]
+    s = PushMaxStrategy.from_owned(owned)
+    assert s.pick_next().name == "buzz"
+    # Once the easy one exhausts, no fallback to the 940 brock → None (stop).
+    s.brawlers["buzz"].exhausted = True
+    s.current = None
+    assert s.pick_next() is None
 
 
 def test_per_brawler_cap_skips_already_capped():

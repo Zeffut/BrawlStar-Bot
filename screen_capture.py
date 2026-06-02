@@ -229,6 +229,7 @@ class ScreenRecorder:
                 self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                                               stderr=subprocess.DEVNULL)
                 self.alive = True
+                forced = False
                 while not self._stop:
                     chunk = self._proc.stdout.read(8192)
                     if not chunk:
@@ -240,9 +241,17 @@ class ScreenRecorder:
                         self._scan_codec_init(chunk)
                         self._fan_out_raw(chunk)
                     # First viewer just attached → respawn for a fresh keyframe.
+                    # MUST terminate the current proc first: otherwise _proc.wait()
+                    # below blocks 5s on a live process and the orphaned
+                    # screenrecord conflicts with the new one (one per device).
                     if self._force_respawn:
                         self._force_respawn = False
                         log.info("screenrec: forced respawn for fresh stream keyframe")
+                        forced = True
+                        try:
+                            self._proc.terminate()
+                        except Exception:
+                            pass
                         break
                     try:
                         packets = codec.parse(chunk)
@@ -266,6 +275,13 @@ class ScreenRecorder:
                 # Subprocess ended (time limit or crash). Loop respawns.
                 self._proc.wait(timeout=5)
                 self.alive = False
+                # A deliberate respawn (first stream viewer → fresh keyframe) is
+                # NOT a device death: respawn immediately, don't count it toward
+                # the fast-death disable, don't back off.
+                if forced:
+                    backoff_s = 2
+                    consecutive_fast_deaths = 0
+                    continue
                 run_duration = time.time() - spawn_started_at
                 # If screenrecord lasted at least 5s we consider the
                 # device healthy — reset the backoff. Otherwise the

@@ -883,21 +883,27 @@ function _streamMakeMuxer(targetId) {
   if (_streamMuxers.has(targetId)) return;
   const vid = document.getElementById(_STREAM_VIDEO[targetId]);
   if (!vid || typeof JMuxer === "undefined") return;
+  if (typeof JMuxer === "undefined") {
+    console.error("[stream] jMuxer not loaded — live video unavailable");
+    return;
+  }
   let muxer;
   try {
     muxer = new JMuxer({
       node: vid,
       mode: "video",
-      flushingTime: 0,        // lowest latency
-      maxDelay: 200,
+      flushingTime: 100,      // ms; 0 can stall some builds
+      maxDelay: 300,
       clearBuffer: true,
       fps: 30,
       debug: false,
-      onError: () => { /* glitch until next keyframe; jMuxer self-recovers */ },
+      onReady: () => { try { vid.play().catch(() => {}); } catch (_) {} },
+      onError: (e) => { console.warn("[stream] jMuxer error", e); },
     });
-  } catch (_) { return; }
+  } catch (e) { console.error("[stream] JMuxer init failed", e); return; }
   // Show the video, hide the on-demand capture <img> behind it.
   vid.hidden = false;
+  try { vid.play().catch(() => {}); } catch (_) {}
   const frame = vid.closest(".gc-screen-frame, .screen-wrap");
   if (frame) frame.classList.add("streaming");
   _streamMuxers.set(targetId, {video: vid, muxer});
@@ -928,8 +934,15 @@ function _streamConnect(instanceId) {
   catch (_) { return; }
   ws.binaryType = "arraybuffer";
   _streamWS = ws;
+  let _gotBytes = 0;
+  ws.onopen = () => console.log("[stream] WS open →", instanceId);
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") return;   // (no text frames in H264 path)
+    _gotBytes += ev.data.byteLength || 0;
+    if (_gotBytes && _gotBytes < 20000) {
+      // log only the first packets so we can confirm data is flowing
+      console.log("[stream] H264 bytes so far:", _gotBytes);
+    }
     _streamFeed(new Uint8Array(ev.data));
   };
   ws.onclose = () => {

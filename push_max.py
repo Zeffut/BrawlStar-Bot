@@ -173,14 +173,23 @@ class PushMaxStrategy:
         candidates = [b for b in self.brawlers.values() if not b.exhausted]
         if not candidates:
             return None
+        # ONLY ever grind brawlers BELOW the efficiency ceiling. Above it a
+        # match loses ~as much as it gains, so pushing a 1000+ brawler is
+        # wasted battery. When nothing below the ceiling is left to grind we
+        # return None → the caller STOPS the session (the efficient grind is
+        # done) instead of falling back to an inefficient 1000+ brawler.
         easy = [b for b in candidates if b.trophies < EFFICIENCY_CEILING]
-        pool = easy if easy else candidates
+        if not easy:
+            log.info("PushMax: no brawler below the %d ceiling left to grind "
+                     "(%d above-ceiling ignored) → stopping",
+                     EFFICIENCY_CEILING, len(candidates))
+            return None
         # Tier FIRST (S > A > B > C — Pyla wins more with higher tiers, so they
         # climb further and more reliably), then lowest trophies within a tier
         # (most headroom / easiest). This is why we don't grind an A at 100
         # while an S below the ceiling is still available.
-        pool.sort(key=lambda b: (TIER_ORDER.get(b.tier, 99), b.trophies))
-        winner = pool[0]
+        easy.sort(key=lambda b: (TIER_ORDER.get(b.tier, 99), b.trophies))
+        winner = easy[0]
         self.current = winner.name
         if not winner.locked:
             winner.locked = True

@@ -944,16 +944,25 @@ class BotRunner:
                             brawlers = prof.get("brawlers", [])
                             if not brawlers:
                                 return
-                            # NOTE: we do NOT re-anchor the account total to the
-                            # brawlace SUM anymore. The per-match deltas are read
-                            # from the result screen and are EXACT (winning gives
-                            # the current brawler +X = account +X), so summing
-                            # them is precise. brawlace lags per-brawler (a value
-                            # can read 501 minutes after the bot pushed it to
-                            # 1075), so re-anchoring to its sum made the global
-                            # counter jump erratically — losses showing +30 etc.
-                            # The total is seeded once from brawlace at session
-                            # start, then driven purely by match deltas.
+                            # Account total: driven by EXACT per-match deltas
+                            # (read off the result screen) for smoothness, with
+                            # an UPWARD-ONLY catch-up to the brawlace sum. We
+                            # never anchor DOWNWARD: brawlace lags per-brawler (a
+                            # value can read 501 long after the bot pushed it to
+                            # 1075), and anchoring both ways made the counter jump
+                            # erratically (losses showing +30). Upward-only with a
+                            # margin fixes the opposite failure — missed match
+                            # deltas slowly under-counting the real total (the
+                            # "déficit vs réalité"). brawlace lag only ever makes
+                            # the sum LOW (< tracked), so it can't trigger a false
+                            # catch-up; a sum ABOVE tracked means we genuinely
+                            # missed gains → catch up to reality.
+                            real_total = sum(b.get("trophies", 0) for b in brawlers)
+                            if real_total > runner._account_trophies + 15:
+                                log.info("brawlace catch-up: account total %d → %d "
+                                         "(recovered missed deltas)",
+                                         runner._account_trophies, real_total)
+                                runner._account_trophies = real_total
                             #
                             # Per-brawler trophies are corrected UPWARD ONLY (for
                             # the efficiency-ceiling decision). Never downward:
@@ -1024,7 +1033,25 @@ class BotRunner:
                     if (not main_instance.time_to_stop and cur
                             and (cur.exhausted or cur.trophies >= EFFICIENCY_CEILING)):
                         nxt = runner._push_max.pick_next()
-                        if nxt is not None and nxt.name != current_brawler:
+                        if nxt is None:
+                            # Nothing below the efficiency ceiling left to grind.
+                            # STOP rather than keep playing a 1000+ brawler that
+                            # nets ~0 (the "why is it grinding bartaba at 1000+"
+                            # complaint). The global target may not be reached —
+                            # that's intended: efficiency over a futile grind.
+                            log.info("push_max: current %s at %d ≥ ceiling and no "
+                                     "efficient brawler left — stopping session",
+                                     current_brawler, cur.trophies)
+                            main_instance.time_to_stop = True
+                            _clear_resume_state()
+                            try:
+                                cloud_sync.event("push_max_done", {
+                                    "reason": "no_brawler_below_ceiling",
+                                    "account_trophies": runner._account_trophies,
+                                })
+                            except Exception:
+                                pass
+                        elif nxt.name != current_brawler:
                             log.info("push_max: swap %s → %s (exhausted=%s, trophies=%d)",
                                      current_brawler, nxt.name, cur.exhausted, cur.trophies)
                             main_instance.Stage_manager._pending_swap = nxt.name
