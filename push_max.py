@@ -106,6 +106,10 @@ class PushMaxStrategy:
     # trophies, it's marked exhausted and the bot moves to the next one.
     # None = no cap (push until stagnation, the original behavior).
     brawler_max_trophies: int | None = None
+    # Diminishing-returns ceiling: brawlers AT/ABOVE this are never grinded
+    # (a match there loses ~as much as it gains). Defaults to the module
+    # EFFICIENCY_CEILING but is configurable per-session (global panel config).
+    efficiency_ceiling: int = EFFICIENCY_CEILING
     # "Stay on equipped" mode: never auto-swap brawler (the brawler-menu
     # OCR/scroll is too unreliable to pick a specific one of 102 cards).
     # pick_next always returns `current` (the equipped brawler), and the
@@ -118,10 +122,12 @@ class PushMaxStrategy:
     def from_owned(cls, owned: list[dict],
                    defeat_limit: int = DEFAULT_DEFEAT_LIMIT,
                    brawler_max_trophies: int | None = None,
+                   efficiency_ceiling: int = EFFICIENCY_CEILING,
                    no_swap: bool = False) -> "PushMaxStrategy":
         """Build a strategy from the brawlace `fetch_owned_brawlers` list."""
         state = cls(defeat_limit=defeat_limit,
                     brawler_max_trophies=brawler_max_trophies,
+                    efficiency_ceiling=efficiency_ceiling,
                     no_swap=no_swap)
         for b in owned:
             name = b["name"]
@@ -169,7 +175,7 @@ class PushMaxStrategy:
             return cur if (cur and not cur.exhausted) else None
         if self.current:
             cur = self.brawlers.get(self.current)
-            if cur and not cur.exhausted and cur.trophies < EFFICIENCY_CEILING:
+            if cur and not cur.exhausted and cur.trophies < self.efficiency_ceiling:
                 return cur
         candidates = [b for b in self.brawlers.values() if not b.exhausted]
         if not candidates:
@@ -179,11 +185,11 @@ class PushMaxStrategy:
         # wasted battery. When nothing below the ceiling is left to grind we
         # return None → the caller STOPS the session (the efficient grind is
         # done) instead of falling back to an inefficient 1000+ brawler.
-        easy = [b for b in candidates if b.trophies < EFFICIENCY_CEILING]
+        easy = [b for b in candidates if b.trophies < self.efficiency_ceiling]
         if not easy:
             log.info("PushMax: no brawler below the %d ceiling left to grind "
                      "(%d above-ceiling ignored) → stopping",
-                     EFFICIENCY_CEILING, len(candidates))
+                     self.efficiency_ceiling, len(candidates))
             return None
         # Tier FIRST (S > A > B > C — Pyla wins more with higher tiers, so they
         # climb further and more reliably), then lowest trophies within a tier

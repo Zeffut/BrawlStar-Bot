@@ -231,6 +231,7 @@ def _try_resume_session(bot) -> None:
             max_matches=state.get("max_matches"),
             target_total_trophies=state.get("target_total_trophies"),
             per_brawler_max_trophies=state.get("per_brawler_max_trophies"),
+            efficiency_ceiling=state.get("efficiency_ceiling"),
             unselectable=state.get("unselectable"),
         )
         log.info("resume result: ok=%s msg=%s", ok, msg)
@@ -293,6 +294,7 @@ class BotRunner:
               max_matches: int | None = None,
               target_total_trophies: int | None = None,
               per_brawler_max_trophies: int | None = None,
+              efficiency_ceiling: int | None = None,
               unselectable: list[str] | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
@@ -339,6 +341,7 @@ class BotRunner:
                     return False, "push_max needs the owned-brawlers list."
                 self._push_max = PushMaxStrategy.from_owned(
                     owned_brawlers, brawler_max_trophies=per_brawler_max_trophies,
+                    efficiency_ceiling=(efficiency_ceiling or EFFICIENCY_CEILING),
                     no_swap=False)
                 # Pre-exhaust known-unselectable brawlers BEFORE picking the
                 # starter, so the bot doesn't open the session churning on one
@@ -387,6 +390,7 @@ class BotRunner:
                 "max_matches": max_matches,
                 "target_total_trophies": target_total_trophies,
                 "per_brawler_max_trophies": per_brawler_max_trophies,
+                "efficiency_ceiling": efficiency_ceiling,
                 "owned_brawlers": owned_brawlers,
                 "unselectable": sorted(self._unselectable),
                 "started_at": time.time(),
@@ -1078,7 +1082,7 @@ class BotRunner:
                     # past the efficiency ceiling — don't keep pushing it to
                     # e.g. 950; move to an easier brawler with better gains.
                     if (not main_instance.time_to_stop and cur
-                            and (cur.exhausted or cur.trophies >= EFFICIENCY_CEILING)):
+                            and (cur.exhausted or cur.trophies >= runner._push_max.efficiency_ceiling)):
                         nxt = runner._push_max.pick_next()
                         if nxt is None:
                             # Nothing below the efficiency ceiling left to grind.

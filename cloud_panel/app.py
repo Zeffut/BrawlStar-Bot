@@ -272,6 +272,31 @@ def test_notif(channel: str) -> dict:
     return {"ok": ok, "message": msg}
 
 
+# ---- App config (push-max ceiling, …) -----------------------------
+
+
+@app.get("/api/config/app")
+def get_app_config() -> dict:
+    cfg = db.get_config("app")
+    return {"push_max_ceiling": int(cfg.get("push_max_ceiling") or DEFAULT_PUSH_MAX_CEILING)}
+
+
+class AppConfigPayload(BaseModel):
+    push_max_ceiling: int | None = None
+
+
+@app.put("/api/config/app")
+def set_app_config(payload: AppConfigPayload) -> dict:
+    cfg = db.get_config("app")
+    if payload.push_max_ceiling is not None:
+        c = int(payload.push_max_ceiling)
+        if c < 1 or c > 5000:
+            raise HTTPException(400, "push_max_ceiling must be between 1 and 5000")
+        cfg["push_max_ceiling"] = c
+    db.set_config("app", cfg)
+    return {"push_max_ceiling": int(cfg.get("push_max_ceiling") or DEFAULT_PUSH_MAX_CEILING)}
+
+
 # ---- Per-instance state (resume sessions, etc.) --------------------
 # Workers are stateless executors: anything that should survive a
 # worker restart, redeploy or wipe must live on the panel.
@@ -1051,6 +1076,20 @@ async def _cmd_for_account(account_id: int, name: str, args: dict, timeout_s: fl
 class PushMaxBody(BaseModel):
     target_total_trophies: int | None = None
     per_brawler_max_trophies: int | None = None
+    efficiency_ceiling: int | None = None
+
+
+# Default diminishing-returns ceiling (mirrors push_max.EFFICIENCY_CEILING).
+# Stored under the "app" config and overridable from the global config modal.
+DEFAULT_PUSH_MAX_CEILING = 750
+
+
+def _push_max_ceiling() -> int:
+    try:
+        v = int(db.get_config("app").get("push_max_ceiling") or DEFAULT_PUSH_MAX_CEILING)
+        return v if v > 0 else DEFAULT_PUSH_MAX_CEILING
+    except Exception:
+        return DEFAULT_PUSH_MAX_CEILING
 
 
 @app.post("/api/accounts/{account_id}/push_max")
@@ -1060,6 +1099,13 @@ async def api_account_push_max(account_id: int, payload: PushMaxBody | None = No
         args["target_total_trophies"] = payload.target_total_trophies
     if payload and payload.per_brawler_max_trophies is not None:
         args["per_brawler_max_trophies"] = payload.per_brawler_max_trophies
+    # The efficiency ceiling comes from the global panel config (no per-launch
+    # modal anymore): push_max just grinds every brawler up to this ceiling and
+    # then stops. An explicit per-call override still wins if provided.
+    if payload and payload.efficiency_ceiling is not None:
+        args["efficiency_ceiling"] = payload.efficiency_ceiling
+    else:
+        args["efficiency_ceiling"] = _push_max_ceiling()
     # Worker fetches the brawler list (via flaresolverr) before starting,
     # so allow ample time on a cold call.
     return await _cmd_for_account(account_id, "session_push_max", args, timeout_s=100)

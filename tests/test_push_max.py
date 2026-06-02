@@ -144,6 +144,25 @@ def test_above_ceiling_never_picked():
     assert s.pick_next() is None
 
 
+def test_configurable_efficiency_ceiling():
+    # The ceiling is now configurable (global panel config). A custom ceiling
+    # of 500 makes a 600-trophy brawler "above ceiling" (ignored) while the
+    # default 750 would have grinded it.
+    owned = [
+        {"name": "shelly", "trophies": 600},   # A-tier, below default 750
+    ]
+    # Default ceiling (750): 600 is grindable.
+    assert PushMaxStrategy.from_owned(owned).pick_next().name == "shelly"
+    # Custom ceiling 500: 600 is above it → nothing to grind → stop.
+    s = PushMaxStrategy.from_owned(owned, efficiency_ceiling=500)
+    assert s.efficiency_ceiling == 500
+    assert s.pick_next() is None
+    # And a brawler below the custom ceiling is still picked.
+    owned2 = [{"name": "colt", "trophies": 400}, {"name": "shelly", "trophies": 600}]
+    s2 = PushMaxStrategy.from_owned(owned2, efficiency_ceiling=500)
+    assert s2.pick_next().name == "colt"
+
+
 def test_per_brawler_cap_skips_already_capped():
     owned = [
         {"name": "brock", "trophies": 1000},   # S, already at/above cap

@@ -1477,57 +1477,6 @@ async function postSession(path, body) {
   }
 }
 
-async function askPushMaxTarget() {
-  // Suggest current total + 200 as a reasonable next goal.
-  let suggested = 0;
-  try {
-    const r = await api(`/api/accounts/${selectedAccountId}/brawlers`, {silent: true});
-    suggested = (r?.total_trophies || 0) + 200;
-  } catch (e) {}
-  return new Promise(resolve => {
-    const overlay = document.createElement("div");
-    overlay.className = "confirm-overlay";
-    overlay.innerHTML = `
-      <div class="confirm-dialog">
-        <h3 class="confirm-title">Push Max — Objectif</h3>
-        <p class="confirm-body">Le bot pousse un brawler à la fois (S → A → B → C selon affinité Pyla) jusqu'à stagnation, puis passe au suivant. Il s'arrête à l'objectif global OU quand tous les brawlers stagnent.</p>
-        <div style="margin-bottom:18px">
-          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Total trophies cible (compte)</label>
-          <input type="number" id="pm-target" min="1" value="${suggested}" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px" />
-        </div>
-        <div style="margin-bottom:18px">
-          <label style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:6px">Max trophées par brawler — optionnel</label>
-          <input type="number" id="pm-cap" min="1" placeholder="ex: 900 · vide = aucun cap" style="width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);padding:10px 12px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px" />
-          <span style="font-size:10px;color:var(--muted);display:block;margin-top:5px">Chaque brawler s'arrête à ce nombre, puis le bot passe au suivant.</span>
-        </div>
-        <div class="confirm-actions">
-          <button class="confirm-btn" data-act="cancel">Annuler</button>
-          <button class="confirm-btn primary" data-act="ok">▶ Lancer</button>
-        </div>
-      </div>`;
-    const close = (val) => { overlay.remove(); document.removeEventListener("keydown", onKey); resolve(val); };
-    const submit = () => {
-      const t = parseInt(overlay.querySelector("#pm-target").value, 10);
-      if (!Number.isFinite(t) || t <= 0) { close(null); return; }
-      const capRaw = (overlay.querySelector("#pm-cap").value || "").trim();
-      const cap = capRaw === "" ? null : parseInt(capRaw, 10);
-      close({ target: t, perBrawlerMax: (Number.isFinite(cap) && cap > 0) ? cap : null });
-    };
-    const onKey = (e) => {
-      if (e.key === "Escape") close(null);
-      if (e.key === "Enter") submit();
-    };
-    overlay.addEventListener("click", e => {
-      if (e.target === overlay) close(null);
-      else if (e.target.dataset.act === "cancel") close(null);
-      else if (e.target.dataset.act === "ok") submit();
-    });
-    document.addEventListener("keydown", onKey);
-    document.body.appendChild(overlay);
-    setTimeout(() => overlay.querySelector("#pm-target").select(), 50);
-  });
-}
-
 document.getElementById("btn-push-max").addEventListener("click", async (e) => {
   if (!selectedAccountId) return;
   const btn = e.currentTarget;
@@ -1535,17 +1484,16 @@ document.getElementById("btn-push-max").addEventListener("click", async (e) => {
   // active) → ignore. session-active toggles `hidden`, not `disabled`,
   // so cover both cases.
   if (btn.disabled || btn.hidden) return;
-  const res = await askPushMaxTarget();
-  if (!res) return;
-  const target = res.target;
-  const perBrawlerMax = res.perBrawlerMax;
+  // No config modal and no global target: push_max simply grinds every
+  // brawler up to the efficiency ceiling (configured in the global config,
+  // default 750 🏆) then stops. The ceiling is applied server-side.
   // Optimistic UI: hide Push Max immediately + show Stop, so a second
   // click is impossible during the 10s window before session_state
   // catches up.
   document.getElementById("btn-push-max").hidden = true;
   document.getElementById("btn-stop").hidden = false;
   await withLoader("btn-push-max", async () => {
-    const r = await postSession("/push_max", {target_total_trophies: target, per_brawler_max_trophies: perBrawlerMax});
+    const r = await postSession("/push_max", {});
     if (!r.ok || (r.data && !r.data.ok)) {
       const reason = r.data?.msg || r.data?.error || r.error || "unknown";
       showToast("Push Max failed: " + reason, "err");
@@ -1558,7 +1506,7 @@ document.getElementById("btn-push-max").addEventListener("click", async (e) => {
       }
       refreshSessionState();
     } else {
-      showToast(`Push Max démarré — objectif ${target} 🏆${perBrawlerMax ? ` · cap ${perBrawlerMax}/brawler` : ""}`, "ok");
+      showToast("Push Max démarré — grind jusqu'au plafond 🏆", "ok");
       // Poll session_state aggressively for ~30s so the banner appears
       // as soon as pick_next sets _push_max on the runner.
       for (let i = 0; i < 15; i++) {
@@ -2139,6 +2087,11 @@ async function openGlobalConfig() {
   if (!modal) return;
   try {
     const cfg = await api("/api/config/notif");
+    try {
+      const appCfg = await api("/api/config/app");
+      const el = document.getElementById("cfg-push-ceiling");
+      if (el) el.value = appCfg?.push_max_ceiling ?? 750;
+    } catch (e) {}
     document.getElementById("cfg-tg-enabled").checked = !!cfg.telegram?.enabled;
     document.getElementById("cfg-tg-token").value = cfg.telegram?.bot_token || "";
     document.getElementById("cfg-tg-chat").value = cfg.telegram?.chat_id || "";
@@ -2189,6 +2142,14 @@ async function saveGlobalConfig() {
   };
   try {
     await api("/api/config/notif", {method: "PUT", body: payload});
+    // Push-max efficiency ceiling (app config).
+    const ceilEl = document.getElementById("cfg-push-ceiling");
+    if (ceilEl) {
+      const c = parseInt(ceilEl.value, 10);
+      if (Number.isFinite(c) && c > 0) {
+        await api("/api/config/app", {method: "PUT", body: {push_max_ceiling: c}});
+      }
+    }
     showToast("Config saved", "ok");
     closeGlobalConfig();
   } catch (e) {

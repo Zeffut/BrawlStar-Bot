@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260603d" />
+<link rel="stylesheet" href="/static/style.css?v=20260603e" />
 </head>
 <body>
 <header>
@@ -40,7 +40,17 @@
       <button class="modal-close" id="gc-modal-close" aria-label="close">×</button>
     </div>
     <div class="modal-body">
-      <h3 style="margin-top:0">Notifications</h3>
+      <h3 style="margin-top:0">Push Max</h3>
+      <div class="cfg-section">
+        <div class="cfg-fields">
+          <label>Plafond de trophées par brawler
+            <input type="number" id="cfg-push-ceiling" min="1" max="5000" placeholder="750">
+          </label>
+          <span class="muted" style="font-size:11px">Push Max grinde chaque brawler jusqu'à ce nombre, puis s'arrête. Pas d'objectif global.</span>
+        </div>
+      </div>
+
+      <h3>Notifications</h3>
       <p class="muted" style="margin-top:0">Le panel gère désormais toutes les notifications. Les workers n'envoient plus rien — seuls les événements bruts sont relayés ici.</p>
 
       <!-- Telegram -->
@@ -314,6 +324,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260603d"></script>
+<script src="/static/app.js?v=20260603e"></script>
 </body>
 </html>
