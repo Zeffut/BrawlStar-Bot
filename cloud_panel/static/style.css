@@ -1179,8 +1179,7 @@ main {
   opacity: 0;
   transition: opacity var(--base);
 }
-.card:hover { border-color: var(--border-2); transform: translateY(-1px); }
-.card:hover::before { opacity: 1; }
+/* No hover effect: KPI cards are not clickable. */
 .card label {
   display: block;
   font-size: 10.5px;
@@ -1355,7 +1354,9 @@ td {
   font-variant-numeric: tabular-nums;
 }
 tr:last-child td { border-bottom: none; }
-tr:hover td { background: rgba(255,255,255,.015); }
+/* Row hover only on clickable rows (fleet account table). The matches /
+   sessions tables aren't clickable → no hover highlight. */
+.fleet-acc-row:hover td { background: rgba(255,255,255,.025); }
 
 .result-victory { color: var(--green); font-weight: 600; }
 .result-defeat  { color: var(--red); font-weight: 600; }
