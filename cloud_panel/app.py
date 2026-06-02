@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import db
 import notif
+import telegram_bot
 from ws import HUB, BUS, worker_ws_endpoint
 from fastapi.responses import StreamingResponse
 import asyncio as _asyncio
@@ -37,6 +38,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.on_event("startup")
 def _startup() -> None:
     db.init()
+    # Register the Telegram webhook so the cloud bot owns the token (a leftover
+    # worker poller then just gets 409s and stops). Best-effort, in a thread so
+    # a slow Telegram API call can't delay startup.
+    import threading
+    threading.Thread(target=telegram_bot.ensure_webhook, daemon=True,
+                     name="tg-webhook-setup").start()
 
 
 def _require_auth(authorization: str | None) -> None:
@@ -295,6 +302,33 @@ def set_app_config(payload: AppConfigPayload) -> dict:
         cfg["push_max_ceiling"] = c
     db.set_config("app", cfg)
     return {"push_max_ceiling": int(cfg.get("push_max_ceiling") or DEFAULT_PUSH_MAX_CEILING)}
+
+
+# ---- Telegram bot webhook -----------------------------------------
+
+
+@app.post("/api/telegram/webhook")
+async def telegram_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: str | None = Header(None),
+) -> dict:
+    """Receive Telegram updates. Validated by the secret header set at
+    setWebhook time; the bot itself also enforces the owner chat id."""
+    if x_telegram_bot_api_secret_token != telegram_bot.WEBHOOK_SECRET:
+        raise HTTPException(403, "bad secret")
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+    await telegram_bot.handle_update(update)
+    return {"ok": True}
+
+
+@app.post("/api/telegram/setup")
+def telegram_setup() -> dict:
+    """Manually (re)register the webhook — handy after changing the token."""
+    telegram_bot.ensure_webhook()
+    return {"ok": telegram_bot.is_configured()}
 
 
 # ---- Per-instance state (resume sessions, etc.) --------------------

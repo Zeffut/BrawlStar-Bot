@@ -1541,6 +1541,18 @@ class TelegramBot:
 
     # --- main loop ---
     def run(self) -> None:
+        # The interactive Telegram bot now lives on the CLOUD panel (single
+        # webhook consumer of the token — see cloud_panel/telegram_bot.py).
+        # Workers must NOT also poll getUpdates: Telegram allows one consumer
+        # per token, so two pollers (or a poller + the cloud webhook) collide
+        # with 409s. Default = don't poll; just keep the process alive (the WS
+        # link, game loop and session-keepalive run in daemon threads). Set
+        # WORKER_TELEGRAM_POLL=1 to restore local polling (legacy/standalone).
+        if os.environ.get("WORKER_TELEGRAM_POLL", "0") != "1":
+            log.info("worker Telegram polling disabled — cloud panel owns the "
+                     "bot via webhook. Idling to keep the process alive.")
+            while True:
+                time.sleep(3600)
         while True:
             params = {"timeout": self.poll_timeout}
             if self.offset is not None:
