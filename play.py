@@ -11,6 +11,24 @@ from utils import load_toml_as_dict, count_hsv_pixels, load_brawlers_info
 
 brawl_stars_width, brawl_stars_height = 1920, 1080
 debug = load_toml_as_dict("cfg/general_config.toml")['super_debug'] == "yes"
+
+# brawlace/push_max use separated names ("8-bit", "el primo", "mr. p") but
+# cfg/brawlers_info.json keys are separator-free ("8bit", "elprimo", "mrp").
+# Normalize before lookup so the right profile is found instead of crashing.
+def _norm_brawler(name: str) -> str:
+    name = (name or "").lower().strip()
+    for sym in (" ", "-", ".", "_", "&", "'"):
+        name = name.replace(sym, "")
+    return name
+
+# Generic profile for any brawler missing from brawlers_info.json — the bot
+# plays it as a mid-range damage dealer rather than crashing the whole session
+# (a single unknown brawler must never kill the grind).
+_DEFAULT_BRAWLER_INFO = {
+    "safe_range": 301.0, "attack_range": 490.0, "super_type": "damage",
+    "super_range": 490, "ignore_walls_for_attacks": False,
+    "ignore_walls_for_supers": True,
+}
 super_crop_area = load_toml_as_dict("./cfg/lobby_config.toml")['pixel_counter_crop_area']['super']
 gadget_crop_area = load_toml_as_dict("./cfg/lobby_config.toml")['pixel_counter_crop_area']['gadget']
 hypercharge_crop_area = load_toml_as_dict("./cfg/lobby_config.toml")['pixel_counter_crop_area']['hypercharge']
@@ -204,10 +222,13 @@ class Play(Movement):
     @staticmethod
     def can_attack_through_walls(brawler, skill_type, brawlers_info=None):
         if not brawlers_info: brawlers_info = load_brawlers_info()
+        info = (brawlers_info.get(brawler)
+                or brawlers_info.get(_norm_brawler(brawler))
+                or _DEFAULT_BRAWLER_INFO)
         if skill_type == "attack":
-            return brawlers_info[brawler]['ignore_walls_for_attacks']
+            return info['ignore_walls_for_attacks']
         elif skill_type == "super":
-            return brawlers_info[brawler]['ignore_walls_for_supers']
+            return info['ignore_walls_for_supers']
         raise ValueError("skill_type must be either 'attack' or 'super'")
 
 
@@ -336,7 +357,14 @@ class Play(Movement):
     def get_brawler_range(self, brawler):
         if self.brawler_ranges is None:
             self.brawler_ranges = self.load_brawler_ranges(self.brawlers_info)
-        return self.brawler_ranges[brawler]
+        r = self.brawler_ranges.get(brawler) or self.brawler_ranges.get(_norm_brawler(brawler))
+        if r is None:
+            # Unknown brawler → generic range from the default profile.
+            sf = self.window_controller.scale_factor
+            r = [int(_DEFAULT_BRAWLER_INFO["safe_range"] * sf),
+                 int(_DEFAULT_BRAWLER_INFO["attack_range"] * sf),
+                 int(_DEFAULT_BRAWLER_INFO["super_range"] * sf)]
+        return r
 
     def loop(self, brawler, data, current_time):
         movement = self.get_movement(player_data=data['player'][0], enemy_data=data['enemy'], walls=data['wall'], brawler=brawler)
@@ -411,9 +439,13 @@ class Play(Movement):
         return combined_walls
 
     def get_movement(self, player_data, enemy_data, walls, brawler):
-        brawler_info = self.brawlers_info.get(brawler)
+        brawler_info = (self.brawlers_info.get(brawler)
+                        or self.brawlers_info.get(_norm_brawler(brawler)))
         if not brawler_info:
-            raise ValueError(f"Brawler '{brawler}' not found in brawlers info.")
+            # Unknown brawler (or a name brawlers_info.json doesn't key) — play
+            # it with a generic profile instead of crashing the whole session.
+            print(f"[play] brawler {brawler!r} not in brawlers_info — using default profile")
+            brawler_info = _DEFAULT_BRAWLER_INFO
         safe_range, attack_range, super_range = self.get_brawler_range(brawler)
 
         player_pos = self.get_player_pos(player_data)
