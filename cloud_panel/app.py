@@ -503,8 +503,12 @@ def _account_analytics(account_id: int, acc: dict, matches: list[dict]) -> dict:
     cur = db.latest_account_trophies(account_id)
     target = None
     sess = acc.get("current_session")
-    if sess and sess.get("target_total_trophies") and sess["target_total_trophies"] < 99999:
-        target = sess["target_total_trophies"]
+    # The sessions table column is `target_trophies` (there is no
+    # `target_total_trophies`). push_max stores the 99999 sentinel there, so the
+    # <99999 guard means ETA only shows for a single-brawler session with a real
+    # target — which is correct (the push_max global target isn't persisted here).
+    if sess and sess.get("target_trophies") and sess["target_trophies"] < 99999:
+        target = sess["target_trophies"]
     if target and cur is not None and tph and tph > 0 and target > cur:
         s["eta_hours"] = round((target - cur) / tph, 1)
         s["target"] = target

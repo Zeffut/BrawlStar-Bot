@@ -1054,12 +1054,23 @@ class BotRunner:
                     # target. Only stop when there's genuinely nothing left
                     # (all capped or locked).
                     if runner._push_max.all_done():
-                        if runner._push_max.revive_grindable():
-                            log.info("push_max: all exhausted — revived grindable "
-                                     "brawlers, continuing toward target")
+                        revived = runner._push_max.revive_grindable()
+                        # revive_grindable() un-exhausts everything below the cap,
+                        # INCLUDING brawlers the menu OCR can't select. Re-mark
+                        # those so we don't re-pick + re-fail them every revive
+                        # cycle (in-session selection churn). They stay revived
+                        # only if they're genuinely the last resort below.
+                        for _bad in runner._unselectable:
+                            _b = runner._push_max.brawlers.get(_bad)
+                            if _b:
+                                _b.exhausted = True
+                        still = [b for b in runner._push_max.brawlers.values() if not b.exhausted]
+                        if revived and still:
+                            log.info("push_max: all exhausted — revived %d grindable "
+                                     "brawlers, continuing toward target", len(still))
                         else:
-                            log.info("push_max: nothing grindable left (capped/locked)"
-                                     " — stopping bot")
+                            log.info("push_max: nothing selectable+grindable left "
+                                     "— stopping bot")
                             main_instance.time_to_stop = True
                             _clear_resume_state()
                     cur = runner._push_max.brawlers.get(current_brawler)
