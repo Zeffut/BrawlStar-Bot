@@ -313,6 +313,10 @@ function renderFleetOverview(d) {
   }
 }
 document.getElementById("btn-fleet-overview")?.addEventListener("click", showFleetOverview);
+// Brand logo/title = "home" → fleet overview (standard UX reflex).
+const _brandEl = document.querySelector(".brand");
+if (_brandEl) { _brandEl.style.cursor = "pointer"; _brandEl.title = "Accueil — vue flotte";
+                _brandEl.addEventListener("click", showFleetOverview); }
 
 async function selectAccount(id) {
   _fleetView = false;
