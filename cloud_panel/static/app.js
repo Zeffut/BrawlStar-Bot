@@ -5,6 +5,7 @@ let selectedAccountId = null;
 let selectedInstanceId = null;  // null = all
 let progressionChart = null;
 let winrateChart = null;
+let activityChart = null;
 
 // Latest snapshot per instance, kept in sync by SSE.
 const SNAPSHOTS = {};
@@ -262,6 +263,7 @@ async function selectAccount(id) {
   if (selectedAccountId !== id) {
     if (progressionChart) { progressionChart.destroy(); progressionChart = null; }
     if (winrateChart)     { winrateChart.destroy();     winrateChart = null; }
+    if (activityChart)    { activityChart.destroy();    activityChart = null; }
     _progressionSig = null;   // chart gone → force a re-render for the new account
   }
   selectedAccountId = id;
@@ -333,6 +335,9 @@ function _applyDashboard(dash) {
   document.getElementById("kpi-matches").textContent = totalMatches;
   document.getElementById("kpi-wr").textContent = wr;
   document.getElementById("kpi-seen").textContent = ago(acc.last_seen_at);
+  // Rich analytics (efficiency / performance / activity).
+  _renderAnalytics(dash.analytics || {});
+  renderActivity((dash.analytics && dash.analytics.hourly) || []);
 
   // Chart is driven by a SINGLE source — the full downsampled history loaded
   // by _loadProgression (called once from refreshDetail). We deliberately do
@@ -633,6 +638,57 @@ function renderWinRate(data) {
   winrateChart.data.datasets[1].data = sorted.map(d=>d.losses);
   winrateChart.data.datasets[2].data = sorted.map(d=>d.draws);
   winrateChart.update("none");
+}
+
+// Capitalize a brawler name for display (FR names are lowercase from brawlace).
+function _cap(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : "—"; }
+
+// Fill the KPI cards from the analytics payload (efficiency / performance).
+function _renderAnalytics(a) {
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const sgn = (n) => (n > 0 ? "+" : "") + n;
+  const dCls = (n) => n >= 0 ? "delta-pos" : "delta-neg";
+  set("kpi-today", a.net_today != null ? `<span class="${dCls(a.net_today)}">${sgn(a.net_today)} 🏆</span>` : "—");
+  set("kpi-today-n", a.matches_today != null ? a.matches_today : "—");
+  set("kpi-tph", a.trophies_per_hour != null ? `<span class="${dCls(a.trophies_per_hour)}">${sgn(a.trophies_per_hour)}/h</span>` : "—");
+  set("kpi-eta", a.eta_hours != null ? `~${a.eta_hours} h` : "—");
+  set("kpi-wr24", a.win_rate_24h != null
+    ? `${a.win_rate_24h}% <span class="muted" style="font-size:11px">(${a.matches_24h})</span>` : "—");
+  if (a.streak_count) {
+    const k = a.streak_kind;
+    const cls = k === "victory" ? "delta-pos" : k === "defeat" ? "delta-neg" : "";
+    const lbl = k === "victory" ? "victoires" : k === "defeat" ? "défaites" : "nuls";
+    set("kpi-streak", `<span class="${cls}">${a.streak_count} ${lbl}</span>`);
+  } else set("kpi-streak", "—");
+  set("kpi-avgdelta", a.avg_delta != null ? `<span class="${dCls(a.avg_delta)}">${sgn(a.avg_delta)}</span>` : "—");
+  const bw = (b) => b ? `${_cap(b.brawler)} <span class="muted" style="font-size:11px">${b.win_rate}% · ${b.total}</span>` : "—";
+  set("kpi-best", bw(a.best_brawler));
+  set("kpi-worst", bw(a.worst_brawler));
+}
+
+// Activity-by-hour bar chart. Server sends 24 UTC buckets; shift to the
+// browser's local hours so it reads naturally.
+function renderActivity(hourly) {
+  const h = (hourly && hourly.length === 24) ? hourly : new Array(24).fill(0);
+  const off = Math.round(-new Date().getTimezoneOffset() / 60);
+  const local = new Array(24).fill(0);
+  for (let u = 0; u < 24; u++) local[(((u + off) % 24) + 24) % 24] = h[u];
+  const labels = local.map((_, i) => String(i).padStart(2, "0") + "h");
+  if (!activityChart) {
+    activityChart = new Chart(document.getElementById("chart-activity"), {
+      type: "bar",
+      data: { labels, datasets: [{ label: "Matchs", data: local, backgroundColor: "#4f8cf0", borderRadius: 3 }] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false },
+          tooltip: { backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1,
+                     titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10 } },
+        scales: { x: { grid: { color: "rgba(255,255,255,.03)" }, ticks: { color: "#7a8597", font: { family: "Inter", size: 9 }, autoSkip: true, maxRotation: 0 }, border: { display: false } },
+                  y: { grid: { color: "rgba(255,255,255,.03)" }, ticks: { color: "#7a8597", font: { family: "Inter", size: 10 }, precision: 0 }, border: { display: false } } } }
+    });
+  }
+  activityChart.data.labels = labels;
+  activityChart.data.datasets[0].data = local;
+  activityChart.update("none");
 }
 
 // ----------------- device console (opt-in) -----------------

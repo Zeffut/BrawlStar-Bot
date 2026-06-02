@@ -457,12 +457,60 @@ def api_account_dashboard(account_id: int, matches_limit: int = 200) -> dict:
         "account": acc,
         "matches": matches,
         "stats": db.match_stats(account_id),
+        "analytics": _account_analytics(account_id, acc, matches),
         "brawlers": {
             "list": brawlers,
             "refreshed_at": refreshed_at,
             "total_trophies": total_trophies,
         },
     }
+
+
+def _account_analytics(account_id: int, acc: dict, matches: list[dict]) -> dict:
+    """Derived stats for the detail page: efficiency, performance, activity.
+    Builds on db.account_stats and adds the current streak + best/worst brawler
+    + a projected time-to-target when a session target is set."""
+    s = db.account_stats(account_id)
+    # Current streak: consecutive same-result from the most recent match.
+    streak_n, streak_kind = 0, None
+    for m in matches:  # already newest-first
+        if not m.get("result"):
+            continue
+        if streak_kind is None:
+            streak_kind = m["result"]; streak_n = 1
+        elif m["result"] == streak_kind:
+            streak_n += 1
+        else:
+            break
+    s["streak_count"] = streak_n
+    s["streak_kind"] = streak_kind
+    # Best / worst brawler by win-rate (min 5 matches so a 1-game fluke
+    # doesn't win "best").
+    best = worst = None
+    for b in (acc.get("win_rate_by_brawler") or []):
+        if (b.get("total") or 0) < 5:
+            continue
+        wr = (b.get("wins") or 0) / b["total"] * 100
+        entry = {"brawler": b["brawler"], "win_rate": round(wr), "total": b["total"]}
+        if best is None or wr > best["win_rate"]:
+            best = entry
+        if worst is None or wr < worst["win_rate"]:
+            worst = entry
+    s["best_brawler"] = best
+    s["worst_brawler"] = worst
+    # Projected hours to the session target (if any) at the current rate.
+    tph = s.get("trophies_per_hour")
+    cur = db.latest_account_trophies(account_id)
+    target = None
+    sess = acc.get("current_session")
+    if sess and sess.get("target_total_trophies") and sess["target_total_trophies"] < 99999:
+        target = sess["target_total_trophies"]
+    if target and cur is not None and tph and tph > 0 and target > cur:
+        s["eta_hours"] = round((target - cur) / tph, 1)
+        s["target"] = target
+    else:
+        s["eta_hours"] = None
+    return s
 
 
 @app.get("/api/health")

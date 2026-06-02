@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260602h" />
+<link rel="stylesheet" href="/static/style.css?v=20260602i" />
 </head>
 <body>
 <header>
@@ -165,10 +165,19 @@
         </div>
       </section>
       <section class="cards">
+        <div class="card"><label>🏆 Trophées aujourd'hui</label><div id="kpi-today">—</div></div>
+        <div class="card"><label>⚡ Trophées / h</label><div id="kpi-tph">—</div></div>
+        <div class="card"><label>⏱ ETA objectif</label><div id="kpi-eta">—</div></div>
+        <div class="card"><label>🎯 Win rate</label><div id="kpi-wr">—</div></div>
+        <div class="card"><label>📈 Win rate 24h</label><div id="kpi-wr24">—</div></div>
+        <div class="card"><label>🔥 Série</label><div id="kpi-streak">—</div></div>
+        <div class="card"><label>Δ moyen / match</label><div id="kpi-avgdelta">—</div></div>
+        <div class="card"><label>⭐ Meilleur brawler</label><div id="kpi-best">—</div></div>
+        <div class="card"><label>📉 Pire brawler</label><div id="kpi-worst">—</div></div>
+        <div class="card"><label>Total matchs</label><div id="kpi-matches">—</div></div>
+        <div class="card"><label>Matchs aujourd'hui</label><div id="kpi-today-n">—</div></div>
         <div class="card"><label>Sessions</label><div id="kpi-sessions">—</div></div>
-        <div class="card"><label>Total matches</label><div id="kpi-matches">—</div></div>
-        <div class="card"><label>Win rate</label><div id="kpi-wr">—</div></div>
-        <div class="card"><label>Last seen</label><div id="kpi-seen">—</div></div>
+        <div class="card"><label>Vu pour la dernière fois</label><div id="kpi-seen">—</div></div>
       </section>
       <section class="charts">
         <div class="chart-card">
@@ -187,6 +196,10 @@
         <div class="chart-card">
           <h3>Win rate by brawler</h3>
           <canvas id="chart-winrate"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Activité par heure <span class="muted" style="font-size:11px;font-weight:400">(heure locale)</span></h3>
+          <canvas id="chart-activity"></canvas>
         </div>
       </section>
       <section class="device-panel" id="device-panel" hidden>
@@ -272,6 +285,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260602h"></script>
+<script src="/static/app.js?v=20260602i"></script>
 </body>
 </html>

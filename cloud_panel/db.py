@@ -578,6 +578,68 @@ def latest_account_trophies(account_id: int) -> int | None:
     return row["account_trophies_after"] if row else None
 
 
+def account_stats(account_id: int, now: float | None = None) -> dict:
+    """Rich derived stats for the detail page: efficiency (trophies/h, gain
+    today), performance (win-rate windows, avg delta), activity (hourly
+    histogram). Per-match delta (after-before) is the real match result and is
+    accurate even when the absolute per-brawler counts are noisy, so summing
+    deltas gives the true trophy gain over a window."""
+    now = now or time.time()
+    day = now - 86400
+    week = now - 7 * 86400
+    today = now - (now % 86400)        # UTC midnight
+    with _lock, _cur() as c:
+        c.execute(
+            "SELECT "
+            "  COUNT(*) AS total,"
+            "  COUNT(*) FILTER (WHERE result='victory') AS wins,"
+            "  COUNT(*) FILTER (WHERE result='defeat')  AS losses,"
+            "  COUNT(*) FILTER (WHERE result='draw')    AS draws,"
+            "  COALESCE(AVG(d),0) AS avg_delta,"
+            "  COUNT(*) FILTER (WHERE timestamp>=%s) AS m24,"
+            "  COUNT(*) FILTER (WHERE timestamp>=%s AND result='victory') AS w24,"
+            "  COUNT(*) FILTER (WHERE timestamp>=%s) AS m7,"
+            "  COUNT(*) FILTER (WHERE timestamp>=%s AND result='victory') AS w7,"
+            "  COALESCE(SUM(CASE WHEN timestamp>=%s THEN d END),0) AS net_today,"
+            "  COUNT(*) FILTER (WHERE timestamp>=%s) AS m_today,"
+            "  COALESCE(SUM(CASE WHEN timestamp>=%s THEN d END),0) AS net24,"
+            "  MIN(CASE WHEN timestamp>=%s THEN timestamp END) AS lo24,"
+            "  MAX(CASE WHEN timestamp>=%s THEN timestamp END) AS hi24 "
+            "FROM (SELECT result, timestamp, (trophies_after - trophies_before) AS d "
+            "      FROM matches WHERE account_id=%s "
+            "      AND trophies_before IS NOT NULL AND trophies_after IS NOT NULL) m",
+            (day, day, week, week, today, today, day, day, day, account_id),
+        )
+        r = dict(c.fetchone())
+        c.execute(
+            "SELECT EXTRACT(HOUR FROM to_timestamp(timestamp))::int AS hr, COUNT(*) AS n "
+            "FROM matches WHERE account_id=%s GROUP BY hr",
+            (account_id,),
+        )
+        hourly = [0] * 24
+        for row in c.fetchall():
+            h = int(row["hr"])
+            if 0 <= h < 24:
+                hourly[h] = int(row["n"])
+
+    def _wr(w, n):
+        return round((w or 0) / n * 100) if n else None
+    total = r["total"] or 0
+    span = (r["hi24"] - r["lo24"]) if (r["hi24"] and r["lo24"]) else 0
+    tph = round((r["net24"] or 0) / (span / 3600)) if span > 120 else None
+    return {
+        "total": total,
+        "wins": r["wins"] or 0, "losses": r["losses"] or 0, "draws": r["draws"] or 0,
+        "win_rate": _wr(r["wins"], total),
+        "avg_delta": round(float(r["avg_delta"] or 0), 1),
+        "win_rate_24h": _wr(r["w24"], r["m24"] or 0), "matches_24h": r["m24"] or 0,
+        "win_rate_7d": _wr(r["w7"], r["m7"] or 0), "matches_7d": r["m7"] or 0,
+        "net_today": int(r["net_today"] or 0), "matches_today": r["m_today"] or 0,
+        "net_24h": int(r["net24"] or 0), "trophies_per_hour": tph,
+        "hourly": hourly,
+    }
+
+
 def win_rate_by_brawler(account_id: int) -> list[dict]:
     with _lock, _cur() as c:
         c.execute(
