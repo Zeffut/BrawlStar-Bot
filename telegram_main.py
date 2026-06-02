@@ -752,6 +752,13 @@ class BotRunner:
                     log.exception("cloud session_end push failed")
                 self._session_id = None
             self.main_instance = None
+            # Drop the push-max strategy so the panel's push_max_state reports
+            # inactive once the run thread exits. Without this, a session that
+            # ends on its own (all brawlers hit the ceiling) leaves _push_max
+            # set → the panel keeps showing "Push Max running" + the Stop button
+            # forever (the "task doesn't get removed" bug).
+            self._push_max = None
+            self._target_total_trophies = None
             # Clear the published activity so the panel falls back to the raw
             # screen state (idle / manual) instead of showing a frozen phase.
             _set_activity(None)

@@ -211,7 +211,11 @@ def api_push_max(account_id: int, payload: PushMaxPayload | None = None) -> dict
 def api_push_max_state(account_id: int) -> dict:
     """Return the current push-max strategy state (or None if not active)."""
     worker = POOL.get(account_id)
-    if not worker or worker.runner._push_max is None:
+    # Inactive unless a push-max strategy exists AND its run thread is still
+    # alive. The is_running() guard matters: when a session ends on its own the
+    # thread exits — without it the panel would keep showing "Push Max running".
+    if (not worker or worker.runner._push_max is None
+            or not worker.runner.is_running()):
         return {"active": False}
     s = worker.runner._push_max
     return {
