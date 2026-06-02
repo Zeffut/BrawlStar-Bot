@@ -377,9 +377,17 @@ def api_instances() -> list[dict]:
         #   running    — active session
         #   charging   — battery paused (low, or charging below 50%)
         ws_connected = conn is not None
+        # A live activity ("Selecting Brock", "Playing as …", "Swapping to …")
+        # means the bot is actively working even when no DB session row is open
+        # yet — at session start it selects the brawler BEFORE db.start_session
+        # runs, so `running` was False and the instance wrongly showed "ready"
+        # while clearly busy. Treat a fresh activity as running too. The
+        # battery-paused branch is checked first, so a "Waiting — charging"
+        # activity still reads as "charging", not "running".
+        bot_busy = bool(snap.get("activity")) and ws_connected and not i["snapshot_stale"]
         if battery_paused and ws_connected and not i["snapshot_stale"]:
             i["status"] = "charging"
-        elif running:
+        elif running or bot_busy:
             i["status"] = "running"
         elif i["snapshot_stale"]:
             i["status"] = "stale"
