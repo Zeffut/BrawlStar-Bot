@@ -887,16 +887,18 @@ const _STREAM_VIDEO = {                 // img target id → overlay <video> id
   "gc-screenshot": "gc-video",
   "device-screen": "device-video",
 };
-const _streamMuxers = new Map();        // targetId → {video, muxer}
+const _streamMuxers = new Map();        // targetId → {video, muxer, lastBytes, lastT, frozen}
+let _streamBytes = 0;                    // total H264 bytes received this connection
+let _streamWatchdog = null;
 
 function _streamMakeMuxer(targetId) {
   if (_streamMuxers.has(targetId)) return;
-  const vid = document.getElementById(_STREAM_VIDEO[targetId]);
-  if (!vid || typeof JMuxer === "undefined") return;
   if (typeof JMuxer === "undefined") {
     console.error("[stream] jMuxer not loaded — live video unavailable");
     return;
   }
+  const vid = document.getElementById(_STREAM_VIDEO[targetId]);
+  if (!vid) return;
   let muxer;
   try {
     muxer = new JMuxer({
@@ -908,7 +910,8 @@ function _streamMakeMuxer(targetId) {
       fps: 30,
       debug: false,
       onReady: () => { try { vid.play().catch(() => {}); } catch (_) {} },
-      onError: (e) => { console.warn("[stream] jMuxer error", e); },
+      onError: (e) => { console.warn("[stream] jMuxer error — reinit", e);
+                        _streamReinit(targetId); },
     });
   } catch (e) { console.error("[stream] JMuxer init failed", e); return; }
   // Show the video, hide the on-demand capture <img> behind it.
@@ -916,7 +919,8 @@ function _streamMakeMuxer(targetId) {
   try { vid.play().catch(() => {}); } catch (_) {}
   const frame = vid.closest(".gc-screen-frame, .screen-wrap");
   if (frame) frame.classList.add("streaming");
-  _streamMuxers.set(targetId, {video: vid, muxer});
+  _streamMuxers.set(targetId, {video: vid, muxer, lastBytes: _streamBytes, lastT: 0, frozen: 0});
+  _streamStartWatchdog();
 }
 function _streamDropMuxer(targetId) {
   const m = _streamMuxers.get(targetId);
@@ -927,8 +931,45 @@ function _streamDropMuxer(targetId) {
   const frame = m.video.closest(".gc-screen-frame, .screen-wrap");
   if (frame) frame.classList.remove("streaming");
   _streamMuxers.delete(targetId);
+  if (!_streamMuxers.size && _streamWatchdog) {
+    clearInterval(_streamWatchdog); _streamWatchdog = null;
+  }
+}
+// Rebuild the muxer/SourceBuffer for a target WITHOUT touching the WS. Used to
+// self-heal when MSE freezes (screenrecord respawns every ~175s, a dropped
+// chunk corrupts H264 until the next keyframe ~10s, MSE can stall) — a frozen
+// picture recovers in ~2s instead of staying broken.
+function _streamReinit(targetId) {
+  const m = _streamMuxers.get(targetId);
+  if (!m) return;
+  try { m.muxer.destroy(); } catch (_) {}
+  _streamMuxers.delete(targetId);
+  _streamMakeMuxer(targetId);
+}
+function _streamStartWatchdog() {
+  if (_streamWatchdog) return;
+  _streamWatchdog = setInterval(() => {
+    for (const [tid, m] of _streamMuxers.entries()) {
+      const t = m.video.currentTime || 0;
+      const dataFlowing = _streamBytes > m.lastBytes;   // new bytes since last check
+      const advanced = t > m.lastT + 0.05;              // playback moved
+      if (dataFlowing && !advanced) {
+        m.frozen++;
+        if (m.frozen >= 2) {                            // ~4s frozen with data → reinit
+          console.warn("[stream] frozen → reinit", tid);
+          _streamReinit(tid);
+          continue;
+        }
+      } else {
+        m.frozen = 0;
+      }
+      m.lastBytes = _streamBytes;
+      m.lastT = t;
+    }
+  }, 2000);
 }
 function _streamFeed(u8) {
+  _streamBytes += u8.byteLength || 0;
   for (const {muxer} of _streamMuxers.values()) {
     try { muxer.feed({video: u8}); } catch (_) {}
   }
@@ -944,15 +985,9 @@ function _streamConnect(instanceId) {
   catch (_) { return; }
   ws.binaryType = "arraybuffer";
   _streamWS = ws;
-  let _gotBytes = 0;
   ws.onopen = () => console.log("[stream] WS open →", instanceId);
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") return;   // (no text frames in H264 path)
-    _gotBytes += ev.data.byteLength || 0;
-    if (_gotBytes && _gotBytes < 20000) {
-      // log only the first packets so we can confirm data is flowing
-      console.log("[stream] H264 bytes so far:", _gotBytes);
-    }
     _streamFeed(new Uint8Array(ev.data));
   };
   ws.onclose = () => {
