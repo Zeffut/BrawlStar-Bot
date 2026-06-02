@@ -333,6 +333,11 @@ function _barLine(chart, canvasId, type, labels, datasets) {
     chart.data.datasets = datasets;
     chart.update("none");
   }
+  // Force a re-measure: Chart.js sizes to the container at creation time, but
+  // the flex/grid height isn't final yet → it drew short with empty space
+  // below. resize() now + on the next frame makes it fill the (tall) card.
+  try { chart.resize(); } catch (_) {}
+  requestAnimationFrame(() => { try { chart.resize(); } catch (_) {} });
   return chart;
 }
 
