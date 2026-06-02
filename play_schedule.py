@@ -75,15 +75,23 @@ class PlaySchedule:
         self._day: str | None = None
         self._matches_today = 0
         self._today_cap = self.daily_cap
+        if self.enabled and self.sleep_start == self.sleep_end:
+            log.warning("play schedule: sleep_start == sleep_end (%dh) → NO sleep "
+                        "window (24h active). Set different hours to enable sleep.",
+                        self.sleep_start)
 
     # ---- daily bookkeeping ----
     def _ensure_day(self, now: float) -> None:
         day = time.strftime("%Y-%m-%d", time.localtime(now))
-        if day != self._day:
+        # Reset only when the date ADVANCES. A backward clock jump (NTP
+        # correction, manual change) crossing midnight would otherwise re-roll
+        # the cap and zero the counter → the daily cap could be exceeded twice,
+        # defeating the whole point of the cap. Forward-only is conservative.
+        if self._day is None or day > self._day:
             self._day = day
             self._matches_today = 0
             lo = max(1, self.daily_cap - self.cap_jitter)
-            hi = self.daily_cap + self.cap_jitter
+            hi = max(lo, self.daily_cap + self.cap_jitter)
             self._today_cap = random.randint(lo, hi)
             log.info("play schedule: new day %s — match cap %d", day, self._today_cap)
 
@@ -98,11 +106,13 @@ class PlaySchedule:
         return random.randint(self.block_min, self.block_max)
 
     def start_break(self, now: float | None = None) -> int:
-        """Begin a break of a randomized length. Returns its minutes."""
-        now = now or time.time()
+        """Begin a break of a randomized length. Returns its minutes.
+
+        Tracked on the MONOTONIC clock (immune to NTP/DST jumps that would
+        otherwise stretch or cancel a break)."""
         mins = random.randint(self.break_min, self.break_max)
         with self._lock:
-            self._break_until = now + mins * 60
+            self._break_until = time.monotonic() + mins * 60
         log.info("play schedule: break for %d min", mins)
         return mins
 
@@ -126,8 +136,11 @@ class PlaySchedule:
                 return False, f"sommeil ({self.sleep_start}h–{self.sleep_end}h)"
             if self._matches_today >= self._today_cap:
                 return False, f"quota du jour atteint ({self._matches_today}/{self._today_cap})"
-            if now < self._break_until:
-                left = int((self._break_until - now) / 60) + 1
+            # Break is on the monotonic clock (set by start_break), independent
+            # of the wall-clock `now` used for the sleep window / daily reset.
+            mono = time.monotonic()
+            if mono < self._break_until:
+                left = int((self._break_until - mono) / 60) + 1
                 return False, f"pause (~{left} min)"
             return True, "actif"
 

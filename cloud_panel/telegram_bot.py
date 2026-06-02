@@ -16,6 +16,7 @@ another chat is ignored. The webhook endpoint also validates a secret header.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import html
 import json as _json
@@ -119,7 +120,10 @@ def send_photo(jpeg_bytes: bytes, caption: str = "", chat: str | None = None) ->
         return {}
     token, chat_id = c
     boundary = "----brawlfleetTGboundary7c3f"
-    fields = {"chat_id": str(chat or chat_id), "caption": caption[:1000]}
+    # parse_mode=HTML so <b>/<code> in the caption render (the caption comes from
+    # _account_summary, which is HTML); without it Telegram shows the raw tags.
+    fields = {"chat_id": str(chat or chat_id), "caption": caption[:1000],
+              "parse_mode": "HTML"}
     body = bytearray()
     for k, v in fields.items():
         body += f"--{boundary}\r\n".encode()
@@ -315,8 +319,14 @@ def _brawler_eff_text(account_id: int) -> str:
 # ------------------------------------------------------------- commands (WS)
 
 
-async def _send_cmd(account_id: int, name: str, args: dict | None = None,
-                    timeout: float = 15) -> tuple[dict | None, str | None]:
+def _send_cmd(account_id: int, name: str, loop: asyncio.AbstractEventLoop,
+              args: dict | None = None,
+              timeout: float = 15) -> tuple[dict | None, str | None]:
+    """Send a WS command to the worker hosting `account_id`.
+
+    handle_update runs in a worker THREAD (so its blocking Telegram HTTP doesn't
+    stall the FastAPI event loop). HUB.send_command is a coroutine that must run
+    ON that loop → bridge via run_coroutine_threadsafe."""
     acc = db.get_account(account_id)
     if not acc:
         return None, "compte introuvable"
@@ -325,8 +335,9 @@ async def _send_cmd(account_id: int, name: str, args: dict | None = None,
         return None, "instance hors-ligne"
     payload = {"tag": acc["tag"], **(args or {})}
     try:
-        data = await HUB.send_command(inst, name, payload, timeout_s=timeout)
-        return data, None
+        fut = asyncio.run_coroutine_threadsafe(
+            HUB.send_command(inst, name, payload, timeout_s=timeout), loop)
+        return fut.result(timeout + 10), None
     except Exception as exc:
         return None, str(exc)
 
@@ -334,22 +345,23 @@ async def _send_cmd(account_id: int, name: str, args: dict | None = None,
 # ------------------------------------------------------------- update router
 
 
-async def handle_update(update: dict) -> None:
-    """Process one Telegram update. Locked to the configured chat id."""
+def handle_update(update: dict, loop: asyncio.AbstractEventLoop) -> None:
+    """Process one Telegram update (SYNCHRONOUS — runs in a thread executor so
+    its blocking HTTP can't stall the event loop). Locked to the owner chat id."""
     c = _conf()
     if not c:
         return
     _, owner = c
     try:
         if "message" in update:
-            await _on_message(update["message"], owner)
+            _on_message(update["message"], owner, loop)
         elif "callback_query" in update:
-            await _on_callback(update["callback_query"], owner)
+            _on_callback(update["callback_query"], owner, loop)
     except Exception:
         log.exception("telegram handle_update failed")
 
 
-async def _on_message(msg: dict, owner: str) -> None:
+def _on_message(msg: dict, owner: str, loop) -> None:
     chat_id = str((msg.get("chat") or {}).get("id"))
     if chat_id != owner:
         log.warning("telegram: ignoring message from chat %s (owner=%s)", chat_id, owner)
@@ -372,7 +384,7 @@ async def _on_message(msg: dict, owner: str) -> None:
         send("📈 <b>Rapport</b>\n\n" + _fleet_summary(), kb=_back_kb())
     elif cmd == "ceiling":
         if args:
-            await _set_ceiling(args[0])
+            _set_ceiling(args[0])
         else:
             send(f"Plafond push max actuel : <b>{_push_ceiling()}</b> 🏆\n"
                  f"Pour changer : <code>/ceiling 800</code>")
@@ -381,9 +393,9 @@ async def _on_message(msg: dict, owner: str) -> None:
         accs = db.list_accounts()
         if len(accs) == 1:
             aid = accs[0]["id"]
-            await _do_action({"push": "push", "stop": "stop", "screenshot": "screen",
-                              "restart": "restart_ask", "stats": "stats",
-                              "eff": "eff"}[cmd], aid, None)
+            _do_action({"push": "push", "stop": "stop", "screenshot": "screen",
+                        "restart": "restart_ask", "stats": "stats",
+                        "eff": "eff"}[cmd], aid, None, loop)
         else:
             _send_accounts_list()
     else:
@@ -408,7 +420,7 @@ def _send_accounts_list(message_id: int | None = None) -> None:
         send("<b>👥 Comptes</b> — choisis-en un :", kb=rows)
 
 
-async def _set_ceiling(raw: str) -> None:
+def _set_ceiling(raw: str) -> None:
     try:
         v = int(raw)
     except ValueError:
@@ -424,7 +436,7 @@ async def _set_ceiling(raw: str) -> None:
          f"<i>S'applique au prochain démarrage de Push Max.</i>")
 
 
-async def _on_callback(cb: dict, owner: str) -> None:
+def _on_callback(cb: dict, owner: str, loop) -> None:
     frm = str((cb.get("from") or {}).get("id"))
     if frm != owner:
         answer_callback(cb.get("id", ""), "Non autorisé.")
@@ -447,15 +459,17 @@ async def _on_callback(cb: dict, owner: str) -> None:
              f"⚙️ <b>Réglages</b>\nPlafond push max : <b>{_push_ceiling()}</b> 🏆\n"
              f"Change-le avec <code>/ceiling 800</code>.", kb=_back_kb())
     elif data.startswith("act:"):
-        _, action, said = data.split(":", 2)
+        bits = data.split(":", 2)
+        if len(bits) != 3:
+            return
         try:
-            aid = int(said)
+            aid = int(bits[2])
         except ValueError:
             return
-        await _do_action(action, aid, message_id)
+        _do_action(bits[1], aid, message_id, loop)
 
 
-async def _do_action(action: str, account_id: int, message_id: int | None) -> None:
+def _do_action(action: str, account_id: int, message_id: int | None, loop) -> None:
     if action == "open":
         running = _account_running(account_id)
         txt = _account_summary(account_id)
@@ -480,7 +494,7 @@ async def _do_action(action: str, account_id: int, message_id: int | None) -> No
         return
     if action == "screen":
         send("📸 Capture en cours…")
-        data, err = await _send_cmd(account_id, "screenshot", {}, timeout=12)
+        data, err = _send_cmd(account_id, "screenshot", loop, {}, timeout=12)
         if err or not data or not data.get("jpeg_b64"):
             send(f"❌ Capture impossible ({err or 'pas de frame'}).")
             return
@@ -492,8 +506,8 @@ async def _do_action(action: str, account_id: int, message_id: int | None) -> No
         return
     if action == "push":
         send("▶ Démarrage de Push Max…")
-        data, err = await _send_cmd(account_id, "session_push_max",
-                                    {"efficiency_ceiling": _push_ceiling()}, timeout=100)
+        data, err = _send_cmd(account_id, "session_push_max", loop,
+                              {"efficiency_ceiling": _push_ceiling()}, timeout=100)
         if err:
             send(f"❌ Échec du démarrage ({err}).")
         else:
@@ -503,7 +517,7 @@ async def _do_action(action: str, account_id: int, message_id: int | None) -> No
         return
     if action == "stop":
         send("⏹ Arrêt demandé (fin du match en cours)…")
-        data, err = await _send_cmd(account_id, "session_stop", {"force": False}, timeout=15)
+        data, err = _send_cmd(account_id, "session_stop", loop, {"force": False}, timeout=15)
         send("✅ Arrêt programmé." if not err else f"❌ {err}")
         send(_account_summary(account_id), kb=_account_kb(account_id, _account_running(account_id)))
         return
@@ -518,6 +532,6 @@ async def _do_action(action: str, account_id: int, message_id: int | None) -> No
         return
     if action == "restart":
         send("🔄 Redémarrage du bot…")
-        data, err = await _send_cmd(account_id, "bot_restart", {}, timeout=20)
+        data, err = _send_cmd(account_id, "bot_restart", loop, {}, timeout=20)
         send("✅ Redémarrage demandé." if not err else f"❌ {err}")
         return

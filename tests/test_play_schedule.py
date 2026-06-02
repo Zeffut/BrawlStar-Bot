@@ -34,14 +34,17 @@ def test_disabled_always_plays():
 
 
 def test_break_blocks_then_clears():
+    # Breaks are tracked on the MONOTONIC clock (clock-jump safe), so we don't
+    # drive them via the wall-clock `now` — we assert the gate directly.
     s = PlaySchedule(CFG)
     now = _ts(14)
     assert s.should_play_now(now)[0]
     s.break_min = s.break_max = 30          # force a 30-min break
-    s.start_break(now)
-    assert not s.should_play_now(now + 5 * 60)[0]      # 5 min in → still break
-    assert "pause" in s.should_play_now(now + 5 * 60)[1]
-    assert s.should_play_now(now + 31 * 60)[0]         # after 30 min → clear
+    s.start_break()
+    ok, why = s.should_play_now(now)
+    assert not ok and "pause" in why        # in a break → blocked
+    s._break_until = 0.0                     # break elapsed
+    assert s.should_play_now(now)[0]         # → clear
 
 
 def test_daily_cap_blocks_play():
@@ -51,6 +54,20 @@ def test_daily_cap_blocks_play():
         s.record_match(now)
     ok, why = s.should_play_now(now)
     assert not ok and "quota" in why
+
+
+def test_daily_reset_is_forward_only():
+    # Regression: a backward clock jump crossing midnight must NOT re-roll the
+    # daily cap (that would let the bot exceed it — defeats the anti-detection).
+    s = PlaySchedule({**CFG, "daily_match_cap": 5, "daily_cap_jitter": 0})
+    today = _ts(14)
+    for _ in range(5):
+        s.record_match(today)
+    assert not s.should_play_now(today)[0]                 # quota hit
+    # Clock rewinds to "yesterday" → date string goes backward → NO reset.
+    assert not s.should_play_now(today - 86400)[0]
+    # A genuine new day (forward) → reset → playable again.
+    assert s.should_play_now(today + 86400)[0]
 
 
 def test_block_minutes_in_range():

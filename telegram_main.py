@@ -313,6 +313,10 @@ class BotRunner:
         # unselectable brawlers (8-bit/Arcade, tick) it fails outright. This is
         # deterministic (no OCR) so it works where _is_already_equipped doesn't.
         self._last_equipped: str | None = None
+        # True while a background brawlace re-sync is in flight — prevents two
+        # concurrent fetches (a slow/504 fetch > BRAWLACE_SYNC_MIN_INTERVAL would
+        # otherwise let a second one start and race the first on shared state).
+        self._resync_inflight: bool = False
         # Wall-clock of the last brawlace re-sync ATTEMPT (set when we launch
         # the background fetch). The resync is throttled to one per
         # BRAWLACE_SYNC_MIN_INTERVAL seconds — this both REDUCES trophy lag
@@ -414,7 +418,7 @@ class BotRunner:
             self._target_total_trophies = target_total_trophies
             self._last_brawlace_sync = 0.0   # force a sync on the first match
             self._last_equipped = last_equipped
-            self._last_match_at = time.time()
+            self._last_match_at = time.monotonic()   # watchdog (clock-jump safe)
             self._stuck_alerted = False
             # Persist the resume state so a restart can pick up where
             # we left off (self-update, crash, reboot…). Stored on the runner
@@ -479,7 +483,10 @@ class BotRunner:
             while self.is_running():
                 time.sleep(60)
                 try:
-                    elapsed = time.time() - self._last_match_at
+                    # MONOTONIC: a wall-clock jump (DST +1h, NTP correction)
+                    # must NOT make `elapsed` leap past the hard-restart threshold
+                    # and trigger an unjustified _os._exit(1) on a healthy session.
+                    elapsed = time.monotonic() - self._last_match_at
                     cfg = _alerts_load().get("bot_stuck", {})
                     alert_min = float(cfg.get("threshold_minutes", 8))
                     cur_brawler = (self.brawler_data[0]["brawler"]
@@ -672,7 +679,7 @@ class BotRunner:
                 if _sched.enabled:
                     _self.run_for_minutes = _sched.block_minutes()
                     log.info("play schedule: this block = %d min", _self.run_for_minutes)
-                _self.start_time = time.time()
+                _self.start_time = time.monotonic()   # block duration (clock-jump safe)
                 _self.time_to_stop = False
                 _self.in_cooldown = False
                 _self.cooldown_start_time = 0
@@ -726,7 +733,7 @@ class BotRunner:
                     if _self.max_ips:
                         frame_start = time.perf_counter()
                     if _self.run_for_minutes > 0 and not _self.in_cooldown:
-                        if (time.time() - _self.start_time) / 60 >= _self.run_for_minutes:
+                        if (time.monotonic() - _self.start_time) / 60 >= _self.run_for_minutes:
                             _self.in_cooldown = True
                             _self.cooldown_start_time = time.time()
                             _self.Stage_manager.states['lobby'] = lambda: 0
@@ -985,7 +992,7 @@ class BotRunner:
                 except Exception:
                     log.exception("cloud match push failed")
             runner._match_count += 1
-            runner._last_match_at = time.time()
+            runner._last_match_at = time.monotonic()   # watchdog (clock-jump safe)
             runner._stuck_alerted = False  # reset on any progress
             # Feed the humane schedule's daily match counter.
             try: play_schedule.get().record_match()
@@ -1059,14 +1066,20 @@ class BotRunner:
                 # API rate during fast draw/loss streaks (no flaresolverr
                 # saturation). BACKGROUND thread: a slow/504 brawlace fetch in
                 # the hot path would stall the grind (looks stuck).
-                _now = time.time()
+                _now = time.monotonic()   # MONOTONIC: a clock rewind must not
+                # leave _last_brawlace_sync in the future and block resync ~1h.
                 _due = (runner._match_count == 1
                         or _now - runner._last_brawlace_sync >= BRAWLACE_SYNC_MIN_INTERVAL)
-                if _due and runner._account_id is not None:
+                if (_due and runner._account_id is not None
+                        and not runner._resync_inflight):
                     # Stamp BEFORE launching: the throttle is on attempts, so two
-                    # quick matches can't both fire a fetch.
+                    # quick matches can't both fire a fetch. Capture the session id
+                    # so a fetch that outlives a session restart can't write stale
+                    # values onto the new session.
                     runner._last_brawlace_sync = _now
-                    def _resync(acc_id, brawler_name, pm, obs):
+                    runner._resync_inflight = True
+                    _sid = runner._session_id
+                    def _resync(acc_id, brawler_name, pm, obs, sid):
                         try:
                             acc = db.get_account(acc_id)
                             if not acc:
@@ -1075,6 +1088,14 @@ class BotRunner:
                             prof = fetch_account_profile(acc["tag"])
                             brawlers = prof.get("brawlers", [])
                             if not brawlers:
+                                return
+                            # If the session was restarted while this (slow) fetch
+                            # ran, the runner now owns a DIFFERENT push_max/observer
+                            # and a freshly-seeded _account_trophies — writing our
+                            # stale values would make the total jump backward and
+                            # mutate abandoned objects. Bail out.
+                            if runner._session_id != sid:
+                                log.info("resync: session changed mid-fetch — discarding stale result")
                                 return
                             # Piggyback: push these fresh per-brawler trophies to
                             # the cloud right now. The panel's per-brawler display
@@ -1127,9 +1148,11 @@ class BotRunner:
                                     obs.current_trophies = real
                         except Exception:
                             log.exception("brawlace trophy re-sync failed")
+                        finally:
+                            runner._resync_inflight = False
                     threading.Thread(target=_resync, daemon=True,
                                      args=(runner._account_id, current_brawler,
-                                           runner._push_max, observer),
+                                           runner._push_max, observer, _sid),
                                      name="brawlace-resync").start()
                 if runner._push_max.no_swap:
                     # Stay-on-equipped: never swap. Only the per-brawler cap

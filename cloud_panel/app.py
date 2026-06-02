@@ -320,7 +320,12 @@ async def telegram_webhook(
         update = await request.json()
     except Exception:
         return {"ok": True}
-    await telegram_bot.handle_update(update)
+    # Process in a thread (the handler does blocking Telegram HTTP) so we never
+    # stall the event loop — which also serves the live H264 stream + WS
+    # heartbeats. Fire-and-forget: return 200 immediately so Telegram doesn't
+    # retry. The handler bridges back to this loop for HUB.send_command.
+    loop = _asyncio.get_running_loop()
+    loop.run_in_executor(None, telegram_bot.handle_update, update, loop)
     return {"ok": True}
 
 
@@ -1160,7 +1165,9 @@ async def api_account_push_max(account_id: int, payload: PushMaxBody | None = No
     # modal anymore): push_max just grinds every brawler up to this ceiling and
     # then stops. An explicit per-call override still wins if provided.
     if payload and payload.efficiency_ceiling is not None:
-        args["efficiency_ceiling"] = payload.efficiency_ceiling
+        # Clamp a per-call override to the same sane bounds as the global config
+        # setter — a negative/zero ceiling would silently block the session start.
+        args["efficiency_ceiling"] = max(1, min(int(payload.efficiency_ceiling), 5000))
     else:
         args["efficiency_ceiling"] = _push_max_ceiling()
     # Worker fetches the brawler list (via flaresolverr) before starting,
