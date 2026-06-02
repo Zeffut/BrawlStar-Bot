@@ -919,7 +919,13 @@ function _streamMakeMuxer(targetId) {
   try { vid.play().catch(() => {}); } catch (_) {}
   const frame = vid.closest(".gc-screen-frame, .screen-wrap");
   if (frame) frame.classList.add("streaming");
-  _streamMuxers.set(targetId, {video: vid, muxer, lastBytes: _streamBytes, lastT: 0, frozen: 0});
+  // Grace period: after (re)creation jMuxer must wait for the next keyframe
+  // (screenrecord GOP ~10s) before currentTime advances — don't let the
+  // watchdog mistake that for a freeze and reinit-loop.
+  _streamMuxers.set(targetId, {
+    video: vid, muxer, lastBytes: _streamBytes, lastT: 0, frozen: 0,
+    graceUntil: performance.now() + 12000,
+  });
   _streamStartWatchdog();
 }
 function _streamDropMuxer(targetId) {
@@ -949,15 +955,23 @@ function _streamReinit(targetId) {
 function _streamStartWatchdog() {
   if (_streamWatchdog) return;
   _streamWatchdog = setInterval(() => {
+    const now = performance.now();
     for (const [tid, m] of _streamMuxers.entries()) {
+      // Skip while in the post-(re)create grace window (waiting for a keyframe).
+      if (m.graceUntil && now < m.graceUntil) {
+        m.lastBytes = _streamBytes; m.lastT = m.video.currentTime || 0;
+        continue;
+      }
       const t = m.video.currentTime || 0;
       const dataFlowing = _streamBytes > m.lastBytes;   // new bytes since last check
-      const advanced = t > m.lastT + 0.05;              // playback moved
-      if (dataFlowing && !advanced) {
+      // CHANGED (not just advanced): a reinit resets currentTime to 0, which is
+      // a change → not a freeze. Only an unchanging currentTime = truly frozen.
+      const changed = Math.abs(t - m.lastT) > 0.05;
+      if (dataFlowing && !changed) {
         m.frozen++;
-        if (m.frozen >= 2) {                            // ~4s frozen with data → reinit
+        if (m.frozen >= 3) {                            // ~6s truly frozen with data
           console.warn("[stream] frozen → reinit", tid);
-          _streamReinit(tid);
+          _streamReinit(tid);                           // grants a fresh grace window
           continue;
         }
       } else {

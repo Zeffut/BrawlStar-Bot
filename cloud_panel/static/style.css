@@ -794,19 +794,20 @@ main {
 .gc-screen-frame img:not([src]),
 .gc-screen-frame img[src=""] { opacity: 0; }
 
-/* Live H264 stream <video> — fills the same frame as the on-demand <img>.
-   Shown (img hidden) only while streaming; hidden otherwise. */
+/* Live H264 stream <video> — overlays the on-demand <img> (which stays in
+   flow to size the frame AND keep the remote-control #screen-overlay aligned).
+   No z-index on purpose: the overlay comes later in the DOM and stays on top
+   so it still receives taps/drags (control was dead when the video covered it).
+   object-fit:fill maps 1:1 to the overlay (device aspect = capture aspect). */
 .gc-stream-video {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  display: block;
-  min-height: 180px;
+  height: 100%;
+  object-fit: fill;
   background: #000;
 }
 .gc-stream-video[hidden] { display: none; }
-/* When a stream video is active, collapse the sibling capture <img> so the
-   two don't stack. JS toggles .streaming on the frame/wrap. */
-.gc-screen-frame.streaming img,
-.screen-wrap.streaming img { display: none; }
 .gc-capture-btn {
   position: absolute;
   bottom: 10px; right: 10px;
