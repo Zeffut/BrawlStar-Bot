@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260602y" />
+<link rel="stylesheet" href="/static/style.css?v=20260602z" />
 </head>
 <body>
 <header>
@@ -107,11 +107,13 @@
         <div class="card"><label>▶ Sessions actives</label><div id="fl-sessions">—</div></div>
         <div class="card"><label>👥 Comptes</label><div id="fl-accounts">—</div></div>
       </section>
-      <section class="charts fleet-charts">
+      <section class="fleet-hero">
         <div class="chart-card">
           <h3>Trophées flotte cumulés</h3>
           <div class="cc-canvas"><canvas id="fleet-cum-chart"></canvas></div>
         </div>
+      </section>
+      <section class="fleet-bottom">
         <div class="chart-card">
           <h3>Trophées gagnés / jour</h3>
           <div class="cc-canvas"><canvas id="fleet-daily-chart"></canvas></div>
@@ -120,12 +122,10 @@
           <h3>Activité par heure <span class="muted" style="font-size:11px;font-weight:400">(locale)</span></h3>
           <div class="cc-canvas"><canvas id="fleet-hourly-chart"></canvas></div>
         </div>
-      </section>
-      <section class="lists" style="grid-template-columns:1fr">
         <div class="list-card">
           <h3>Comptes</h3>
           <table id="fleet-accounts-table">
-            <thead><tr><th>Compte</th><th>Statut</th><th>Trophées</th><th>Aujourd'hui</th><th>WR</th><th>/h</th></tr></thead>
+            <thead><tr><th>Compte</th><th>Statut</th><th>Trophées</th><th>Auj.</th><th>WR</th><th>/h</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -314,6 +314,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260602y"></script>
+<script src="/static/app.js?v=20260602z"></script>
 </body>
 </html>

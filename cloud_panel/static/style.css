@@ -1212,38 +1212,36 @@ main {
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
 .chart-card.chart-wide { grid-column: 1 / -1; }
 
-/* Fleet overview = single screen that FILLS the height (no scroll, no wasted
-   space). empty-state is a flex column; the charts row grows to take all the
-   remaining height so the 3 charts are large. */
+/* Fleet overview = single non-scroll screen. Flex column: KPIs (auto) → a HERO
+   cumulative chart that grows to fill → a fixed-height bottom row with the two
+   smaller charts + the accounts table. */
 #empty-state {
   display: flex;
   flex-direction: column;
   height: 100%;
+  gap: 12px;
   padding-top: 2px;
 }
-#empty-state .cards { margin-bottom: 12px; flex: 0 0 auto; }
-#empty-state .lists { flex: 0 0 auto; margin-top: 12px; }
-#empty-state .list-card { max-height: 26vh; overflow: auto; }
-.fleet-charts {
-  flex: 1 1 auto;                 /* grow to fill remaining height */
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  grid-auto-rows: 1fr;            /* the single row fills the grown height */
-  margin-bottom: 0;
-  min-height: 0;
+#empty-state .cards { margin-bottom: 0; flex: 0 0 auto; }
+.fleet-hero { flex: 1 1 auto; min-height: 0; display: flex; }
+.fleet-hero .chart-card { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.fleet-bottom {
+  flex: 0 0 auto;
+  height: 250px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.3fr;   /* /jour | /heure | comptes */
+  gap: 12px;
 }
-.fleet-charts .chart-card {
-  display: flex;
-  flex-direction: column;
-  padding: 14px 16px 12px;
-  min-height: 0;
-}
-.fleet-charts .chart-card h3 { margin: 0 0 10px; font-size: 13px; }
-/* The wrapper grows (flex:1) to fill the card; Chart.js then sizes the canvas
-   to it. CRUCIAL: lift the global ".chart-card canvas { max-height:240px }" cap
-   (meant for the detail-page charts) — it was clamping the fleet charts to
-   240px no matter what. With max-height:none, Chart.js fills the tall wrapper. */
-.fleet-charts .cc-canvas { flex: 1 1 auto; min-height: 0; }
-.fleet-charts .cc-canvas canvas {
+.fleet-bottom .chart-card,
+.fleet-bottom .list-card { display: flex; flex-direction: column; min-height: 0; padding: 14px 16px 12px; }
+.fleet-bottom .list-card { overflow: hidden; }
+.fleet-bottom .list-card table { display: block; overflow: auto; }
+#empty-state .chart-card h3 { margin: 0 0 8px; font-size: 13px; }
+/* Wrapper grows; Chart.js fills it. CRUCIAL: lift the global ".chart-card
+   canvas { max-height:240px }" cap (for the detail-page charts) — it was
+   clamping every fleet chart to 240px regardless of flex/resize. */
+#empty-state .cc-canvas { flex: 1 1 auto; min-height: 0; }
+#empty-state .cc-canvas canvas {
   display: block;
   max-height: none !important;
   height: auto !important;
