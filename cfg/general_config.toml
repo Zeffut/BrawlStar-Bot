@@ -9,3 +9,17 @@ trophies_multiplier = 1
 run_for_minutes = 600
 current_emulator = "BlueStacks"
 emulator_port = 5037
+
+# Humane play schedule (play_schedule.py) — keeps the bot from grinding 24/7.
+# Sleep window + randomized play blocks/breaks + a randomized daily match cap.
+# Set enabled = false to restore non-stop behavior. Hours are LOCAL time.
+[schedule]
+enabled = true
+sleep_start_hour = 1      # no play from 01:00 …
+sleep_end_hour = 9        # … until 09:00 (~8h sleep)
+block_min_minutes = 40    # a play block lasts 40–85 min …
+block_max_minutes = 85
+break_min_minutes = 20    # … then a break of 20–70 min
+break_max_minutes = 70
+daily_match_cap = 180     # ~130–230 matches/day (was ~520 at 24/7)
+daily_cap_jitter = 50

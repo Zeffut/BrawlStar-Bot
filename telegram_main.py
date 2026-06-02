@@ -84,6 +84,7 @@ import alerts  # noqa: E402
 import device  # noqa: E402
 import cloud_sync  # noqa: E402
 from push_max import PushMaxStrategy, EFFICIENCY_CEILING  # noqa: E402
+import play_schedule  # noqa: E402  (humane play schedule — no 24/7 grind)
 from logging_setup import setup_logging  # noqa: E402
 
 setup_logging()
@@ -204,6 +205,18 @@ def _try_resume_session(bot) -> None:
         return
     if bot.runner.is_running():
         log.info("resume: bot already running, skipping")
+        return
+    # Humane schedule gate: don't auto-resume during the sleep window, an active
+    # break, or once the daily match cap is hit. The resume state is KEPT so the
+    # next keepalive tick (inside the active window, break over) picks it up.
+    try:
+        _ok, _why = play_schedule.get().should_play_now()
+    except Exception:
+        _ok, _why = True, ""
+    if not _ok:
+        log.info("resume: held by play schedule (%s)", _why)
+        try: _set_activity(f"💤 Pause — {_why}")
+        except Exception: pass
         return
     mode = state.get("mode") or "single"
     log.info("RESUMING %s session (started %.0fs ago): brawler=%s target_total=%s",
@@ -651,6 +664,14 @@ class BotRunner:
                 except (ValueError, KeyError):
                     _self.max_ips = None
                 _self.run_for_minutes = int(load_toml_as_dict("cfg/general_config.toml")['run_for_minutes'])
+                # Humane schedule: bound THIS block to a randomized length
+                # (40–85 min) instead of a 10h marathon, so the bot stops often
+                # and the keepalive only resumes after a break / inside the
+                # active window (see play_schedule + _try_resume_session).
+                _sched = play_schedule.get()
+                if _sched.enabled:
+                    _self.run_for_minutes = _sched.block_minutes()
+                    log.info("play schedule: this block = %d min", _self.run_for_minutes)
                 _self.start_time = time.time()
                 _self.time_to_stop = False
                 _self.in_cooldown = False
@@ -706,6 +727,22 @@ class BotRunner:
                         frame_start = time.perf_counter()
                     if _self.run_for_minutes > 0 and not _self.in_cooldown:
                         if (time.time() - _self.start_time) / 60 >= _self.run_for_minutes:
+                            _self.in_cooldown = True
+                            _self.cooldown_start_time = time.time()
+                            _self.Stage_manager.states['lobby'] = lambda: 0
+                            # Block elapsed → schedule a (randomized) break so the
+                            # keepalive won't resume immediately. Human cadence.
+                            try: play_schedule.get().start_break()
+                            except Exception: log.debug("start_break failed", exc_info=True)
+                    # Schedule pause mid-block: sleep window opened or the daily
+                    # match cap was hit → finish the current match then stop.
+                    if not _self.in_cooldown:
+                        try:
+                            _ok, _why = play_schedule.get().should_play_now()
+                        except Exception:
+                            _ok, _why = True, ""
+                        if not _ok:
+                            log.info("play schedule: pausing grind (%s)", _why)
                             _self.in_cooldown = True
                             _self.cooldown_start_time = time.time()
                             _self.Stage_manager.states['lobby'] = lambda: 0
@@ -950,6 +987,9 @@ class BotRunner:
             runner._match_count += 1
             runner._last_match_at = time.time()
             runner._stuck_alerted = False  # reset on any progress
+            # Feed the humane schedule's daily match counter.
+            try: play_schedule.get().record_match()
+            except Exception: log.debug("schedule record_match failed", exc_info=True)
             # We just played this brawler → it's the one BS has equipped. Record
             # it so a resume skips re-selecting it through the menu.
             runner._last_equipped = current_brawler

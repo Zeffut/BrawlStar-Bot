@@ -423,7 +423,11 @@ def api_instances() -> list[dict]:
         # while clearly busy. Treat a fresh activity as running too. The
         # battery-paused branch is checked first, so a "Waiting — charging"
         # activity still reads as "charging", not "running".
-        bot_busy = bool(snap.get("activity")) and ws_connected and not i["snapshot_stale"]
+        _act = snap.get("activity") or ""
+        # A "💤 Pause …" activity is the humane schedule resting — that's idle,
+        # not running, so don't let it flip the badge to green.
+        bot_busy = (bool(_act) and not _act.startswith("💤")
+                    and ws_connected and not i["snapshot_stale"])
         if battery_paused and ws_connected and not i["snapshot_stale"]:
             i["status"] = "charging"
         elif running or bot_busy:
