@@ -47,12 +47,17 @@ class BrawlerNotFoundError(ValueError):
 #   barley→Bartaba, crow→Corbac, gene→D'jinn.
 # Names are matched accent/dot/apostrophe-insensitively (see _normalize), so
 # the exact punctuation here is just for readability.
-BRAWLER_FR_ALIASES: dict[str, str] = {
+# Values may be a single name OR a list of candidate names (the menu tries each
+# — useful when the exact in-game spelling is uncertain or version-dependent).
+BRAWLER_FR_ALIASES: dict[str, "str | list[str]"] = {
     "barley": "bartaba",
     "crow": "corbac",
     "gene": "d'jinn",
-    "8-bit": "a.r.k.a.d",
-    "8bit": "a.r.k.a.d",
+    # 8-bit: Zeffut confirms the in-game FR name is "ARCADE"; keep "A.R.K.A.D"
+    # too (an old guide + the OCR literally read 'airkad') so either spelling
+    # matches across versions.
+    "8-bit": ["arcade", "a.r.k.a.d"],
+    "8bit": ["arcade", "a.r.k.a.d"],
     "el primo": "el costo",
     "piper": "polly",
     "rico": "ricochet",
@@ -62,6 +67,15 @@ BRAWLER_FR_ALIASES: dict[str, str] = {
     "mrp": "m. p",
     "mr p": "m. p",
 }
+
+
+def _fr_aliases(brawler: str) -> list[str]:
+    """Return the list of French-name candidates for `brawler` (possibly empty).
+    Normalizes the str-or-list value of BRAWLER_FR_ALIASES."""
+    v = BRAWLER_FR_ALIASES.get((brawler or "").lower().strip())
+    if not v:
+        return []
+    return [v] if isinstance(v, str) else list(v)
 
 class LobbyAutomation:
 
@@ -138,9 +152,9 @@ class LobbyAutomation:
             cands = [equipped]
             if self._fuzzy_match(brawler, cands):
                 return True
-            alias = BRAWLER_FR_ALIASES.get(brawler.lower().strip())
-            if alias and self._fuzzy_match(alias, cands):
-                return True
+            for alias in _fr_aliases(brawler):
+                if self._fuzzy_match(alias, cands):
+                    return True
         except Exception:
             log.debug("_is_already_equipped check failed", exc_info=True)
         return False
@@ -302,10 +316,13 @@ class LobbyAutomation:
                 # Game is in French → try the localized name FIRST (the card
                 # shows e.g. "Bartaba" for barley), then fall back to the
                 # English name from brawlace (most brawlers are identical).
+                # Try the French-name candidate(s) FIRST (the card shows the
+                # localized name), then fall back to the English name.
                 match_key = None
-                alias = BRAWLER_FR_ALIASES.get(brawler.lower().strip())
-                if alias and alias != brawler.lower().strip():
+                for alias in _fr_aliases(brawler):
                     match_key = self._fuzzy_match(alias, reworked_results.keys())
+                    if match_key is not None:
+                        break
                 if match_key is None:
                     match_key = self._fuzzy_match(brawler, reworked_results.keys())
                 if match_key is not None:
