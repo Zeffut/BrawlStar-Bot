@@ -262,7 +262,8 @@ async function refreshAll() {
 }
 
 // ---- Fleet overview (landing / "🛰️ Flotte" button) ----
-let _fleetView = false;
+// Default landing view: the fleet overview (not an auto-selected account).
+let _fleetView = true;
 function showFleetOverview() {
   _fleetView = true;
   selectedAccountId = null;
