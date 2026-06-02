@@ -13,6 +13,14 @@ from utils import extract_text_and_positions, count_hsv_pixels, load_toml_as_dic
 debug = load_toml_as_dict("cfg/general_config.toml")['super_debug'] == "yes"
 log = logging.getLogger(__name__)
 
+
+class BrawlerNotFoundError(ValueError):
+    """The brawler's name never appeared in the menu OCR after a full scan.
+    Retrying the same scan is pointless (the OCR can't read that name, e.g.
+    '8-BIT' → garbage), so select_brawler fails fast instead of repeating the
+    ~36-swipe scan 3× — which left the bot 'galère à choisir' for ~10 min,
+    churning through several unreadable brawlers."""
+
 # Brawl Stars localizes some brawler names. brawlace (and push_max) use the
 # ENGLISH names, but the in-game menu (French here) shows the FRENCH names, so
 # the menu OCR never matches e.g. "barley" — the card reads "BARTABA". When
@@ -60,6 +68,13 @@ class LobbyAutomation:
                 self._select_brawler_once(brawler)
                 log.info("select_brawler: SUCCESS on attempt %d", attempt)
                 return
+            except BrawlerNotFoundError as exc:
+                # The name is unreadable in the menu OCR — retrying the same
+                # full scan is wasted time (≈2 min each). Fail immediately so
+                # push_max marks it unselectable and moves to the next brawler.
+                log.warning("select_brawler: %s — not retrying (unreadable name)", exc)
+                self._reset_to_lobby()
+                raise
             except Exception as exc:
                 log.warning("select_brawler attempt %d failed: %s", attempt, exc)
                 last_exc = exc
@@ -270,8 +285,9 @@ class LobbyAutomation:
                 self.window_controller.swipe(cx, sy, cx, ey, duration=0.5)
                 time.sleep(0.8)
 
-        # Not found anywhere — fail this attempt; outer loop will retry.
-        raise ValueError(f"Brawler '{brawler}' not found in menu OCR.")
+        # Not found anywhere after a full scan — the OCR can't read this name.
+        # Fail FAST (no retry): retrying the same deterministic scan won't help.
+        raise BrawlerNotFoundError(f"Brawler '{brawler}' not found in menu OCR.")
 
     # OCR variants of the equip/select button text.
     # Modern BS (2026) uses CHOISIR in French ("CHOOSE") — older builds

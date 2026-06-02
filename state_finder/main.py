@@ -165,7 +165,33 @@ def is_in_shop(image) -> bool:
     return is_template_in_region(image, os.path.join('state_finder', 'images_to_detect', 'powerpoint.png'), region_data["powerpoint"])
 
 def is_in_brawler_selection(image) -> bool:
-    return is_template_in_region(image, os.path.join('state_finder', 'images_to_detect', 'brawler_menu_task.png'), region_data["brawler_menu_task"])
+    """Detect the brawler-selection menu.
+
+    The region-scoped template was calibrated for 1920×1080 BlueStacks; on a
+    phone with a different aspect ratio (Mi 9T 2340×1080) the region is
+    mis-placed and the template is distorted by the separate x/y scale, so the
+    match fails — and the screen then falls through to is_in_star_road() (the
+    back arrow) → wrongly reported as "shop" (the "status: in shop while
+    choosing a brawler" bug). Fall back to a full-image search like is_in_lobby."""
+    if is_template_in_region(
+        image,
+        os.path.join('state_finder', 'images_to_detect', 'brawler_menu_task.png'),
+        region_data["brawler_menu_task"],
+    ):
+        return True
+    try:
+        h, w = image.shape[:2]
+        tpl = load_template(
+            os.path.join('state_finder', 'images_to_detect', 'brawler_menu_task.png'),
+            w, h,
+        )
+        if tpl is None or tpl.shape[0] >= h or tpl.shape[1] >= w:
+            return False
+        res = cv2.matchTemplate(image, tpl, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        return max_val > 0.72
+    except Exception:
+        return False
 
 def is_in_offer_popup(image) -> bool:
     return is_template_in_region(image, os.path.join('state_finder', 'images_to_detect', 'close_popup.png'), region_data["close_popup"])
