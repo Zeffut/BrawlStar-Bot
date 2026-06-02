@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import base64
 import html
+import json as _json
 import logging
 import os
-
-import requests
+import urllib.parse
+import urllib.request
 
 import db
 from ws import HUB
@@ -56,13 +57,19 @@ def is_configured() -> bool:
 
 
 def _post(method: str, **payload) -> dict:
+    """POST urlencoded form data to the Telegram API (stdlib urllib — the cloud
+    image has no `requests`)."""
     c = _conf()
     if not c:
         return {}
     token, _ = c
     try:
-        return requests.post(_API.format(token=token, method=method),
-                             data=payload, timeout=20).json()
+        data = urllib.parse.urlencode(
+            {k: v for k, v in payload.items() if v is not None}).encode()
+        req = urllib.request.Request(
+            _API.format(token=token, method=method), data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return _json.loads(resp.read().decode())
     except Exception as exc:
         log.warning("telegram %s failed: %s", method, exc)
         return {}
@@ -97,17 +104,30 @@ def edit(message_id: int, text: str, kb=None, chat: str | None = None) -> dict:
 
 
 def send_photo(jpeg_bytes: bytes, caption: str = "", chat: str | None = None) -> dict:
+    """sendPhoto via a hand-built multipart/form-data body (stdlib only)."""
     c = _conf()
     if not c:
         return {}
     token, chat_id = c
+    boundary = "----brawlfleetTGboundary7c3f"
+    fields = {"chat_id": str(chat or chat_id), "caption": caption[:1000]}
+    body = bytearray()
+    for k, v in fields.items():
+        body += f"--{boundary}\r\n".encode()
+        body += f'Content-Disposition: form-data; name="{k}"\r\n\r\n'.encode()
+        body += f"{v}\r\n".encode()
+    body += f"--{boundary}\r\n".encode()
+    body += b'Content-Disposition: form-data; name="photo"; filename="screen.jpg"\r\n'
+    body += b"Content-Type: image/jpeg\r\n\r\n"
+    body += jpeg_bytes + b"\r\n"
+    body += f"--{boundary}--\r\n".encode()
     try:
-        return requests.post(
+        req = urllib.request.Request(
             _API.format(token=token, method="sendPhoto"),
-            data={"chat_id": chat or chat_id, "caption": caption[:1000]},
-            files={"photo": ("screen.jpg", jpeg_bytes, "image/jpeg")},
-            timeout=40,
-        ).json()
+            data=bytes(body), method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            return _json.loads(resp.read().decode())
     except Exception as exc:
         log.warning("telegram sendPhoto failed: %s", exc)
         return {}
@@ -118,30 +138,19 @@ def answer_callback(callback_id: str, text: str = "") -> None:
 
 
 def _json_kb(kb) -> str:
-    import json
-    return json.dumps({"inline_keyboard": kb})
+    return _json.dumps({"inline_keyboard": kb})
 
 
 def ensure_webhook(base_url: str | None = None) -> None:
     """Register the webhook (idempotent). Safe to call on every startup."""
-    c = _conf()
-    if not c:
+    if not _conf():
         log.info("telegram bot not configured — skipping webhook setup")
         return
-    token, _ = c
-    import json
     url = (base_url or PUBLIC_URL).rstrip("/") + "/api/telegram/webhook"
-    try:
-        r = requests.post(
-            _API.format(token=token, method="setWebhook"),
-            data={"url": url, "secret_token": WEBHOOK_SECRET,
-                  "allowed_updates": json.dumps(["message", "callback_query"]),
-                  "drop_pending_updates": "false"},
-            timeout=15,
-        ).json()
-        log.info("telegram setWebhook(%s) → %s", url, r.get("description") or r.get("ok"))
-    except Exception:
-        log.exception("telegram setWebhook failed")
+    r = _post("setWebhook", url=url, secret_token=WEBHOOK_SECRET,
+              allowed_updates=_json.dumps(["message", "callback_query"]),
+              drop_pending_updates="false")
+    log.info("telegram setWebhook(%s) → %s", url, r.get("description") or r.get("ok"))
 
 
 # ------------------------------------------------------------- keyboards
