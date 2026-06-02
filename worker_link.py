@@ -240,6 +240,10 @@ def _cmd_input_tap(args: dict) -> dict:
         return {"ok": False, "error": "x,y must be in [0,1]"}
     try:
         w, h = _device_pixel_size()
+        w, h = max(w, h), min(w, h)   # LANDSCAPE: the stream/overlay are
+        # landscape (BS forces it). wm size reports portrait (1080x2340), so
+        # mapping the overlay ratios onto it sent taps far off-target — control
+        # looked dead. The bot taps in landscape via device.device_size(); match it.
     except Exception as exc:
         return {"ok": False, "error": f"wm size failed: {exc}"}
     px, py = int(x_norm * w), int(y_norm * h)
@@ -260,6 +264,7 @@ def _cmd_input_swipe(args: dict) -> dict:
     duration = max(50, min(int(args.get("duration_ms", 300)), 5000))
     try:
         w, h = _device_pixel_size()
+        w, h = max(w, h), min(w, h)   # landscape (see _cmd_input_tap)
     except Exception as exc:
         return {"ok": False, "error": f"wm size failed: {exc}"}
     px1, py1 = int(x1 * w), int(y1 * h)
