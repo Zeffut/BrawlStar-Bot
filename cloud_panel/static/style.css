@@ -1212,22 +1212,28 @@ main {
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
 .chart-card.chart-wide { grid-column: 1 / -1; }
 
-/* Fleet overview = single non-scroll screen. Flex column: KPIs (auto) → a HERO
-   cumulative chart that grows to fill → a fixed-height bottom row with the two
-   smaller charts + the accounts table. */
+/* Fleet overview. CLAMPED heights (not flex-fill-the-viewport): the hero chart
+   used to be flex:1 and grew to fill ALL remaining height → on a tall window it
+   became giant and overflowed. clamp(min, vh, max) keeps every chart a sensible
+   size on any window/zoom/DPR: never tiny, never giant, gently responsive. */
 #empty-state {
   display: flex;
   flex-direction: column;
-  height: 100%;
   gap: 12px;
   padding-top: 2px;
 }
 #empty-state .cards { margin-bottom: 0; flex: 0 0 auto; }
-.fleet-hero { flex: 1 1 auto; min-height: 0; display: flex; }
-.fleet-hero .chart-card { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+.fleet-hero { flex: 0 0 auto; display: flex; }
+.fleet-hero .chart-card {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: clamp(240px, 38vh, 440px);
+}
 .fleet-bottom {
   flex: 0 0 auto;
-  height: 250px;
+  height: clamp(200px, 28vh, 300px);
   display: grid;
   grid-template-columns: 1fr 1fr 1.3fr;   /* /jour | /heure | comptes */
   gap: 12px;
