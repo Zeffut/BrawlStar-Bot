@@ -1209,6 +1209,9 @@ main {
   gap: 16px;
   margin-bottom: 24px;
 }
+/* The trophy progression chart spans the full width (hero chart); win-rate +
+   activity fill the 2-col row below, so no empty cell ("hole") is left. */
+.chart-card.chart-wide { grid-column: 1 / -1; }
 .chart-card {
   background: var(--surface);
   border: 1px solid var(--border);
