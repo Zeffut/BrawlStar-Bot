@@ -591,13 +591,9 @@ main {
 
 /* ----------------------------------------------------------- detail */
 
-#empty-state {
-  display: grid;
-  place-items: center;
-  height: 60vh;
-  color: var(--muted);
-  font-size: 14px;
-}
+/* Now holds the full-width fleet-overview dashboard (was a centered "pick an
+   account" placeholder, which squeezed the cards into a vertical column). */
+#empty-state { display: block; }
 #empty-state[hidden] { display: none; }
 
 .detail-header {
