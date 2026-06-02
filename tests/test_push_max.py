@@ -154,17 +154,29 @@ def test_per_brawler_cap_skips_already_capped():
     assert s.pick_next().name == "shelly"
 
 
-def test_zero_trophy_brawlers_never_picked():
-    # A 0-trophy brawler in the brawlace profile is locked / not owned (the
-    # in-game grid shows "déblocage en cours"); picking it loops forever on a
-    # selection that can't find it. It must be exhausted from the start.
+def test_zero_trophy_brawlers_are_grindable():
+    # brawlace lists ONLY owned brawlers (mirrors the official API), so a
+    # 0-trophy entry is an OWNED brawler never pushed in trophy mode — the best
+    # grind target (max headroom). It must NOT be pre-exhausted.
     owned = [
-        {"name": "8-bit", "trophies": 0},     # locked → skip
-        {"name": "shelly", "trophies": 80},   # owned → grind this
+        {"name": "frank", "trophies": 0},     # owned, power 7 IRL, 0 trophies
+        {"name": "shelly", "trophies": 80},   # owned, already pushed a bit
     ]
     s = PushMaxStrategy.from_owned(owned)
-    assert s.brawlers["8-bit"].exhausted
-    assert s.pick_next().name == "shelly"
+    assert not s.brawlers["frank"].exhausted
+    # frank (B) vs shelly (A): tier A sorts first, but both eligible. The point
+    # is the 0-trophy brawler is a valid candidate.
+    picked = s.pick_next()
+    assert picked is not None
+    assert not s.brawlers["frank"].exhausted
+
+    # A 0-trophy S-tier brawler is picked first (tier S beats A, 0 = max headroom).
+    owned = [
+        {"name": "8-bit", "trophies": 0},     # S tier, 0 trophies
+        {"name": "shelly", "trophies": 80},   # A tier
+    ]
+    s = PushMaxStrategy.from_owned(owned)
+    assert s.pick_next().name == "8-bit"
 
 
 def test_no_swap_stays_on_equipped_and_ignores_stagnation():
@@ -198,15 +210,17 @@ def test_revive_grindable_keeps_session_alive():
     owned = [
         {"name": "bea", "trophies": 484},      # S, grindable
         {"name": "shelly", "trophies": 200},   # A, grindable
-        {"name": "8-bit", "trophies": 0},      # locked
+        {"name": "8-bit", "trophies": 0},      # owned, 0 trophies → grindable
     ]
     s = PushMaxStrategy.from_owned(owned)
     s.brawlers["bea"].exhausted = True
     s.brawlers["shelly"].exhausted = True
+    s.brawlers["8-bit"].exhausted = True
     assert s.all_done()
-    assert s.revive_grindable() == 2           # bea + shelly back, not the locked one
+    # All three are grindable (>0 or 0-trophy owned, none capped) → revived.
+    assert s.revive_grindable() == 3
     assert not s.brawlers["bea"].exhausted
-    assert s.brawlers["8-bit"].exhausted
+    assert not s.brawlers["8-bit"].exhausted
     assert s.pick_next() is not None           # session can continue
 
 

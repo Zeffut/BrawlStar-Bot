@@ -133,13 +133,14 @@ class PushMaxStrategy:
             # Already at/above the cap → don't bother picking it.
             if brawler_max_trophies is not None and bs.trophies >= brawler_max_trophies:
                 bs.exhausted = True
-            # A brawler at 0 trophies in the brawlace profile is locked / not
-            # owned — the in-game grid shows it as "déblocage en cours" and it
-            # can't be selected. Never grind it: picking the "easiest" brawler
-            # otherwise lands on a locked 0-trophy one (e.g. 8-bit) and the
-            # selection loops forever failing to find it in the menu OCR.
-            if bs.trophies <= 0:
-                bs.exhausted = True
+            # NOTE: a 0-trophy brawler is NOT skipped anymore. The brawlace
+            # profile lists ONLY owned brawlers (it mirrors the official API),
+            # so 0 trophies just means "owned but never pushed in trophy mode"
+            # (or a season reset) — several here are even power 4-7. These are
+            # the BEST grind targets (max headroom, well below the ceiling), so
+            # we keep them eligible. If the in-game menu OCR genuinely can't
+            # select one, the runtime _unselectable_brawlers handling marks it
+            # exhausted after a single failed attempt (no infinite loop).
             state.brawlers[name] = bs
         log.info("PushMax built with %d brawlers (S=%d A=%d B=%d C=%d)",
                  len(state.brawlers),
@@ -253,14 +254,14 @@ class PushMaxStrategy:
         return all(b.exhausted for b in self.brawlers.values())
 
     def revive_grindable(self) -> int:
-        """Un-exhaust brawlers that can still be pushed (>0 trophies, below the
-        per-brawler cap) so the session keeps running toward the GLOBAL target
-        instead of stopping when stagnation + failed selections exhausted them
-        all. Locked (0-trophy) and capped brawlers stay exhausted. Returns how
-        many were revived."""
+        """Un-exhaust brawlers that can still be pushed (below the per-brawler
+        cap) so the session keeps running toward the GLOBAL target instead of
+        stopping when stagnation + failed selections exhausted them all. Capped
+        brawlers stay exhausted. 0-trophy brawlers are owned (max headroom) so
+        they ARE revived. Returns how many were revived."""
         n = 0
         for b in self.brawlers.values():
-            if not b.exhausted or b.trophies <= 0:
+            if not b.exhausted:
                 continue
             if (self.brawler_max_trophies is not None
                     and b.trophies >= self.brawler_max_trophies):
