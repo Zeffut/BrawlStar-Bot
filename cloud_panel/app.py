@@ -609,6 +609,7 @@ def fleet_overview() -> dict:
         "active_sessions": active_sessions,
         "today": {**today, "total": total_today, "win_rate_pct": wr_today},
         "accounts": account_rows,
+        "timeseries": db.fleet_timeseries(now),
         "ts": now,
     }
 

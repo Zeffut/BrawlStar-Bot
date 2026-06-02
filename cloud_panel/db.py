@@ -640,6 +640,40 @@ def account_stats(account_id: int, now: float | None = None) -> dict:
     }
 
 
+def fleet_timeseries(now: float | None = None, days: int = 14) -> dict:
+    """Fleet-wide time series (ALL accounts aggregated) for the overview charts:
+    per-day trophy gain + matches + wins, and a 24-bucket hourly histogram."""
+    now = now or time.time()
+    since = now - days * 86400
+    with _lock, _cur() as c:
+        c.execute(
+            "SELECT FLOOR(timestamp/86400)::bigint AS day, "
+            "       COALESCE(SUM(trophies_after - trophies_before),0) AS net, "
+            "       COUNT(*) AS matches, "
+            "       COUNT(*) FILTER (WHERE result='victory') AS wins "
+            "FROM matches "
+            "WHERE trophies_before IS NOT NULL AND trophies_after IS NOT NULL "
+            "  AND timestamp >= %s "
+            "GROUP BY day ORDER BY day",
+            (since,),
+        )
+        daily = [
+            {"day": int(r["day"]), "net": int(r["net"] or 0),
+             "matches": int(r["matches"] or 0), "wins": int(r["wins"] or 0)}
+            for r in c.fetchall()
+        ]
+        c.execute(
+            "SELECT EXTRACT(HOUR FROM to_timestamp(timestamp))::int AS hr, COUNT(*) AS n "
+            "FROM matches GROUP BY hr",
+        )
+        hourly = [0] * 24
+        for r in c.fetchall():
+            h = int(r["hr"])
+            if 0 <= h < 24:
+                hourly[h] = int(r["n"])
+    return {"daily": daily, "hourly": hourly}
+
+
 def win_rate_by_brawler(account_id: int) -> list[dict]:
     with _lock, _cur() as c:
         c.execute(

@@ -6,6 +6,7 @@ let selectedInstanceId = null;  // null = all
 let progressionChart = null;
 let winrateChart = null;
 let activityChart = null;
+let fleetCumChart = null, fleetDailyChart = null, fleetHourlyChart = null;
 
 // Latest snapshot per instance, kept in sync by SSE.
 const SNAPSHOTS = {};
@@ -312,6 +313,56 @@ function renderFleetOverview(d) {
     tb.querySelectorAll(".fleet-acc-row").forEach(row =>
       row.addEventListener("click", () => selectAccount(parseInt(row.dataset.acc))));
   }
+  renderFleetCharts(d.timeseries || {daily: [], hourly: []}, d.total_trophies || 0);
+}
+
+// Create-or-update a themed bar/line chart (shared by the fleet charts).
+function _barLine(chart, canvasId, type, labels, datasets) {
+  const el = document.getElementById(canvasId);
+  if (!el || typeof Chart === "undefined") return chart;
+  if (!chart) {
+    chart = new Chart(el, { type, data: { labels, datasets },
+      options: { responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: false },
+          tooltip: { backgroundColor: "#11161f", borderColor: "#2a3445", borderWidth: 1,
+                     titleColor: "#f1f4f9", bodyColor: "#c4ccd8", padding: 10 } },
+        scales: { x: { grid: { color: "rgba(255,255,255,.03)" }, ticks: { color: "#7a8597", font: { family: "Inter", size: 9 }, autoSkip: true, maxRotation: 0 }, border: { display: false } },
+                  y: { grid: { color: "rgba(255,255,255,.03)" }, ticks: { color: "#7a8597", font: { family: "Inter", size: 10 }, precision: 0 }, border: { display: false } } } } });
+  } else {
+    chart.data.labels = labels;
+    chart.data.datasets = datasets;
+    chart.update("none");
+  }
+  return chart;
+}
+
+function renderFleetCharts(ts, total) {
+  const daily = ts.daily || [];
+  const labels = daily.map(d => {
+    const dt = new Date(d.day * 86400000);
+    return ("0"+dt.getDate()).slice(-2) + "/" + ("0"+(dt.getMonth()+1)).slice(-2);
+  });
+  const nets = daily.map(d => d.net);
+  // Cumulative fleet total over time, anchored to the current total (work
+  // backward subtracting each day's gain).
+  const cum = new Array(daily.length);
+  let run = total || 0;
+  for (let i = daily.length - 1; i >= 0; i--) { cum[i] = run; run -= nets[i]; }
+  fleetCumChart = _barLine(fleetCumChart, "fleet-cum-chart", "line", labels, [{
+    label: "Trophées", data: cum, borderColor: "#4f8cf0",
+    backgroundColor: "rgba(79,140,240,0.12)", fill: true, tension: 0.3,
+    pointRadius: 0, pointHoverRadius: 5, borderWidth: 2 }]);
+  fleetDailyChart = _barLine(fleetDailyChart, "fleet-daily-chart", "bar", labels, [{
+    label: "Trophées", data: nets,
+    backgroundColor: nets.map(n => n >= 0 ? "#22c55e" : "#ef4444"), borderRadius: 3 }]);
+  // Hourly (UTC buckets → browser-local hours).
+  const h = (ts.hourly && ts.hourly.length === 24) ? ts.hourly : new Array(24).fill(0);
+  const off = Math.round(-new Date().getTimezoneOffset() / 60);
+  const local = new Array(24).fill(0);
+  for (let u = 0; u < 24; u++) local[(((u + off) % 24) + 24) % 24] = h[u];
+  const hlabels = local.map((_, i) => String(i).padStart(2, "0") + "h");
+  fleetHourlyChart = _barLine(fleetHourlyChart, "fleet-hourly-chart", "bar", hlabels, [{
+    label: "Matchs", data: local, backgroundColor: "#4f8cf0", borderRadius: 3 }]);
 }
 document.getElementById("btn-fleet-overview")?.addEventListener("click", showFleetOverview);
 // Brand logo/title = "home" → fleet overview (standard UX reflex).

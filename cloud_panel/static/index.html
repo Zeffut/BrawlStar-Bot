@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260602p" />
+<link rel="stylesheet" href="/static/style.css?v=20260602q" />
 </head>
 <body>
 <header>
@@ -110,6 +110,20 @@
         <div class="card"><label>📱 Instances en jeu</label><div id="fl-active">—</div></div>
         <div class="card"><label>▶ Sessions actives</label><div id="fl-sessions">—</div></div>
         <div class="card"><label>👥 Comptes</label><div id="fl-accounts">—</div></div>
+      </section>
+      <section class="charts">
+        <div class="chart-card chart-wide">
+          <h3>Trophées flotte cumulés</h3>
+          <canvas id="fleet-cum-chart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Trophées gagnés / jour (flotte)</h3>
+          <canvas id="fleet-daily-chart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Activité par heure (flotte) <span class="muted" style="font-size:11px;font-weight:400">(heure locale)</span></h3>
+          <canvas id="fleet-hourly-chart"></canvas>
+        </div>
       </section>
       <section class="lists" style="grid-template-columns:1fr">
         <div class="list-card">
@@ -304,6 +318,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260602p"></script>
+<script src="/static/app.js?v=20260602q"></script>
 </body>
 </html>
