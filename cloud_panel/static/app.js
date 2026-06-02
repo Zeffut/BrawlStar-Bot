@@ -262,6 +262,7 @@ async function selectAccount(id) {
   if (selectedAccountId !== id) {
     if (progressionChart) { progressionChart.destroy(); progressionChart = null; }
     if (winrateChart)     { winrateChart.destroy();     winrateChart = null; }
+    _progressionSig = null;   // chart gone → force a re-render for the new account
   }
   selectedAccountId = id;
   document.getElementById("empty-state").hidden = true;
@@ -293,6 +294,8 @@ async function refreshDetail() {
   if (selectedAccountId !== accId) return;  // user clicked elsewhere
   _applyDashboard(dash);
   try { localStorage.setItem(cacheKey, JSON.stringify(dash)); } catch (e) {}
+  // Chart: full history, loaded ONCE per refresh (single source → no flicker).
+  _loadProgression(accId);
   // 3. Fire-and-forget secondary calls (alerts, session state, GC).
   refreshSessionState();
   gcRefreshAll();
@@ -332,15 +335,11 @@ function _applyDashboard(dash) {
   document.getElementById("kpi-wr").textContent = wr;
   document.getElementById("kpi-seen").textContent = ago(acc.last_seen_at);
 
-  // Seed the chart from the dashboard's (capped) matches so something shows
-  // instantly, then replace with the FULL downsampled history below.
-  const ordered = [...matches].reverse().filter(m=>m.account_trophies_after!=null);
-  _progressionFullData = ordered;
-  renderProgression(_filterByRange(_progressionFullData, _progressionRange));
-  // Full history (all matches, not just the last 200) so the chart isn't
-  // truncated to "only after 16h". Lightweight {t,y} points, downsampled
-  // server-side; Chart.js LTTB decimation thins them further for display.
-  _loadProgression(acc.id);
+  // Chart is driven by a SINGLE source — the full downsampled history loaded
+  // by _loadProgression (called once from refreshDetail). We deliberately do
+  // NOT seed it from the capped dashboard matches here: that produced two
+  // renders with different X-axis extents (last-200 vs full) → visible flicker
+  // on every match. _loadProgression is idempotent + dedupes redundant renders.
   renderWinRate(acc.win_rate_by_brawler || []);
 
   // Cap displayed rows to keep the page lightweight. The full history
@@ -456,14 +455,25 @@ function _filterByRange(data, range) {
 // server-side) and re-render the chart. This is what fixes "no data before
 // 16h" — the dashboard endpoint only returns the last 200 matches for the
 // table, which on a busy day starts mid-afternoon.
+let _progressionInflight = null;   // accId currently being fetched (dedupe)
+let _progressionSig = null;        // signature of the last rendered series
 async function _loadProgression(accId) {
+  if (_progressionInflight === accId) return;  // already fetching this account
+  _progressionInflight = accId;
   let res;
   try {
     res = await api(`/api/accounts/${accId}/progression?max_points=2000`, {silent: true});
-  } catch (e) { return; }  // keep the dashboard-seeded chart on failure
+  } catch (e) { return; }
+  finally { if (_progressionInflight === accId) _progressionInflight = null; }
   if (selectedAccountId !== accId) return;  // user switched accounts
   const pts = (res && res.points) || [];
   if (!pts.length) return;
+  // Skip the re-render when nothing changed (same count + same last point) —
+  // avoids a redundant chart redraw (flicker) on every match-triggered refresh.
+  const last = pts[pts.length - 1];
+  const sig = `${accId}:${pts.length}:${last.t}:${last.y}`;
+  if (sig === _progressionSig) return;
+  _progressionSig = sig;
   _progressionFullData = pts.map(p => ({timestamp: p.t, account_trophies_after: p.y}));
   renderProgression(_filterByRange(_progressionFullData, _progressionRange));
 }
