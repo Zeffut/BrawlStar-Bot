@@ -1250,9 +1250,17 @@ main {
    *intrinsic* pixel size (= CSS size × devicePixelRatio), so on a Retina/HiDPI
    Mac (DPR=2) every fleet chart rendered 2× too big ("graphiques géants").
    Let Chart.js set the inline CSS height/width itself — only lift the cap. */
-#empty-state .cc-canvas { flex: 1 1 auto; min-height: 0; }
+#empty-state .cc-canvas { flex: 1 1 auto; min-height: 0; position: relative; }
 #empty-state .cc-canvas canvas {
   display: block;
+  /* Fill the wrapper at its CSS pixel size. Must beat the global
+     ".chart-card canvas { height:240px !important }" (detail-page cap) — this
+     selector is more specific AND !important, so it wins. height:100% (not
+     auto!) is relative to the wrapper's CSS size, so it's correct at any
+     devicePixelRatio: on a Retina Mac (DPR=2) the canvas stays the wrapper's
+     CSS height instead of rendering at its 2× intrinsic pixel size. */
+  height: 100% !important;
+  width: 100% !important;
   max-height: none !important;
 }
 .chart-card {
