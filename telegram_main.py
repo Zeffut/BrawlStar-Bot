@@ -231,6 +231,7 @@ def _try_resume_session(bot) -> None:
             max_matches=state.get("max_matches"),
             target_total_trophies=state.get("target_total_trophies"),
             per_brawler_max_trophies=state.get("per_brawler_max_trophies"),
+            unselectable=state.get("unselectable"),
         )
         log.info("resume result: ok=%s msg=%s", ok, msg)
         if not ok:
@@ -272,6 +273,11 @@ class BotRunner:
         # brawler rotation between matches.
         self._push_max: PushMaxStrategy | None = None
         self._resume_state: dict | None = None
+        # Brawlers the in-game menu OCR can never select (e.g. 8-bit/ARCADE,
+        # short names like "bo"). Persisted in the resume state so a restart
+        # doesn't re-pick + re-churn them every session (which left the bot
+        # stuck cycling selection → no match → BS restart loop).
+        self._unselectable: set[str] = set()
         # Running account-wide trophy total (sum across all brawlers).
         # Seeded from brawlace at session start, then updated by deltas
         # from each match. Used by the panel for the progression chart.
@@ -286,7 +292,8 @@ class BotRunner:
               owned_brawlers: list[dict] | None = None,
               max_matches: int | None = None,
               target_total_trophies: int | None = None,
-              per_brawler_max_trophies: int | None = None) -> tuple[bool, str]:
+              per_brawler_max_trophies: int | None = None,
+              unselectable: list[str] | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
         mode = "single"   → push one brawler to a fixed target (current behaviour)
@@ -324,12 +331,25 @@ class BotRunner:
                         return False, f"Lobby check: {lobby_reason}"
             except Exception:
                 log.exception("pre-session lobby check failed")
+            # Restore the persisted unselectable set (brawlers the menu OCR
+            # can't pick — 8-bit/ARCADE, "bo", …) so we don't re-churn them.
+            self._unselectable = set(unselectable or [])
             if mode == "push_max":
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
                 self._push_max = PushMaxStrategy.from_owned(
                     owned_brawlers, brawler_max_trophies=per_brawler_max_trophies,
                     no_swap=False)
+                # Pre-exhaust known-unselectable brawlers BEFORE picking the
+                # starter, so the bot doesn't open the session churning on one
+                # it can never select.
+                for _name in self._unselectable:
+                    _bs = self._push_max.brawlers.get(_name)
+                    if _bs:
+                        _bs.exhausted = True
+                if self._unselectable:
+                    log.info("push_max: %d persisted-unselectable brawlers skipped: %s",
+                             len(self._unselectable), sorted(self._unselectable))
                 # Pick the starter brawler from the strategy.
                 first = self._push_max.pick_next()
                 if first is None:
@@ -368,6 +388,7 @@ class BotRunner:
                 "target_total_trophies": target_total_trophies,
                 "per_brawler_max_trophies": per_brawler_max_trophies,
                 "owned_brawlers": owned_brawlers,
+                "unselectable": sorted(self._unselectable),
                 "started_at": time.time(),
             }
             _save_resume_state(self._resume_state)
@@ -563,6 +584,12 @@ class BotRunner:
                             bad = self._push_max.brawlers.get(data[0]['brawler'])
                             if bad:
                                 bad.exhausted = True
+                            # Persist as unselectable so restarts don't re-churn it.
+                            self._unselectable.add(data[0]['brawler'])
+                            if self._resume_state is not None:
+                                self._resume_state["unselectable"] = sorted(self._unselectable)
+                                try: _save_resume_state(self._resume_state)
+                                except Exception: pass
                             nxt = self._push_max.pick_next()
                             if nxt is None or nxt.name == data[0]['brawler']:
                                 log.warning("no other selectable brawler — "
@@ -1011,7 +1038,16 @@ class BotRunner:
                                 b.exhausted = True
                                 log.warning("push_max: %s unselectable (menu OCR)"
                                             " — marking exhausted", bad)
+                            runner._unselectable.add(bad)
                         unsel.clear()
+                        # Persist so a restart never re-picks these (was the
+                        # selection-churn → no-match → BS-restart loop).
+                        if runner._resume_state is not None:
+                            runner._resume_state["unselectable"] = sorted(runner._unselectable)
+                            try:
+                                _save_resume_state(runner._resume_state)
+                            except Exception:
+                                log.debug("unselectable persist failed", exc_info=True)
                     # Keep the grind ALIVE: when everything looks exhausted
                     # (stagnation + failed selections), don't stop — revive the
                     # still-grindable brawlers so the session runs to the global
