@@ -805,6 +805,9 @@ main {
   height: auto;
   min-height: 180px;
   background: #000;
+  /* The video is a pure display surface — never let it swallow pointer events,
+     so the remote-control #screen-overlay always receives the taps/drags. */
+  pointer-events: none;
 }
 .gc-stream-video[hidden] { display: none; }
 .gc-screen-frame.streaming img,

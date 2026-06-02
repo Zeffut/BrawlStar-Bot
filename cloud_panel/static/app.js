@@ -318,9 +318,6 @@ function _applyDashboard(dash) {
   document.getElementById("acc-tag").textContent = `#${acc.tag}`;
   document.getElementById("acc-instance").textContent =
     `on ${acc.instance_name || acc.instance_uid}`;
-  // Remember this account's instance for the main-page live toggle (stops the
-  // stream if we switched accounts).
-  _setMainStreamUid(acc.instance_uid);
 
   // Use the whole-history stats (real COUNT + win/loss) so the KPIs reflect
   // every match, not just the recent page loaded for the table below.
@@ -884,7 +881,6 @@ let _streamInstanceId = null;
 // Each stream "target" is an on-demand <img> with an overlay <video>. We mux
 // the worker's raw H264 into each target's <video> via jMuxer + MSE.
 const _STREAM_VIDEO = {                 // img target id → overlay <video> id
-  "gc-screenshot": "gc-video",
   "device-screen": "device-video",
 };
 const _streamMuxers = new Map();        // targetId → {video, muxer, lastBytes, lastT, frozen}
@@ -1034,31 +1030,9 @@ function _streamActive() {
 // Device-console callers (target = the console's #device-screen img).
 function _startStream(instanceId) { _streamEnsure(instanceId, "device-screen"); }
 function _stopStream() { _streamDrop("device-screen"); }
-
-// ---- Main-page live toggle (Game Control, target = #gc-screenshot) ----
-let _mainStreamUid = null;   // instance uid of the currently-selected account
-function _setMainStreamUid(uid) {
-  // Account switched: stop streaming the old one if it was live.
-  if (uid !== _mainStreamUid) _stopMainStream();
-  _mainStreamUid = uid || null;
-}
-function _toggleMainStream() {
-  const btn = document.getElementById("gc-live-toggle");
-  const on = _streamMuxers.has("gc-screenshot");
-  if (on) { _stopMainStream(); }
-  else if (_mainStreamUid) {
-    _streamEnsure(_mainStreamUid, "gc-screenshot");
-    if (btn) { btn.textContent = "⏸ Live"; btn.classList.add("live-on"); }
-    const meta = document.getElementById("gc-screen-meta");
-    if (meta) meta.textContent = "live · H264 (video)";
-  }
-}
-function _stopMainStream() {
-  _streamDrop("gc-screenshot");
-  const btn = document.getElementById("gc-live-toggle");
-  if (btn) { btn.textContent = "▶ Live"; btn.classList.remove("live-on"); }
-}
-document.getElementById("gc-live-toggle")?.addEventListener("click", _toggleMainStream);
+// The main-page Game Control "▶ Live" toggle was removed (the device console is
+// the live view); _setMainStreamUid kept as a no-op for any leftover callers.
+function _setMainStreamUid() {}
 
 let _remoteRefreshing = false;
 async function _remoteRefreshScreen() {
