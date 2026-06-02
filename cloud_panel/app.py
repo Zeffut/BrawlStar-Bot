@@ -326,9 +326,14 @@ async def telegram_webhook(
 
 @app.post("/api/telegram/setup")
 def telegram_setup() -> dict:
-    """Manually (re)register the webhook — handy after changing the token."""
-    telegram_bot.ensure_webhook()
-    return {"ok": telegram_bot.is_configured()}
+    """Manually (re)register the webhook — handy after changing the token.
+    Returns the actual setWebhook result + getWebhookInfo for diagnostics."""
+    set_result = telegram_bot.ensure_webhook()
+    return {
+        "configured": telegram_bot.is_configured(),
+        "set_result": set_result,
+        "info": telegram_bot.get_webhook_info(),
+    }
 
 
 # ---- Per-instance state (resume sessions, etc.) --------------------

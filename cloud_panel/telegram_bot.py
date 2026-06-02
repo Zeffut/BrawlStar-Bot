@@ -141,16 +141,22 @@ def _json_kb(kb) -> str:
     return _json.dumps({"inline_keyboard": kb})
 
 
-def ensure_webhook(base_url: str | None = None) -> None:
+def ensure_webhook(base_url: str | None = None) -> dict:
     """Register the webhook (idempotent). Safe to call on every startup."""
     if not _conf():
         log.info("telegram bot not configured — skipping webhook setup")
-        return
+        return {"ok": False, "reason": "not configured"}
     url = (base_url or PUBLIC_URL).rstrip("/") + "/api/telegram/webhook"
     r = _post("setWebhook", url=url, secret_token=WEBHOOK_SECRET,
               allowed_updates=_json.dumps(["message", "callback_query"]),
               drop_pending_updates="false")
     log.info("telegram setWebhook(%s) → %s", url, r.get("description") or r.get("ok"))
+    return r
+
+
+def get_webhook_info() -> dict:
+    """getWebhookInfo (diagnostics): url, pending count, last error."""
+    return _post("getWebhookInfo").get("result", {})
 
 
 # ------------------------------------------------------------- keyboards
