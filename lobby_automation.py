@@ -2,6 +2,18 @@ import difflib
 import logging
 import subprocess
 import time
+import unicodedata
+
+
+def _normalize_name(s: str) -> str:
+    """Lowercase, strip accents, and drop all separators/punctuation so OCR'd
+    French names match the aliases regardless of dots/apostrophes/@/accents.
+    e.g. 'A.R.K.A.D'→'arkad', "D'jinn"→'djinn', 'Béa'→'bea', 'Éliz@'→'eliz'."""
+    s = unicodedata.normalize("NFKD", s.lower().strip())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    for symbol in (" ", "-", ".", "&", "_", "'", "’", "@", ":", ",", "!"):
+        s = s.replace(symbol, "")
+    return s
 
 import numpy as np
 
@@ -24,18 +36,31 @@ class BrawlerNotFoundError(ValueError):
 # Brawl Stars localizes some brawler names. brawlace (and push_max) use the
 # ENGLISH names, but the in-game menu (French here) shows the FRENCH names, so
 # the menu OCR never matches e.g. "barley" — the card reads "BARTABA". When
-# searching the menu we also try the localized alias. Only names that actually
-# DIFFER need an entry (most are identical: bea, shelly, colt, …). Add more as
-# they're discovered.
+# searching the menu we try the localized alias FIRST, then fall back to the
+# English name (most brawlers are identical, and accent-only differences like
+# bea→Béa / jacky→Jackie are caught by the fuzzy match, so they don't need an
+# entry). Only names that differ SUBSTANTIALLY need one.
+#
+# Confirmed via the FR wiki + observed OCR (the "garbage" the OCR read —
+# 'airkad', 'costo', 'ricochet' — were in fact the correct French names):
+#   8-bit→A.R.K.A.D, el primo→El Costo, rico→Ricochet, piper→Polly,
+#   barley→Bartaba, crow→Corbac, gene→D'jinn.
+# Names are matched accent/dot/apostrophe-insensitively (see _normalize), so
+# the exact punctuation here is just for readability.
 BRAWLER_FR_ALIASES: dict[str, str] = {
     "barley": "bartaba",
     "crow": "corbac",
-    "el primo": "el primo",
+    "gene": "d'jinn",
+    "8-bit": "a.r.k.a.d",
+    "8bit": "a.r.k.a.d",
+    "el primo": "el costo",
+    "piper": "polly",
+    "rico": "ricochet",
+    # mr. p — FR name uncertain (sources disagree: "M. P" vs "Monsieur M.");
+    # left as a best guess, pending confirmation.
     "mr. p": "m. p",
     "mrp": "m. p",
     "mr p": "m. p",
-    "8-bit": "8-bit",
-    "8bit": "8-bit",
 }
 
 class LobbyAutomation:
@@ -61,6 +86,14 @@ class LobbyAutomation:
         with BACK and retry up to `max_attempts` times.
         """
         log.info("select_brawler: target=%r (max_attempts=%d)", brawler, max_attempts)
+        # Short-circuit: if the target is ALREADY the equipped brawler, don't
+        # open the menu at all. The brawler-grid navigation is the fragile part
+        # (OCR + scroll), and the common case — grinding / resuming the brawler
+        # that's already equipped — doesn't need it. This is what made the bot
+        # "galère à chercher tick" for minutes when tick was already selected.
+        if self._is_already_equipped(brawler):
+            log.info("select_brawler: %r already equipped — skipping menu", brawler)
+            return
         last_exc: Exception | None = None
         for attempt in range(1, max_attempts + 1):
             log.info("select_brawler attempt %d/%d", attempt, max_attempts)
@@ -88,6 +121,30 @@ class LobbyAutomation:
             f"Brawler '{brawler}' could not be selected after {max_attempts} attempts."
         )
 
+    def _is_already_equipped(self, brawler: str) -> bool:
+        """True if `brawler` is the brawler currently equipped in the lobby.
+
+        Reads the equipped-brawler name (OCR above the PLAY button via
+        game_api) and fuzzy-matches it against the target AND its French alias.
+        Best-effort: any failure → False (fall through to normal selection)."""
+        try:
+            import game_api
+            api = game_api.get()
+            if api is None:
+                return False
+            equipped = api.read_current_brawler()
+            if not equipped:
+                return False
+            cands = [equipped]
+            if self._fuzzy_match(brawler, cands):
+                return True
+            alias = BRAWLER_FR_ALIASES.get(brawler.lower().strip())
+            if alias and self._fuzzy_match(alias, cands):
+                return True
+        except Exception:
+            log.debug("_is_already_equipped check failed", exc_info=True)
+        return False
+
     @staticmethod
     def _fuzzy_match(target: str, candidates, min_ratio: float = 0.7) -> str | None:
         """Return the candidate whose name is the closest fuzzy match to
@@ -96,19 +153,17 @@ class LobbyAutomation:
         Also accepts an exact substring match — useful when OCR adds
         leading/trailing chars (e.g. `?colt`).
         """
-        target = target.lower().strip()
-        # Strip the same separators the caller strips from OCR keys, so
-        # composite names match (target "8-bit"/"mr. p" → "8bit"/"mrp" vs
-        # the already-stripped candidate tokens).
-        for symbol in (' ', '-', '.', '&', '_'):
-            target = target.replace(symbol, "")
+        # Normalize accents/dots/apostrophes/@ on BOTH sides so French names
+        # match regardless of punctuation (A.R.K.A.D→arkad, D'jinn→djinn,
+        # Béa→bea, El Costo→elcosto).
+        target = _normalize_name(target)
         if not target:
             return None
         best: tuple[float, str] | None = None
         for c in candidates:
-            c_norm = c.lower().strip()
+            c_norm = _normalize_name(c)
             # Skip empty + pure-number tokens (trophy counts).
-            if not c_norm or c_norm.replace(".", "").isdigit():
+            if not c_norm or c_norm.isdigit():
                 continue
             # Exact match wins (also covers short names like "bo").
             if c_norm == target:
