@@ -1211,6 +1211,22 @@ main {
 /* The trophy progression chart spans the full width (hero chart); win-rate +
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
 .chart-card.chart-wide { grid-column: 1 / -1; }
+
+/* Fleet overview tuned to fit on a single, non-scrollable screen: the three
+   charts sit in ONE row with a capped height, and spacing is tightened. */
+.fleet-charts { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.fleet-charts .chart-card {
+  height: 210px;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 10px;
+}
+.fleet-charts .chart-card h3 { margin: 0 0 8px; font-size: 12px; }
+.fleet-charts .chart-card canvas { flex: 1 1 auto; min-height: 0; }
+#empty-state { padding-top: 4px; }
+#empty-state .cards { margin-bottom: 12px; }
+#empty-state .charts { margin-bottom: 12px; }
+#empty-state .list-card { max-height: 200px; overflow: auto; }
 .chart-card {
   background: var(--surface);
   border: 1px solid var(--border);
