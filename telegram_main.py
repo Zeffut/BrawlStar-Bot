@@ -92,6 +92,13 @@ log = logging.getLogger("telegram_main")
 
 # ----------------------------------------------------------- bot lifecycle
 
+# Minimum wall-clock gap between two brawlace trophy re-syncs (seconds). The
+# re-sync is the "source of truth" catch-up for account + brawler trophies; we
+# attempt it after every match but skip if the previous one was more recent
+# than this. Tighter than the old "every 3rd match" → less trophy lag, while
+# the wall-clock floor stops fast match streaks from saturating flaresolverr.
+BRAWLACE_SYNC_MIN_INTERVAL = 90.0
+
 
 # Shared singletons created at startup (after host_bootstrap).
 # Main reuses these to avoid double-initializing scrcpy/ADB.
@@ -284,6 +291,12 @@ class BotRunner:
         # from each match. Used by the panel for the progression chart.
         self._account_trophies: int = 0
         self._target_reached_notified: bool = False
+        # Wall-clock of the last brawlace re-sync ATTEMPT (set when we launch
+        # the background fetch). The resync is throttled to one per
+        # BRAWLACE_SYNC_MIN_INTERVAL seconds — this both REDUCES trophy lag
+        # (sync ~every match in normal play instead of every 3rd) and CAPS the
+        # API rate during fast draw/loss streaks (never saturate flaresolverr).
+        self._last_brawlace_sync: float = 0.0
 
     def is_running(self) -> bool:
         return self.thread is not None and self.thread.is_alive()
@@ -376,6 +389,7 @@ class BotRunner:
             self._target_trophies = trophies
             self._max_matches = max_matches
             self._target_total_trophies = target_total_trophies
+            self._last_brawlace_sync = 0.0   # force a sync on the first match
             self._last_match_at = time.time()
             self._stuck_alerted = False
             # Persist the resume state so a restart can pick up where
@@ -968,10 +982,20 @@ class BotRunner:
                 # one: a stale-low NON-current brawler (e.g. nita tracked 490 but
                 # really 798) otherwise stays in the "easy" pool and keeps being
                 # picked. Run on match #1 (close the stale-seed window fast) then
-                # every 3. BACKGROUND thread: a slow/504 brawlace fetch in the
-                # hot path would stall the grind (looks stuck).
-                if ((runner._match_count == 1 or runner._match_count % 3 == 0)
-                        and runner._account_id is not None):
+                # after every match, THROTTLED to one fetch per
+                # BRAWLACE_SYNC_MIN_INTERVAL seconds: normal play (matches
+                # ~2-3 min) syncs roughly every match → ~3× less trophy lag than
+                # the old "every 3rd match", while the wall-clock floor caps the
+                # API rate during fast draw/loss streaks (no flaresolverr
+                # saturation). BACKGROUND thread: a slow/504 brawlace fetch in
+                # the hot path would stall the grind (looks stuck).
+                _now = time.time()
+                _due = (runner._match_count == 1
+                        or _now - runner._last_brawlace_sync >= BRAWLACE_SYNC_MIN_INTERVAL)
+                if _due and runner._account_id is not None:
+                    # Stamp BEFORE launching: the throttle is on attempts, so two
+                    # quick matches can't both fire a fetch.
+                    runner._last_brawlace_sync = _now
                     def _resync(acc_id, brawler_name, pm, obs):
                         try:
                             acc = db.get_account(acc_id)
@@ -982,6 +1006,16 @@ class BotRunner:
                             brawlers = prof.get("brawlers", [])
                             if not brawlers:
                                 return
+                            # Piggyback: push these fresh per-brawler trophies to
+                            # the cloud right now. The panel's per-brawler display
+                            # (win/loss chart, account detail) reads brawlers_json,
+                            # which was otherwise only refreshed once an HOUR — the
+                            # "retard sur les trophées du brawler". This reuses the
+                            # fetch we just made → zero extra brawlace/API calls.
+                            try:
+                                cloud_sync.push_brawlers(acc["tag"], brawlers)
+                            except Exception:
+                                log.debug("resync push_brawlers failed", exc_info=True)
                             # Account total: driven by EXACT per-match deltas
                             # (read off the result screen) for smoothness, with
                             # an UPWARD-ONLY catch-up to the brawlace sum. We
