@@ -1,6 +1,5 @@
 import difflib
 import logging
-import subprocess
 import time
 import unicodedata
 
@@ -19,7 +18,6 @@ import numpy as np
 
 from stage_manager import load_image
 from typization import BrawlerName
-import device
 from utils import extract_text_and_positions, count_hsv_pixels, load_toml_as_dict, find_template_center
 
 debug = load_toml_as_dict("cfg/general_config.toml")['super_debug'] == "yes"

@@ -8,7 +8,6 @@ Env:
     SQLITE_PATH    path to the old cloud.db   (default /src/cloud.db)
     DATABASE_URL   target Postgres URI
 """
-import json
 import os
 import sqlite3
 
