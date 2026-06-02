@@ -1034,10 +1034,29 @@ function _streamStartWatchdog() {
       } else {
         m.frozen = 0;
       }
+      // Stay at the LIVE edge: MSE plays at its own pace and drifts behind
+      // real-time (the "slow-motion + desync" bug — latency just grows). Nudge
+      // playbackRate up when a little behind, hard-seek to live on big drift.
+      _streamSyncLive(m.video);
       m.lastBytes = _streamBytes;
-      m.lastT = t;
+      m.lastT = m.video.currentTime || 0;   // re-read (a seek may have moved it)
     }
-  }, 2000);
+  }, 1500);
+}
+function _streamSyncLive(v) {
+  try {
+    if (!v.buffered || !v.buffered.length) return;
+    const end = v.buffered.end(v.buffered.length - 1);
+    const drift = end - (v.currentTime || 0);
+    if (drift > 2.5) {            // way behind → jump to the live edge
+      v.currentTime = end - 0.2;
+      v.playbackRate = 1.0;
+    } else if (drift > 0.6) {     // a bit behind → speed up to catch up smoothly
+      v.playbackRate = 1.4;
+    } else if (drift < 0.25) {    // caught up → normal speed
+      v.playbackRate = 1.0;
+    }
+  } catch (_) {}
 }
 function _streamFeed(u8) {
   _streamBytes += u8.byteLength || 0;
