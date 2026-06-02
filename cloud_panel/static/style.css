@@ -295,7 +295,7 @@ main {
 #account-detail {
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 28px 32px 80px;
+  padding: 24px 32px 24px;
   min-width: 0;
 }
 
@@ -1212,21 +1212,33 @@ main {
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
 .chart-card.chart-wide { grid-column: 1 / -1; }
 
-/* Fleet overview tuned to fit on a single, non-scrollable screen: the three
-   charts sit in ONE row with a capped height, and spacing is tightened. */
-.fleet-charts { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.fleet-charts .chart-card {
-  height: 210px;
+/* Fleet overview = single screen that FILLS the height (no scroll, no wasted
+   space). empty-state is a flex column; the charts row grows to take all the
+   remaining height so the 3 charts are large. */
+#empty-state {
   display: flex;
   flex-direction: column;
-  padding: 12px 14px 10px;
+  height: 100%;
+  padding-top: 2px;
 }
-.fleet-charts .chart-card h3 { margin: 0 0 8px; font-size: 12px; }
+#empty-state .cards { margin-bottom: 12px; flex: 0 0 auto; }
+#empty-state .lists { flex: 0 0 auto; margin-top: 12px; }
+#empty-state .list-card { max-height: 26vh; overflow: auto; }
+.fleet-charts {
+  flex: 1 1 auto;                 /* grow to fill remaining height */
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-auto-rows: 1fr;            /* the single row fills the grown height */
+  margin-bottom: 0;
+  min-height: 0;
+}
+.fleet-charts .chart-card {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 12px;
+  min-height: 0;
+}
+.fleet-charts .chart-card h3 { margin: 0 0 10px; font-size: 13px; }
 .fleet-charts .chart-card canvas { flex: 1 1 auto; min-height: 0; }
-#empty-state { padding-top: 4px; }
-#empty-state .cards { margin-bottom: 12px; }
-#empty-state .charts { margin-bottom: 12px; }
-#empty-state .list-card { max-height: 200px; overflow: auto; }
 .chart-card {
   background: var(--surface);
   border: 1px solid var(--border);
