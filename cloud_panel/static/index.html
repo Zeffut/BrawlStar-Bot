@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260602k" />
+<link rel="stylesheet" href="/static/style.css?v=20260602l" />
 </head>
 <body>
 <header>
@@ -26,6 +26,7 @@
     </div>
   </div>
   <div style="display:flex;gap:8px;align-items:center">
+    <button id="btn-fleet-overview" class="header-btn" title="Vue d'ensemble de la flotte">🛰️ Flotte</button>
     <button id="btn-global-config" class="header-btn" title="Global panel configuration">⚙️ Global Config</button>
     <button id="sidebar-toggle" class="sidebar-toggle" title="Show/hide instances" aria-label="toggle sidebar">☰</button>
   </div>
@@ -96,11 +97,29 @@
 
   <section id="account-detail">
     <div id="empty-state">
-      <div class="empty-card" style="padding:60px 20px">
-        <span class="icon" style="font-size:32px">👈</span>
-        <div style="font-size:14px;color:var(--text-2)">Pick an account on the left</div>
-        <div style="margin-top:8px">Browse instances and tap an account to see its stats and controls.</div>
+      <div class="detail-header" style="margin-bottom:18px">
+        <div><h2 style="margin:0">🛰️ Vue d'ensemble — Flotte</h2>
+        <div class="muted" id="fleet-updated">—</div></div>
       </div>
+      <section class="cards">
+        <div class="card"><label>🏆 Trophées flotte</label><div id="fl-troph">—</div></div>
+        <div class="card"><label>🏆 Aujourd'hui</label><div id="fl-today">—</div></div>
+        <div class="card"><label>⚡ Trophées / h</label><div id="fl-tph">—</div></div>
+        <div class="card"><label>🎯 Win rate (jour)</label><div id="fl-wr">—</div></div>
+        <div class="card"><label>⚔️ Matchs (jour)</label><div id="fl-matches">—</div></div>
+        <div class="card"><label>📱 Instances en jeu</label><div id="fl-active">—</div></div>
+        <div class="card"><label>▶ Sessions actives</label><div id="fl-sessions">—</div></div>
+        <div class="card"><label>👥 Comptes</label><div id="fl-accounts">—</div></div>
+      </section>
+      <section class="lists" style="grid-template-columns:1fr">
+        <div class="list-card">
+          <h3>Comptes</h3>
+          <table id="fleet-accounts-table">
+            <thead><tr><th>Compte</th><th>Statut</th><th>Trophées</th><th>Aujourd'hui</th><th>WR</th><th>/h</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
     </div>
     <div id="detail-content" hidden>
       <header class="detail-header">
@@ -285,6 +304,6 @@
 </main>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260602k"></script>
+<script src="/static/app.js?v=20260602l"></script>
 </body>
 </html>

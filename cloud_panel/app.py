@@ -557,11 +557,34 @@ def fleet_overview() -> dict:
     breakdown = {"running": 0, "ready": 0, "preparing": 0, "booting": 0, "stale": 0, "offline": 0}
     for i in insts:
         breakdown[i["status"]] = breakdown.get(i["status"], 0) + 1
+    # Map instance DB id → live status (from api_instances above).
+    inst_status = {i["id"]: i["status"] for i in insts}
     accs = db.list_accounts()
     total_trophies = 0
+    fleet_net_today = 0
+    fleet_tph = 0
+    account_rows = []
     for a in accs:
         brawlers, _ = db.get_account_brawlers(a["id"])
-        total_trophies += _account_total_trophies(a["id"], brawlers) or 0
+        troph = _account_total_trophies(a["id"], brawlers) or 0
+        total_trophies += troph
+        st = db.account_stats(a["id"])
+        fleet_net_today += st["net_today"]
+        if st["trophies_per_hour"]:
+            fleet_tph += st["trophies_per_hour"]
+        account_rows.append({
+            "id": a["id"],
+            "name": a.get("name") or a["tag"],
+            "tag": a["tag"],
+            "trophies": troph,
+            "net_today": st["net_today"],
+            "matches_today": st["matches_today"],
+            "win_rate": st["win_rate"],
+            "trophies_per_hour": st["trophies_per_hour"],
+            "status": inst_status.get(a.get("instance_id")),
+            "running": bool(db.current_session(a["id"])),
+        })
+    account_rows.sort(key=lambda r: r["trophies"], reverse=True)
     # Today's matches across all accounts.
     today_matches = db.query(
         "SELECT result, COUNT(*) AS n FROM matches WHERE timestamp >= %s GROUP BY result",
@@ -581,8 +604,11 @@ def fleet_overview() -> dict:
         "instances_by_status": breakdown,
         "accounts_total": len(accs),
         "total_trophies": total_trophies,
+        "net_today": fleet_net_today,
+        "trophies_per_hour": fleet_tph or None,
         "active_sessions": active_sessions,
         "today": {**today, "total": total_today, "win_rate_pct": wr_today},
+        "accounts": account_rows,
         "ts": now,
     }
 

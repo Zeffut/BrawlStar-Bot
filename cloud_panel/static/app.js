@@ -256,10 +256,66 @@ async function refreshAll() {
     }
   }
 
-  if (!selectedAccountId && accounts.length) selectAccount(accounts[0].id);
+  if (!_fleetView && !selectedAccountId && accounts.length) selectAccount(accounts[0].id);
+  // Keep the fleet overview fresh while it's the active view.
+  if (_fleetView) _loadFleetOverview();
 }
 
+// ---- Fleet overview (landing / "🛰️ Flotte" button) ----
+let _fleetView = false;
+function showFleetOverview() {
+  _fleetView = true;
+  selectedAccountId = null;
+  for (const li of document.querySelectorAll("#accounts li")) li.classList.remove("active");
+  document.getElementById("detail-content").hidden = true;
+  document.getElementById("empty-state").hidden = false;
+  _loadFleetOverview();
+}
+async function _loadFleetOverview() {
+  let d;
+  try { d = await api("/api/fleet/overview", {silent: true}); } catch (e) { return; }
+  if (!_fleetView) return;
+  renderFleetOverview(d);
+}
+function renderFleetOverview(d) {
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  const sgn = (n) => (n > 0 ? "+" : "") + n;
+  const st = d.instances_by_status || {};
+  const inGame = (st.running || 0);
+  set("fl-troph", (d.total_trophies != null ? d.total_trophies.toLocaleString() : "—") + " 🏆");
+  set("fl-today", d.net_today != null ? `<span class="${d.net_today>=0?'delta-pos':'delta-neg'}">${sgn(d.net_today)} 🏆</span>` : "—");
+  set("fl-tph", d.trophies_per_hour != null ? `<span class="delta-pos">+${d.trophies_per_hour}/h</span>` : "—");
+  const t = d.today || {};
+  set("fl-wr", t.win_rate_pct != null ? `${t.win_rate_pct}%` : "—");
+  set("fl-matches", t.total != null ? t.total : "—");
+  set("fl-active", `${inGame} / ${d.instances_total || 0}`);
+  set("fl-sessions", d.active_sessions != null ? d.active_sessions : "—");
+  set("fl-accounts", d.accounts_total != null ? d.accounts_total : "—");
+  set("fleet-updated", "à jour · " + new Date().toLocaleTimeString());
+  // Per-account table.
+  const tb = document.querySelector("#fleet-accounts-table tbody");
+  if (tb) {
+    tb.innerHTML = (d.accounts || []).map(a => {
+      const stat = a.running ? "running" : (a.status || "offline");
+      const today = a.net_today != null
+        ? `<span class="${a.net_today>=0?'delta-pos':'delta-neg'}">${sgn(a.net_today)}</span>` : "—";
+      const tph = a.trophies_per_hour != null ? `+${a.trophies_per_hour}/h` : "—";
+      return `<tr class="fleet-acc-row" data-acc="${a.id}" style="cursor:pointer">
+        <td>${a.name}</td>
+        <td><span class="inst-status-pill ${stat}">${stat}</span></td>
+        <td>${(a.trophies||0).toLocaleString()} 🏆</td>
+        <td>${today}</td>
+        <td>${a.win_rate!=null?a.win_rate+'%':'—'}</td>
+        <td>${tph}</td></tr>`;
+    }).join("") || `<tr><td colspan="6" class="muted">Aucun compte</td></tr>`;
+    tb.querySelectorAll(".fleet-acc-row").forEach(row =>
+      row.addEventListener("click", () => selectAccount(parseInt(row.dataset.acc))));
+  }
+}
+document.getElementById("btn-fleet-overview")?.addEventListener("click", showFleetOverview);
+
 async function selectAccount(id) {
+  _fleetView = false;
   if (selectedAccountId !== id) {
     if (progressionChart) { progressionChart.destroy(); progressionChart = null; }
     if (winrateChart)     { winrateChart.destroy();     winrateChart = null; }
