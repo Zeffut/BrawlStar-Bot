@@ -698,6 +698,16 @@ class GameAPI:
         same_state_count = 0
         star_drop_tries = 0
         for i in range(max_attempts):
+            # A DELIBERATE power-save is in effect (schedule break/sleep/cap or
+            # battery saver): the screen is off / BS closed ON PURPOSE — abort
+            # instead of waking it. Checked every iteration so an in-flight
+            # goto_lobby that started just BEFORE the power-save bails out the
+            # moment the flag flips, before its lock-check would wake the phone
+            # (the residual flap: power-save undone ~30s later by this loop).
+            if self._power_save_active:
+                log.info("goto_lobby[%d]: power-save active → aborting "
+                         "(device deliberately off)", i)
+                return False
             # Lock check — wake + PIN if screen is off or keyguard is up.
             if self._screen_is_locked():
                 log.warning("goto_lobby[%d]: screen locked → wake + unlock", i)
