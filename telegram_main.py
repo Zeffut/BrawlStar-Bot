@@ -210,14 +210,42 @@ def _try_resume_session(bot) -> None:
     # break, or once the daily match cap is hit. The resume state is KEPT so the
     # next keepalive tick (inside the active window, break over) picks it up.
     try:
-        _ok, _why = play_schedule.get().should_play_now()
+        _sched = play_schedule.get()
+        _st = _sched.state()
+        _ok, _why = _sched.should_play_now()
     except Exception:
-        _ok, _why = True, ""
+        _st, _ok, _why = "play", True, ""
     if not _ok:
+        # LONG pause (sleep window / daily cap): close Brawl Stars + screen off,
+        # like a human stopping for the night — leaving the game open all night
+        # is itself a bot tell and drains the battery. A short BREAK leaves it
+        # open (quick resume). Idempotent via _power_saved.
+        if _st in ("sleep", "cap") and not bot.runner._power_saved:
+            try:
+                import game_api as _ga
+                _api = _ga.get()
+                if _api is not None:
+                    _api.enter_power_save()
+                    bot.runner._power_saved = True
+                    log.info("play schedule: %s → power-save (Brawl Stars closed, screen off)", _st)
+            except Exception:
+                log.exception("schedule enter_power_save failed")
         log.info("resume: held by play schedule (%s)", _why)
         try: _set_activity(f"💤 Pause — {_why}")
         except Exception: pass
         return
+    # Waking up (window open / break over / new day): if we'd closed the game for
+    # a long pause, reopen it (wake screen, unlock, relaunch BS) before resuming.
+    if bot.runner._power_saved:
+        try:
+            import game_api as _ga
+            _api = _ga.get()
+            if _api is not None:
+                _api.exit_power_save()
+                log.info("play schedule: waking — power-save exited (Brawl Stars relaunching)")
+        except Exception:
+            log.exception("schedule exit_power_save failed")
+        bot.runner._power_saved = False
     mode = state.get("mode") or "single"
     log.info("RESUMING %s session (started %.0fs ago): brawler=%s target_total=%s",
              mode, time.time() - state.get("started_at", 0),
@@ -317,6 +345,10 @@ class BotRunner:
         # concurrent fetches (a slow/504 fetch > BRAWLACE_SYNC_MIN_INTERVAL would
         # otherwise let a second one start and race the first on shared state).
         self._resync_inflight: bool = False
+        # True while the phone is in power-save FOR THE SCHEDULE (Brawl Stars
+        # force-stopped + screen off during the sleep window / daily cap). Lets
+        # the keepalive close the game once and reopen it on wake.
+        self._power_saved: bool = False
         # Wall-clock of the last brawlace re-sync ATTEMPT (set when we launch
         # the background fetch). The resync is throttled to one per
         # BRAWLACE_SYNC_MIN_INTERVAL seconds — this both REDUCES trophy lag

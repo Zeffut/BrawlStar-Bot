@@ -124,25 +124,36 @@ class PlaySchedule:
             return self.sleep_start <= h < self.sleep_end
         return h >= self.sleep_start or h < self.sleep_end  # wraps midnight
 
-    def should_play_now(self, now: float | None = None) -> tuple[bool, str]:
-        """(can_play, reason). Reason is human-readable for status/logging."""
+    def state(self, now: float | None = None) -> str:
+        """Current schedule state: 'play' | 'break' | 'sleep' | 'cap'.
+
+        'sleep'/'cap' are LONG pauses (close the game). 'break' is a short
+        in-session pause (leave the game open for a quick resume)."""
         if not self.enabled:
-            return True, "schedule off"
+            return "play"
         now = now or time.time()
         with self._lock:
             self._ensure_day(now)
-            h = time.localtime(now).tm_hour
-            if self._is_sleep_hour(h):
-                return False, f"sommeil ({self.sleep_start}h–{self.sleep_end}h)"
+            if self._is_sleep_hour(time.localtime(now).tm_hour):
+                return "sleep"
             if self._matches_today >= self._today_cap:
-                return False, f"quota du jour atteint ({self._matches_today}/{self._today_cap})"
-            # Break is on the monotonic clock (set by start_break), independent
+                return "cap"
+            # Break is on the MONOTONIC clock (set by start_break), independent
             # of the wall-clock `now` used for the sleep window / daily reset.
-            mono = time.monotonic()
-            if mono < self._break_until:
-                left = int((self._break_until - mono) / 60) + 1
-                return False, f"pause (~{left} min)"
-            return True, "actif"
+            if time.monotonic() < self._break_until:
+                return "break"
+            return "play"
+
+    def should_play_now(self, now: float | None = None) -> tuple[bool, str]:
+        """(can_play, reason). Reason is human-readable for status/logging."""
+        st = self.state(now)
+        if st == "play":
+            return True, "actif" if self.enabled else "schedule off"
+        if st == "sleep":
+            return False, f"sommeil ({self.sleep_start}h–{self.sleep_end}h)"
+        if st == "cap":
+            return False, f"quota du jour atteint ({self._matches_today}/{self._today_cap})"
+        return False, "pause"
 
 
 _SCHEDULE: PlaySchedule | None = None

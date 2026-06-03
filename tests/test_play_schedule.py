@@ -70,6 +70,22 @@ def test_daily_reset_is_forward_only():
     assert s.should_play_now(today + 86400)[0]
 
 
+def test_state_categories():
+    # state() drives whether the worker closes the game: 'sleep'/'cap' = long
+    # pause (close BS), 'break' = short (leave open), 'play' = active.
+    s = PlaySchedule({**CFG, "daily_match_cap": 3, "daily_cap_jitter": 0})
+    assert s.state(_ts(14)) == "play"
+    assert s.state(_ts(3)) == "sleep"          # 03:30 inside 1h–9h
+    for _ in range(3):
+        s.record_match(_ts(14))
+    assert s.state(_ts(14)) == "cap"           # quota hit → long pause
+    s2 = PlaySchedule(CFG)
+    s2.break_min = s2.break_max = 30
+    s2.start_break()
+    assert s2.state(_ts(14)) == "break"        # short pause → keep game open
+    assert PlaySchedule({**CFG, "enabled": False}).state(_ts(3)) == "play"
+
+
 def test_block_minutes_in_range():
     s = PlaySchedule(CFG)
     for _ in range(50):
