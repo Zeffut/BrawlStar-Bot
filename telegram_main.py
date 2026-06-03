@@ -100,6 +100,35 @@ log = logging.getLogger("telegram_main")
 # the wall-clock floor stops fast match streaks from saturating flaresolverr.
 BRAWLACE_SYNC_MIN_INTERVAL = 90.0
 
+# A brawler the menu OCR fails to select is marked "unselectable" so push_max
+# stops churning on it. That used to be a PERMANENT ban (a single transient
+# OCR miss excluded a brawler forever) — the ratchet that ended up banning the
+# best brawlers (maisie/carl/jessie/colt…) and starved the rotation. Now the
+# ban EXPIRES after this TTL: the brawler gets another chance on the next
+# session start/resume past the window (the menu is flaky, not always-failing —
+# these same brawlers select fine most of the time).
+UNSELECTABLE_TTL_S = 2 * 3600     # 2 h
+
+
+def _load_unselectable(raw, now: "float | None" = None) -> dict:
+    """Normalize a persisted unselectable record into {name: ts}, dropping
+    entries older than UNSELECTABLE_TTL_S (expired bans get a fresh chance).
+
+    Accepts the legacy LIST format (names with no timestamp): those carry no
+    age, so we treat them as expired and clear them — which also one-shot
+    unbans whatever the old permanent ratchet had accumulated."""
+    now = now if now is not None else time.time()
+    if isinstance(raw, dict):
+        out = {}
+        for n, ts in raw.items():
+            try:
+                if now - float(ts) < UNSELECTABLE_TTL_S:
+                    out[n] = float(ts)
+            except (TypeError, ValueError):
+                continue
+        return out
+    return {}
+
 
 # Shared singletons created at startup (after host_bootstrap).
 # Main reuses these to avoid double-initializing scrcpy/ADB.
@@ -349,7 +378,7 @@ class BotRunner:
         # short names like "bo"). Persisted in the resume state so a restart
         # doesn't re-pick + re-churn them every session (which left the bot
         # stuck cycling selection → no match → BS restart loop).
-        self._unselectable: set[str] = set()
+        self._unselectable: dict[str, float] = {}   # {name: ts marked}, TTL'd
         # Running account-wide trophy total (sum across all brawlers).
         # Seeded from brawlace at session start, then updated by deltas
         # from each match. Used by the panel for the progression chart.
@@ -429,9 +458,15 @@ class BotRunner:
                         return False, f"Lobby check: {lobby_reason}"
             except Exception:
                 log.exception("pre-session lobby check failed")
-            # Restore the persisted unselectable set (brawlers the menu OCR
-            # can't pick — 8-bit/ARCADE, "bo", …) so we don't re-churn them.
-            self._unselectable = set(unselectable or [])
+            # Restore the persisted unselectable record (brawlers the menu OCR
+            # can't pick — 8-bit/ARCADE, "bo", …) so we don't re-churn them this
+            # session. Now a {name: ts} dict with a TTL: bans older than 2 h are
+            # dropped here, so the best brawlers get periodically retried instead
+            # of being banned forever (the old set ratchet starved the pool).
+            self._unselectable = _load_unselectable(unselectable)
+            if self._unselectable:
+                log.info("push_max: %d unselectable still within TTL: %s",
+                         len(self._unselectable), sorted(self._unselectable))
             if mode == "push_max":
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
@@ -506,7 +541,7 @@ class BotRunner:
                 "last_equipped": last_equipped,
                 "account_trophies": resume_account_trophies,
                 "owned_brawlers": owned_brawlers,
-                "unselectable": sorted(self._unselectable),
+                "unselectable": dict(self._unselectable),
                 "started_at": time.time(),
             }
             _save_resume_state(self._resume_state)
@@ -719,10 +754,11 @@ class BotRunner:
                             bad = self._push_max.brawlers.get(data[0]['brawler'])
                             if bad:
                                 bad.exhausted = True
-                            # Persist as unselectable so restarts don't re-churn it.
-                            self._unselectable.add(data[0]['brawler'])
+                            # Persist as unselectable (timestamped → expires
+                            # after the TTL) so restarts don't re-churn it now.
+                            self._unselectable[data[0]['brawler']] = time.time()
                             if self._resume_state is not None:
-                                self._resume_state["unselectable"] = sorted(self._unselectable)
+                                self._resume_state["unselectable"] = dict(self._unselectable)
                                 try: _save_resume_state(self._resume_state)
                                 except Exception: pass
                             nxt = self._push_max.pick_next()
@@ -1261,12 +1297,13 @@ class BotRunner:
                                 b.exhausted = True
                                 log.warning("push_max: %s unselectable (menu OCR)"
                                             " — marking exhausted", bad)
-                            runner._unselectable.add(bad)
+                            runner._unselectable[bad] = time.time()
                         unsel.clear()
-                        # Persist so a restart never re-picks these (was the
-                        # selection-churn → no-match → BS-restart loop).
+                        # Persist (timestamped, TTL'd) so a restart doesn't
+                        # re-churn these now — but they're retried after the TTL
+                        # (was a permanent ban → starved pool).
                         if runner._resume_state is not None:
-                            runner._resume_state["unselectable"] = sorted(runner._unselectable)
+                            runner._resume_state["unselectable"] = dict(runner._unselectable)
                             try:
                                 _save_resume_state(runner._resume_state)
                             except Exception:
