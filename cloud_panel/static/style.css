@@ -1210,7 +1210,13 @@ main {
 }
 /* The trophy progression chart spans the full width (hero chart); win-rate +
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
-.chart-card.chart-wide { grid-column: 1 / -1; }
+.chart-card.chart-wide,
+.list-card.chart-wide { grid-column: 1 / -1; }
+/* Full-width efficiency table fills its (now full-width) card instead of
+   hugging the left and leaving a big empty gap on the right. */
+#brawler-eff-table { width: 100%; }
+#brawler-eff-table th, #brawler-eff-table td { white-space: nowrap; }
+#brawler-eff-table th:first-child, #brawler-eff-table td:first-child { width: 22%; }
 
 /* Fleet overview. The dashboard fills #account-detail EXACTLY (height:100%) and
    splits the leftover height between the hero (flex 3) and the bottom row
