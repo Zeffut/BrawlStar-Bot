@@ -28,8 +28,9 @@ log = logging.getLogger("play_schedule")
 
 _DEFAULTS = {
     "enabled": True,
-    "sleep_start_hour": 1,      # local time: no play from 01:00 …
-    "sleep_end_hour": 9,        # … until 09:00 (≈8h "sleep")
+    "sleep_start_hour": 1,      # local time: no play from ~01:00 …
+    "sleep_end_hour": 9,        # … until ~09:00 (≈8h "sleep")
+    "sleep_jitter_minutes": 40, # bed/wake times wobble ±this each day (human)
     "block_min_minutes": 40,    # a play block lasts 40–85 min
     "block_max_minutes": 85,
     "break_min_minutes": 20,    # then a break of 20–70 min
@@ -58,12 +59,26 @@ def _as_bool(v) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _hhmm(minute_of_day: int) -> str:
+    m = int(minute_of_day) % 1440
+    return "%02dh%02d" % (m // 60, m % 60)
+
+
 class PlaySchedule:
     def __init__(self, cfg: dict | None = None):
         cfg = cfg or _load_cfg()
         self.enabled = _as_bool(cfg["enabled"])
         self.sleep_start = int(cfg["sleep_start_hour"]) % 24
         self.sleep_end = int(cfg["sleep_end_hour"]) % 24
+        # Bed/wake times wobble ±sleep_jitter each day so the schedule isn't a
+        # robotic on-the-hour boundary. Base window in minutes-of-day; the
+        # per-day jittered values are rolled in _ensure_day.
+        self.sleep_jitter = max(0, int(cfg.get("sleep_jitter_minutes",
+                                               _DEFAULTS["sleep_jitter_minutes"])))
+        self._sleep_start_min0 = self.sleep_start * 60
+        self._sleep_end_min0 = self.sleep_end * 60
+        self._today_sleep_start_min = self._sleep_start_min0
+        self._today_sleep_end_min = self._sleep_end_min0
         self.block_min = int(cfg["block_min_minutes"])
         self.block_max = max(self.block_min, int(cfg["block_max_minutes"]))
         self.break_min = int(cfg["break_min_minutes"])
@@ -90,10 +105,27 @@ class PlaySchedule:
         if self._day is None or day > self._day:
             self._day = day
             self._matches_today = 0
+            # Seed a per-day RNG on the date string so the same day always
+            # yields the SAME cap + bed/wake times even across worker restarts
+            # (a restart must not re-roll the cap — that could let the bot
+            # exceed it — nor shift the wake time it's already sleeping toward).
+            rng = random.Random("sched:" + day)
             lo = max(1, self.daily_cap - self.cap_jitter)
             hi = max(lo, self.daily_cap + self.cap_jitter)
-            self._today_cap = random.randint(lo, hi)
-            log.info("play schedule: new day %s — match cap %d", day, self._today_cap)
+            self._today_cap = rng.randint(lo, hi)
+            if self.sleep_jitter and self.sleep_start != self.sleep_end:
+                j = self.sleep_jitter
+                self._today_sleep_start_min = (self._sleep_start_min0
+                                               + rng.randint(-j, j)) % 1440
+                self._today_sleep_end_min = (self._sleep_end_min0
+                                             + rng.randint(-j, j)) % 1440
+            else:
+                self._today_sleep_start_min = self._sleep_start_min0
+                self._today_sleep_end_min = self._sleep_end_min0
+            log.info("play schedule: new day %s — match cap %d, sleep %s–%s",
+                     day, self._today_cap,
+                     _hhmm(self._today_sleep_start_min),
+                     _hhmm(self._today_sleep_end_min))
 
     def record_match(self, now: float | None = None) -> None:
         now = now or time.time()
@@ -117,12 +149,15 @@ class PlaySchedule:
         return mins
 
     # ---- the gate ----
-    def _is_sleep_hour(self, h: int) -> bool:
-        if self.sleep_start == self.sleep_end:
+    def _is_sleep_minute(self, minute_of_day: int) -> bool:
+        """Whether `minute_of_day` (0–1439, local) falls in TODAY's jittered
+        sleep window. Caller must hold the lock (reads _today_sleep_*)."""
+        start, end = self._today_sleep_start_min, self._today_sleep_end_min
+        if start == end:
             return False
-        if self.sleep_start < self.sleep_end:        # e.g. 1 → 9
-            return self.sleep_start <= h < self.sleep_end
-        return h >= self.sleep_start or h < self.sleep_end  # wraps midnight
+        if start < end:                              # e.g. 01:00 → 09:00
+            return start <= minute_of_day < end
+        return minute_of_day >= start or minute_of_day < end  # wraps midnight
 
     def state(self, now: float | None = None) -> str:
         """Current schedule state: 'play' | 'break' | 'sleep' | 'cap'.
@@ -134,7 +169,8 @@ class PlaySchedule:
         now = now or time.time()
         with self._lock:
             self._ensure_day(now)
-            if self._is_sleep_hour(time.localtime(now).tm_hour):
+            lt = time.localtime(now)
+            if self._is_sleep_minute(lt.tm_hour * 60 + lt.tm_min):
                 return "sleep"
             if self._matches_today >= self._today_cap:
                 return "cap"
@@ -150,7 +186,8 @@ class PlaySchedule:
         if st == "play":
             return True, "actif" if self.enabled else "schedule off"
         if st == "sleep":
-            return False, f"sommeil ({self.sleep_start}h–{self.sleep_end}h)"
+            return False, (f"sommeil ({_hhmm(self._today_sleep_start_min)}–"
+                           f"{_hhmm(self._today_sleep_end_min)})")
         if st == "cap":
             return False, f"quota du jour atteint ({self._matches_today}/{self._today_cap})"
         return False, "pause"
@@ -166,9 +203,10 @@ def get() -> PlaySchedule:
         with _GET_LOCK:
             if _SCHEDULE is None:
                 _SCHEDULE = PlaySchedule()
-                log.info("play schedule loaded: enabled=%s sleep=%dh-%dh "
+                log.info("play schedule loaded: enabled=%s sleep≈%dh-%dh±%dmin "
                          "block=%d-%dmin break=%d-%dmin cap≈%d±%d",
                          _SCHEDULE.enabled, _SCHEDULE.sleep_start, _SCHEDULE.sleep_end,
+                         _SCHEDULE.sleep_jitter,
                          _SCHEDULE.block_min, _SCHEDULE.block_max,
                          _SCHEDULE.break_min, _SCHEDULE.break_max,
                          _SCHEDULE.daily_cap, _SCHEDULE.cap_jitter)

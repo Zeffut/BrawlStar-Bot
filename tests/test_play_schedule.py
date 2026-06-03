@@ -6,6 +6,7 @@ from play_schedule import PlaySchedule
 CFG = {
     "enabled": True,
     "sleep_start_hour": 1, "sleep_end_hour": 9,
+    "sleep_jitter_minutes": 0,   # deterministic boundaries for the base tests
     "block_min_minutes": 40, "block_max_minutes": 85,
     "break_min_minutes": 20, "break_max_minutes": 70,
     "daily_match_cap": 180, "daily_cap_jitter": 50,
@@ -98,3 +99,42 @@ def test_wrapping_sleep_window():
     assert not s.should_play_now(_ts(2))[0]    # 02:30 — asleep
     assert not s.should_play_now(_ts(23))[0]   # 23:30 — asleep
     assert s.should_play_now(_ts(15))[0]       # 15:30 — active
+
+
+# ---- variable (jittered) bed/wake times ----
+
+def test_sleep_jitter_within_bounds():
+    s = PlaySchedule({**CFG, "sleep_jitter_minutes": 40})
+    s.state(_ts(3))                              # rolls today's window
+    # base 01:00 = 60 min, 09:00 = 540 min; each wobbles ±40.
+    assert 60 - 40 <= s._today_sleep_start_min <= 60 + 40
+    assert 540 - 40 <= s._today_sleep_end_min <= 540 + 40
+
+
+def test_sleep_jitter_deterministic_per_day_restart_stable():
+    # Two fresh instances (= a worker restart) must roll the SAME window and
+    # cap for a given day, so a restart never shifts the wake time nor re-rolls
+    # the daily cap (which could otherwise let the bot exceed it).
+    now = _ts(3)
+    a = PlaySchedule({**CFG, "sleep_jitter_minutes": 40})
+    b = PlaySchedule({**CFG, "sleep_jitter_minutes": 40})
+    a.state(now)
+    b.state(now)
+    assert a._today_sleep_start_min == b._today_sleep_start_min
+    assert a._today_sleep_end_min == b._today_sleep_end_min
+    assert a._today_cap == b._today_cap
+
+
+def test_sleep_jitter_varies_across_days():
+    s = PlaySchedule({**CFG, "sleep_jitter_minutes": 40})
+    windows = set()
+    for d in range(20):                          # 20 consecutive (forward) days
+        s.state(_ts(3) + d * 86400)
+        windows.add((s._today_sleep_start_min, s._today_sleep_end_min))
+    assert len(windows) > 1, "bed/wake times should differ day to day"
+
+
+def test_jitter_keeps_deep_window_and_far_outside_correct():
+    s = PlaySchedule({**CFG, "sleep_jitter_minutes": 40})
+    assert s.state(_ts(4)) == "sleep"            # 04:30 — deep inside even ±40
+    assert s.state(_ts(14)) == "play"            # 14:30 — far outside
