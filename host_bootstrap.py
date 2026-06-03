@@ -156,6 +156,22 @@ def _is_screen_locked(adb: str, serial: str) -> bool:
     return False
 
 
+def _set_min_brightness(adb: str, serial: str) -> None:
+    """Force minimum screen brightness + disable auto-brightness on a 24/7 farm
+    phone (battery saver). SAFE for the bot: it reads the framebuffer via
+    `screencap`, which is independent of display brightness — vision is
+    unaffected. Settings persist across reboots; applied at each boot for
+    robustness (in case MIUI/the user re-enables auto). Idempotent."""
+    try:
+        subprocess.run([adb, "-s", serial, "shell", "settings", "put", "system",
+                        "screen_brightness_mode", "0"], timeout=5, check=False)
+        subprocess.run([adb, "-s", serial, "shell", "settings", "put", "system",
+                        "screen_brightness", "1"], timeout=5, check=False)
+        log.info("display: min brightness + auto-brightness OFF (battery saver)")
+    except Exception:
+        log.debug("_set_min_brightness failed", exc_info=True)
+
+
 def _unlock_screen(adb: str, serial: str) -> None:
     """Wake screen + swipe up + enter PIN (if cfg/lockscreen.toml).
 
@@ -545,6 +561,9 @@ def _bootstrap_linux() -> bool:
     # 3a. Wake & unlock if needed. The keyguard wallpaper is misread
     # as "match" by state_finder, so we'd never make progress.
     _unlock_screen(adb, serial)
+    # Battery saver: minimum brightness + no auto-brightness (vision uses the
+    # framebuffer, so display brightness doesn't matter to the bot).
+    _set_min_brightness(adb, serial)
 
     # 3. Launch Brawl Stars via `am start`
     log.info("launching Brawl Stars")
