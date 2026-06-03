@@ -216,6 +216,11 @@ class GameAPI:
         self._brawler_cache: list[dict] = []
         self._brawler_cache_at: float = 0.0
         self._runner = None  # set by set_runner()
+        # True while the phone is DELIBERATELY powered down (schedule sleep/cap/
+        # break, or the battery saver). The idle watchdog stands down while set
+        # so it doesn't fight the power-save by relaunching BS / waking the
+        # screen. Set by enter_power_save(), cleared by exit_power_save().
+        self._power_save_active = False
 
     # ---- lifecycle ------------------------------------------------
 
@@ -412,6 +417,10 @@ class GameAPI:
         notably, and the OLED screen is the biggest culprit).
         """
         serial = device.adb_serial()
+        # Mark BEFORE touching the device so the idle watchdog (30s loop)
+        # can't sneak a goto_lobby/relaunch in between the force-stop and the
+        # screen-off (the flap we saw: break power-save undone within ~10s).
+        self._power_save_active = True
         try:
             subprocess.run(["adb", "-s", serial, "shell", "am", "force-stop",
                             "com.supercell.brawlstars"], timeout=5, check=False)
@@ -467,6 +476,10 @@ class GameAPI:
             log.info("power-save exited: screen on + unlocked + game launched")
         except Exception:
             log.exception("exit_power_save failed")
+        finally:
+            # Re-arm the idle watchdog only after the game is (re)launched, so
+            # it resumes its keep-at-lobby job for the active window.
+            self._power_save_active = False
 
     def wait_for_battery(self, max_wait_s: float = 3600, poll_s: float = 60) -> bool:
         """Block until battery is OK to play (or max_wait_s passes).
@@ -1235,6 +1248,13 @@ def _start_idle_watchdog(api: "GameAPI") -> None:
                 time.sleep(30)
                 # Skip if a session is running — runner owns the screen.
                 if api._runner is not None and api._runner.is_running():
+                    consecutive_failures = 0
+                    continue
+                # Stand down during a DELIBERATE power-save (schedule sleep/cap/
+                # break or battery saver): the screen is off / BS closed ON
+                # PURPOSE, so don't "recover" it by waking + relaunching (that
+                # flapped the break power-save off within ~10s).
+                if getattr(api, "_power_save_active", False):
                     consecutive_failures = 0
                     continue
                 st = api.state()
