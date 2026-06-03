@@ -297,6 +297,7 @@ def _try_resume_session(bot) -> None:
             per_brawler_max_trophies=state.get("per_brawler_max_trophies"),
             efficiency_ceiling=state.get("efficiency_ceiling"),
             last_equipped=state.get("last_equipped") or state.get("brawler"),
+            resume_account_trophies=state.get("account_trophies"),
             unselectable=state.get("unselectable"),
         )
         log.info("resume result: ok=%s msg=%s", ok, msg)
@@ -357,6 +358,7 @@ class BotRunner:
         # unselectable brawlers (8-bit/Arcade, tick) it fails outright. This is
         # deterministic (no OCR) so it works where _is_already_equipped doesn't.
         self._last_equipped: str | None = None
+        self._resume_account_trophies: int | None = None
         # True while a background brawlace re-sync is in flight — prevents two
         # concurrent fetches (a slow/504 fetch > BRAWLACE_SYNC_MIN_INTERVAL would
         # otherwise let a second one start and race the first on shared state).
@@ -383,6 +385,7 @@ class BotRunner:
               per_brawler_max_trophies: int | None = None,
               efficiency_ceiling: int | None = None,
               last_equipped: str | None = None,
+              resume_account_trophies: int | None = None,
               unselectable: list[str] | None = None) -> tuple[bool, str]:
         """Start a cycle.
 
@@ -466,6 +469,9 @@ class BotRunner:
             self._target_total_trophies = target_total_trophies
             self._last_brawlace_sync = 0.0   # force a sync on the first match
             self._last_equipped = last_equipped
+            # On resume, carry the delta-tracked account total forward instead of
+            # re-anchoring DOWN to brawlace (which lags reality) at every block.
+            self._resume_account_trophies = resume_account_trophies
             self._last_match_at = time.monotonic()   # watchdog (clock-jump safe)
             self._stuck_alerted = False
             # Persist the resume state so a restart can pick up where
@@ -482,6 +488,7 @@ class BotRunner:
                 "per_brawler_max_trophies": per_brawler_max_trophies,
                 "efficiency_ceiling": efficiency_ceiling,
                 "last_equipped": last_equipped,
+                "account_trophies": resume_account_trophies,
                 "owned_brawlers": owned_brawlers,
                 "unselectable": sorted(self._unselectable),
                 "started_at": time.time(),
@@ -946,6 +953,17 @@ class BotRunner:
                 self._account_trophies = sum(
                     b.get("trophies", 0) for b in profile.get("brawlers", [])
                 )
+                # On RESUME, don't re-anchor DOWN to brawlace: it lags reality by
+                # minutes-to-hours, so re-seeding at every 40-85 min block snapped
+                # the panel total back to brawlace's stale value and discarded the
+                # real gains since (the "~1000 trophy deficit"). Carry the
+                # delta-tracked total forward; brawlace stays an UPWARD floor (the
+                # post-match catch-up still raises us if we genuinely missed gains).
+                _carry = self._resume_account_trophies
+                if _carry and _carry > self._account_trophies:
+                    log.info("carry-forward account trophies: brawlace=%d < tracked=%d → keep tracked",
+                             self._account_trophies, _carry)
+                    self._account_trophies = int(_carry)
                 log.info("seeded account trophies: %d (sum of %d brawlers)",
                          self._account_trophies, len(profile.get("brawlers", [])))
         except Exception:
@@ -1056,6 +1074,9 @@ class BotRunner:
                 runner._resume_state["started_at"] = time.time()
                 runner._resume_state["brawler"] = current_brawler
                 runner._resume_state["last_equipped"] = current_brawler
+                # Persist the running total so a block restart carries it forward
+                # instead of snapping back to laggy brawlace.
+                runner._resume_state["account_trophies"] = runner._account_trophies
                 try:
                     _save_resume_state(runner._resume_state)
                 except Exception:
