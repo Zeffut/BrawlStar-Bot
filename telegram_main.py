@@ -199,10 +199,14 @@ def _clear_resume_state() -> None:
 
 
 def _manage_schedule_powersave(bot) -> None:
-    """Close Brawl Stars during the schedule's LONG pauses (sleep window / daily
-    cap) and reopen it on wake — runs from the keepalive EVERY tick, independent
-    of whether there's a session to resume (the bug: a multi-hour sleep left the
-    game open). Short in-session breaks leave the game up for a quick resume.
+    """Close Brawl Stars during ANY schedule pause (sleep window, daily cap, OR
+    a between-blocks break) and reopen it on resume — runs from the keepalive
+    EVERY tick, independent of whether there's a session to resume (the bug: a
+    pause left the game open with the screen on).
+
+    Breaks are 20–70 min, far too long to keep the screen on idling "for a quick
+    resume" — relaunching BS on resume costs ~15–30 s, negligible against the
+    battery a lit idle screen burns. So breaks power-save too.
 
     Does nothing while the bot is actively running (a block in progress)."""
     try:
@@ -227,8 +231,9 @@ def _manage_schedule_powersave(bot) -> None:
                 log.exception("schedule exit_power_save failed")
             bot.runner._power_saved = False
         return
-    # Paused. Close the game for the LONG pauses only.
-    if st in ("sleep", "cap") and not bot.runner._power_saved:
+    # Paused (sleep / daily cap / between-blocks break) → close the game and
+    # turn the screen off. A break is long enough (20–70 min) to be worth it.
+    if st in ("sleep", "cap", "break") and not bot.runner._power_saved:
         try:
             api.enter_power_save()
             bot.runner._power_saved = True
