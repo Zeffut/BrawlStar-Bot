@@ -1,7 +1,8 @@
 """PushMax strategy invariants — stickiness, tier ordering, stagnation."""
 from __future__ import annotations
 
-from push_max import PushMaxStrategy, get_tier, BrawlerState
+from push_max import (PushMaxStrategy, get_tier, BrawlerState,
+                      efficiency_score, TIER_PRIOR_NPM, SCORE_SHRINK_K)
 
 
 def test_tier_lookup():
@@ -256,3 +257,76 @@ def test_no_cap_keeps_pushing():
     s.pick_next()
     s.record_match("brock", "victory", 1600)
     assert not s.brawlers["brock"].exhausted       # only defeats/stagnation exhaust
+
+
+# --------------------------------------------------------- data-driven scoring
+
+
+def test_efficiency_score_no_data_is_tier_prior():
+    # With no match history a brawler is ranked purely on its tier prior.
+    for tier, prior in TIER_PRIOR_NPM.items():
+        assert efficiency_score(tier) == prior
+        assert efficiency_score(tier, net_per_match=None, matches=0) == prior
+
+
+def test_efficiency_score_shrinks_toward_prior():
+    # A small sample is pulled hard toward the prior; a large one barely.
+    prior = TIER_PRIOR_NPM["A"]  # 7.5
+    few = efficiency_score("A", net_per_match=12.0, matches=5)
+    many = efficiency_score("A", net_per_match=12.0, matches=200)
+    assert prior < few < 12.0
+    assert many > few               # more evidence → closer to the measured 12
+    assert abs(many - 12.0) < abs(few - 12.0)
+    # Exact shrinkage formula.
+    exp = (5 * 12.0 + SCORE_SHRINK_K * prior) / (5 + SCORE_SHRINK_K)
+    assert abs(few - exp) < 1e-9
+
+
+def test_score_overturns_tier_prior_with_real_data():
+    # A proven A-tier (lots of high net/match) out-ranks an unproven S-tier.
+    owned = [
+        {"name": "brock", "trophies": 200},    # S, no history → prior 8.5
+        {"name": "carl", "trophies": 200},     # A, but crushes it in practice
+    ]
+    stats = {"carl": {"matches": 80, "net_per_match": 12.0, "win_rate": 95}}
+    s = PushMaxStrategy.from_owned(owned, brawler_stats=stats)
+    assert s.brawlers["carl"].score > s.brawlers["brock"].score
+    assert s.pick_next().name == "carl"
+
+
+def test_underperforming_s_tier_drops_below_solid_c_tier():
+    # gus (C) with good realized numbers beats tick (S) that underperforms —
+    # exactly the real-data finding that motivated the rework.
+    owned = [
+        {"name": "tick", "trophies": 365},     # S prior, but mediocre in practice
+        {"name": "gus", "trophies": 331},      # C prior, but solid in practice
+    ]
+    stats = {
+        "tick": {"matches": 55, "net_per_match": 6.4, "win_rate": 64},
+        "gus":  {"matches": 35, "net_per_match": 7.5, "win_rate": 66},
+    }
+    s = PushMaxStrategy.from_owned(owned, brawler_stats=stats)
+    assert s.brawlers["gus"].score > s.brawlers["tick"].score
+    assert s.pick_next().name == "gus"
+
+
+def test_score_tiebreak_prefers_more_headroom():
+    # Equal scores (both no-data S) → lowest trophies wins (more headroom).
+    owned = [
+        {"name": "brock", "trophies": 600},
+        {"name": "bea", "trophies": 120},
+    ]
+    s = PushMaxStrategy.from_owned(owned)       # no stats → equal S priors
+    assert s.brawlers["brock"].score == s.brawlers["bea"].score
+    assert s.pick_next().name == "bea"
+
+
+def test_brawler_stats_key_normalization():
+    # Stats keyed with odd casing/spacing still match the owned brawler.
+    owned = [{"name": "8-bit", "trophies": 100}, {"name": "colt", "trophies": 100}]
+    stats = {"8-BIT": {"matches": 60, "net_per_match": 11.0, "win_rate": 85}}
+    s = PushMaxStrategy.from_owned(owned, brawler_stats=stats)
+    # 8-bit got the (higher) measured score; colt stays at its A prior.
+    assert s.brawlers["8-bit"].score > TIER_PRIOR_NPM["S"]
+    assert s.brawlers["colt"].score == TIER_PRIOR_NPM["A"]
+    assert s.pick_next().name == "8-bit"

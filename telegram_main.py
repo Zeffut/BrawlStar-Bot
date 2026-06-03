@@ -430,10 +430,21 @@ class BotRunner:
             if mode == "push_max":
                 if not owned_brawlers:
                     return False, "push_max needs the owned-brawlers list."
+                # Data-driven pick order: rank brawlers by their realized
+                # net/match from this account's local match history (shrunk
+                # toward the tier prior for small samples). Recomputed at every
+                # start/resume so it always reflects the latest performance.
+                brawler_stats = {}
+                if self._account_id is not None:
+                    try:
+                        brawler_stats = db.brawler_efficiency(self._account_id)
+                    except Exception:
+                        log.exception("push_max: brawler_efficiency lookup failed "
+                                      "— falling back to tier-prior order")
                 self._push_max = PushMaxStrategy.from_owned(
                     owned_brawlers, brawler_max_trophies=per_brawler_max_trophies,
                     efficiency_ceiling=(efficiency_ceiling or EFFICIENCY_CEILING),
-                    no_swap=False)
+                    no_swap=False, brawler_stats=brawler_stats)
                 # Pre-exhaust known-unselectable brawlers BEFORE picking the
                 # starter, so the bot doesn't open the session churning on one
                 # it can never select.

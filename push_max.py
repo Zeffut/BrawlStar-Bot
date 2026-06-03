@@ -10,15 +10,25 @@ Philosophy: **focus, don't shuffle**.
   - Stop the whole session when all brawlers are exhausted OR the
     global trophy target (set by the user) is reached.
 
-Skill tiers reflect the Pyla AI vision/control loop's strengths:
+Pick order is **data-driven**: we rank brawlers by what they ACTUALLY net
+per match on this account (from the local match history), not by a guess.
+Each brawler gets a `score` ≈ its expected net-trophies-per-match, computed
+by shrinking the measured net/match toward a tier prior in proportion to how
+few matches we've seen (empirical-Bayes style):
+
+    score = (matches * net_per_match + K * tier_prior) / (matches + K)
+
+So a brawler with lots of history is ranked on its real numbers; one we've
+barely played falls back to its tier prior. The hand-picked Pyla skill tiers
+below are now only that PRIOR (the cold-start guess), no longer the ordering:
   - S: long-range projectile, large hitbox auto-aim friendly
   - A: medium-range reliable shots
   - B: melee / mid-skill positioning required
   - C: complex skill-shots / mechanics Pyla doesn't model well
 
-Within a tier we play the highest-trophy brawler first (its loss curve
-hurts more if we wait). Lower tiers only kick in after higher ones are
-all exhausted, never as a fallback during the same brawler's grind.
+pick_next sorts by score desc, then lowest trophies (most headroom) as a
+tiebreak. The measured numbers regularly overturn the priors — e.g. carl/
+jessie/maisie (A) out-net several S brawlers, and gus (C) beats tick (S).
 """
 from __future__ import annotations
 
@@ -62,9 +72,20 @@ BRAWLER_TIERS: dict[str, str] = {
 }
 TIER_ORDER = {"S": 0, "A": 1, "B": 2, "C": 3}
 
+# Cold-start prior for a brawler's expected net trophies per match, by tier.
+# Used as the shrinkage target so a brawler with no/few matches is ranked by
+# its tier guess, while one with lots of history is ranked on its real
+# net/match. Values are on the same scale as a measured net_per_match
+# (the fleet median sits around ~7.5); the modest spread lets real data
+# overturn the prior quickly once a brawler has been played a few dozen times.
+TIER_PRIOR_NPM = {"S": 8.5, "A": 7.5, "B": 6.5, "C": 6.0}
+# Shrinkage strength: a brawler needs ~this many matches before its measured
+# net/match outweighs the tier prior. 15 ≈ a couple of grind blocks.
+SCORE_SHRINK_K = 15
+
 # Above this trophy count, pushing gets inefficient (matches lose ~as much as
 # they gain). push_max only considers brawlers BELOW this ceiling, and among
-# those prefers the HIGHER tier (Pyla wins more with S/A → climbs further).
+# those prefers the HIGHER score (best realized net/match → climbs further).
 EFFICIENCY_CEILING = 750
 
 
@@ -72,11 +93,29 @@ def get_tier(name: str) -> str:
     return BRAWLER_TIERS.get(name.lower().strip(), "B")
 
 
+def efficiency_score(tier: str, net_per_match: float | None = None,
+                     matches: int = 0, k: int = SCORE_SHRINK_K) -> float:
+    """Expected net-trophies-per-match for a brawler, used as the pick rank.
+
+    Shrinks the measured `net_per_match` toward the tier prior in proportion
+    to the sample size: with 0 matches it's exactly the prior, with many it's
+    essentially the measured value. Higher = grind this first.
+    """
+    prior = TIER_PRIOR_NPM.get(tier, 6.5)
+    if not net_per_match or matches <= 0:
+        return prior
+    return (matches * float(net_per_match) + k * prior) / (matches + k)
+
+
 @dataclass
 class BrawlerState:
     name: str
     trophies: int
     tier: str = "B"
+    # Data-driven pick priority (expected net trophies/match). Defaults to the
+    # tier prior; overridden with the shrunk measured value when match history
+    # is supplied to from_owned. Higher = picked first.
+    score: float = 0.0
     defeat_streak: int = 0
     matches_played: int = 0
     exhausted: bool = False
@@ -123,18 +162,34 @@ class PushMaxStrategy:
                    defeat_limit: int = DEFAULT_DEFEAT_LIMIT,
                    brawler_max_trophies: int | None = None,
                    efficiency_ceiling: int = EFFICIENCY_CEILING,
-                   no_swap: bool = False) -> "PushMaxStrategy":
-        """Build a strategy from the brawlace `fetch_owned_brawlers` list."""
+                   no_swap: bool = False,
+                   brawler_stats: dict[str, dict] | None = None) -> "PushMaxStrategy":
+        """Build a strategy from the brawlace `fetch_owned_brawlers` list.
+
+        `brawler_stats` (optional) is the realized per-brawler history keyed by
+        lowercased name — `{matches, net_per_match, ...}` from
+        `db.brawler_efficiency`. When given, each brawler's pick `score` is the
+        measured net/match shrunk toward its tier prior; without it, the score
+        is just the tier prior (so the order degrades gracefully to tier order).
+        """
+        stats = {k.lower().strip(): v for k, v in (brawler_stats or {}).items()}
         state = cls(defeat_limit=defeat_limit,
                     brawler_max_trophies=brawler_max_trophies,
                     efficiency_ceiling=efficiency_ceiling,
                     no_swap=no_swap)
         for b in owned:
             name = b["name"]
+            tier = get_tier(name)
+            st = stats.get(name.lower().strip())
             bs = BrawlerState(
                 name=name,
                 trophies=b.get("trophies", 0),
-                tier=get_tier(name),
+                tier=tier,
+                score=efficiency_score(
+                    tier,
+                    net_per_match=(st or {}).get("net_per_match"),
+                    matches=(st or {}).get("matches", 0),
+                ),
             )
             # Already at/above the cap → don't bother picking it.
             if brawler_max_trophies is not None and bs.trophies >= brawler_max_trophies:
@@ -148,23 +203,26 @@ class PushMaxStrategy:
             # select one, the runtime _unselectable_brawlers handling marks it
             # exhausted after a single failed attempt (no infinite loop).
             state.brawlers[name] = bs
-        log.info("PushMax built with %d brawlers (S=%d A=%d B=%d C=%d)",
-                 len(state.brawlers),
-                 sum(1 for b in state.brawlers.values() if b.tier == "S"),
-                 sum(1 for b in state.brawlers.values() if b.tier == "A"),
-                 sum(1 for b in state.brawlers.values() if b.tier == "B"),
-                 sum(1 for b in state.brawlers.values() if b.tier == "C"))
+        n_stats = sum(1 for b in owned if b["name"].lower().strip() in stats)
+        top = sorted(
+            (b for b in state.brawlers.values()
+             if b.trophies < efficiency_ceiling and not b.exhausted),
+            key=lambda b: -b.score,
+        )[:6]
+        log.info("PushMax built with %d brawlers (%d with history); "
+                 "pick order (below %d): %s",
+                 len(state.brawlers), n_stats, efficiency_ceiling,
+                 ", ".join(f"{b.name}[{b.tier}]={b.score:.1f}" for b in top))
         return state
 
     def pick_next(self) -> BrawlerState | None:
-        """Return the brawler to play, prioritising the *easiest* trophies.
+        """Return the brawler to play, prioritising the best realized net/match.
 
-        Push brawlers with positive expected gain first (below the
-        diminishing-returns ceiling) — that grows the account total fastest.
-        A brawler above the ceiling (e.g. a 900+ brock, where a match loses
-        more than it gains) is only touched if nothing easier is left.
-        Stickiness: keep the current brawler while it's still below the
-        ceiling and not exhausted.
+        Only brawlers below the diminishing-returns ceiling are considered
+        (above it a match loses ~as much as it gains). Among those we pick the
+        highest `score` (data-driven expected net trophies/match), then the
+        lowest trophies as a tiebreak (most headroom). Stickiness: keep the
+        current brawler while it's still below the ceiling and not exhausted.
         """
         # Stay-on-equipped: never navigate the brawler menu. Once a `current`
         # brawler is set, always return it (until its cap/the global target
@@ -191,18 +249,19 @@ class PushMaxStrategy:
                      "(%d above-ceiling ignored) → stopping",
                      self.efficiency_ceiling, len(candidates))
             return None
-        # Tier FIRST (S > A > B > C — Pyla wins more with higher tiers, so they
-        # climb further and more reliably), then lowest trophies within a tier
-        # (most headroom / easiest). This is why we don't grind an A at 100
-        # while an S below the ceiling is still available.
-        easy.sort(key=lambda b: (TIER_ORDER.get(b.tier, 99), b.trophies))
+        # SCORE FIRST (highest realized net/match → grows the account fastest),
+        # then lowest trophies as a tiebreak (most headroom, grind it longer
+        # before it climbs past the ceiling). The score already folds in tier
+        # as a prior, so a proven A out-ranks an unproven S.
+        easy.sort(key=lambda b: (-b.score, b.trophies))
         winner = easy[0]
         self.current = winner.name
         if not winner.locked:
             winner.locked = True
             winner.start_trophies = winner.trophies
-        log.info("PushMax pick: %s [%s tier] trophies=%d (remaining=%d)",
-                 winner.name, winner.tier, winner.trophies, len(candidates))
+        log.info("PushMax pick: %s [%s tier score=%.1f] trophies=%d (remaining=%d)",
+                 winner.name, winner.tier, winner.score, winner.trophies,
+                 len(candidates))
         return winner
 
     def record_match(self, brawler: str, result: str,

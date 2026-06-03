@@ -243,6 +243,50 @@ def win_rate_by_brawler(account_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def brawler_efficiency(account_id: int, days: int = 30,
+                       now: float | None = None) -> dict[str, dict]:
+    """Per-brawler realized performance over the last `days`, keyed by brawler.
+
+    Returns ``{brawler_lower: {matches, wins, net, net_per_match, win_rate}}``
+    where `net` sums the per-match trophy delta (after-before) — the true
+    realized gain, accurate even when absolute counts are noisy.
+
+    This feeds push_max's data-driven pick order: instead of trusting the
+    hand-picked Pyla skill tiers, we rank brawlers by what they ACTUALLY net
+    per match on this account (shrunk toward the tier prior for small samples,
+    done in push_max). Only matches with both trophy endpoints are counted.
+    """
+    now = now or time.time()
+    since = now - days * 86400
+    with _lock:
+        rows = conn().execute(
+            "SELECT brawler, "
+            "       COUNT(*) AS matches, "
+            "       SUM(result='victory') AS wins, "
+            "       SUM(COALESCE(trophies_after,0) - COALESCE(trophies_before,0)) AS net "
+            "FROM matches "
+            "WHERE account_id = ? AND timestamp >= ? "
+            "  AND trophies_before IS NOT NULL AND trophies_after IS NOT NULL "
+            "GROUP BY brawler",
+            (account_id, since),
+        ).fetchall()
+    out: dict[str, dict] = {}
+    for r in rows:
+        m = r["matches"] or 0
+        if m <= 0:
+            continue
+        net = int(r["net"] or 0)
+        wins = int(r["wins"] or 0)
+        out[r["brawler"].lower().strip()] = {
+            "matches": m,
+            "wins": wins,
+            "net": net,
+            "net_per_match": round(net / m, 2),
+            "win_rate": round(wins / m * 100),
+        }
+    return out
+
+
 # ----------------------------------------------------------------- events
 
 
