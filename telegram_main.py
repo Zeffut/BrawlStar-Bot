@@ -198,6 +198,50 @@ def _clear_resume_state() -> None:
         log.exception("clear_resume_state failed")
 
 
+def _manage_schedule_powersave(bot) -> None:
+    """Close Brawl Stars during the schedule's LONG pauses (sleep window / daily
+    cap) and reopen it on wake — runs from the keepalive EVERY tick, independent
+    of whether there's a session to resume (the bug: a multi-hour sleep left the
+    game open). Short in-session breaks leave the game up for a quick resume.
+
+    Does nothing while the bot is actively running (a block in progress)."""
+    try:
+        if bot.runner.is_running():
+            return
+        st = play_schedule.get().state()
+    except Exception:
+        return
+    import game_api as _ga
+    api = _ga.get()
+    if api is None:
+        return
+    if st == "play":
+        # Window reopened / break over / new day: reopen the game if we'd closed
+        # it (wake screen, unlock, relaunch BS). The actual resume is done right
+        # after by _try_resume_session.
+        if bot.runner._power_saved:
+            try:
+                api.exit_power_save()
+                log.info("play schedule: waking — power-save exited (Brawl Stars relaunching)")
+            except Exception:
+                log.exception("schedule exit_power_save failed")
+            bot.runner._power_saved = False
+        return
+    # Paused. Close the game for the LONG pauses only.
+    if st in ("sleep", "cap") and not bot.runner._power_saved:
+        try:
+            api.enter_power_save()
+            bot.runner._power_saved = True
+            log.info("play schedule: %s → power-save (Brawl Stars closed, screen off)", st)
+        except Exception:
+            log.exception("schedule enter_power_save failed")
+    label = {"sleep": "sommeil", "cap": "quota du jour", "break": "pause"}.get(st, st)
+    try:
+        _set_activity(f"💤 Pause — {label}")
+    except Exception:
+        pass
+
+
 def _try_resume_session(bot) -> None:
     """Re-launch the last task if the bot was interrupted mid-session."""
     state = _load_resume_state()
@@ -209,43 +253,15 @@ def _try_resume_session(bot) -> None:
     # Humane schedule gate: don't auto-resume during the sleep window, an active
     # break, or once the daily match cap is hit. The resume state is KEPT so the
     # next keepalive tick (inside the active window, break over) picks it up.
+    # Closing/reopening the game during these pauses is handled separately by
+    # _manage_schedule_powersave (runs from the keepalive even when there's no
+    # session to resume), so it isn't gated behind this resume flow.
     try:
-        _sched = play_schedule.get()
-        _st = _sched.state()
-        _ok, _why = _sched.should_play_now()
+        if play_schedule.get().state() != "play":
+            log.debug("resume: held by play schedule")
+            return
     except Exception:
-        _st, _ok, _why = "play", True, ""
-    if not _ok:
-        # LONG pause (sleep window / daily cap): close Brawl Stars + screen off,
-        # like a human stopping for the night — leaving the game open all night
-        # is itself a bot tell and drains the battery. A short BREAK leaves it
-        # open (quick resume). Idempotent via _power_saved.
-        if _st in ("sleep", "cap") and not bot.runner._power_saved:
-            try:
-                import game_api as _ga
-                _api = _ga.get()
-                if _api is not None:
-                    _api.enter_power_save()
-                    bot.runner._power_saved = True
-                    log.info("play schedule: %s → power-save (Brawl Stars closed, screen off)", _st)
-            except Exception:
-                log.exception("schedule enter_power_save failed")
-        log.info("resume: held by play schedule (%s)", _why)
-        try: _set_activity(f"💤 Pause — {_why}")
-        except Exception: pass
-        return
-    # Waking up (window open / break over / new day): if we'd closed the game for
-    # a long pause, reopen it (wake screen, unlock, relaunch BS) before resuming.
-    if bot.runner._power_saved:
-        try:
-            import game_api as _ga
-            _api = _ga.get()
-            if _api is not None:
-                _api.exit_power_save()
-                log.info("play schedule: waking — power-save exited (Brawl Stars relaunching)")
-        except Exception:
-            log.exception("schedule exit_power_save failed")
-        bot.runner._power_saved = False
+        pass
     mode = state.get("mode") or "single"
     log.info("RESUMING %s session (started %.0fs ago): brawler=%s target_total=%s",
              mode, time.time() - state.get("started_at", 0),
@@ -1880,6 +1896,9 @@ def main() -> int:
             time.sleep(150)
             try:
                 if _ga.get() is not None:
+                    # Close/reopen the game per the humane schedule (sleep/cap),
+                    # independent of whether there's a session to resume.
+                    _manage_schedule_powersave(bot)
                     _try_resume_session(bot)
             except Exception:
                 log.exception("session-keepalive iteration crashed")
