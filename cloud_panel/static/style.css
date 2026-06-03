@@ -1212,10 +1212,17 @@ main {
    activity fill the 2-col row below, so no empty cell ("hole") is left. */
 .chart-card.chart-wide,
 .list-card.chart-wide { grid-column: 1 / -1; }
-/* Full-width efficiency table fills its (now full-width) card instead of
-   hugging the left and leaving a big empty gap on the right. */
-#brawler-eff-table { width: 100%; }
-#brawler-eff-table th, #brawler-eff-table td { white-space: nowrap; }
+/* Efficiency table fills its full-width card with EVENLY-distributed, aligned
+   columns. The generic ".list-card table { display:block }" (used for internal
+   scroll elsewhere) breaks column distribution → columns bunched left with a big
+   empty gap. Force display:table + table-layout:fixed so the 7 columns split the
+   full width cleanly; first column 22%, the other 6 share the rest (~13% each).
+   No internal scroll — the card sizes to its rows and the detail page scrolls. */
+#brawler-eff-card { max-height: none; overflow: visible; }
+#brawler-eff-table { display: table; width: 100%; table-layout: fixed; }
+#brawler-eff-table th, #brawler-eff-table td {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 #brawler-eff-table th:first-child, #brawler-eff-table td:first-child { width: 22%; }
 
 /* Fleet overview. The dashboard fills #account-detail EXACTLY (height:100%) and
