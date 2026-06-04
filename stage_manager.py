@@ -153,6 +153,34 @@ class StageManager:
                     pass
                 self.Lobby_automation.select_brawler(next_brawler_name)
 
+        # Reconcile the recorded brawler with what's ACTUALLY equipped before
+        # we tap PLAY. The brawler-menu OCR can tap the wrong card, or the
+        # EQUIP tap can miss — in which case BS silently keeps the PREVIOUS
+        # brawler. We'd then label AND (worse) record the match under the
+        # INTENDED brawler ("Playing as carl" while jessie is equipped),
+        # polluting the per-brawler stats that feed the data-driven pick order.
+        # We're at the lobby here (PLAY only works at the lobby), so the name
+        # above the PLAY button is readable. A None / unreadable read means
+        # "can't tell" → keep the intended name; only a confident match to a
+        # DIFFERENT owned brawler triggers a correction.
+        try:
+            import game_api
+            from lobby_automation import resolve_equipped_to_canonical
+            api = game_api.get()
+            equipped_ocr = api.read_current_brawler() if api else None
+            roster = getattr(self, "_owned_brawler_names", None)
+            canonical = (resolve_equipped_to_canonical(equipped_ocr, roster)
+                         if equipped_ocr else None)
+            if canonical:
+                intended = self.brawlers_pick_data[0]['brawler']
+                if canonical.strip().lower() != (intended or "").strip().lower():
+                    log.warning("brawler reconcile: intended=%r but equipped reads "
+                                "%r → recording/labelling as %r",
+                                intended, equipped_ocr, canonical)
+                    self.brawlers_pick_data[0]['brawler'] = canonical
+        except Exception:
+            log.debug("brawler reconcile failed", exc_info=True)
+
         self.window_controller.keys_up(list("wasd"))
         self.window_controller.press_key("Q")
 

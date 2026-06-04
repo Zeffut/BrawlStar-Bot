@@ -713,6 +713,11 @@ class BotRunner:
                 _self.Time_management = TimeManagement()
                 _self.lobby_automator = _SHARED_RUNTIME.get("la") or LobbyAutomation(_self.window_controller)
                 _self.Stage_manager = StageManager(data, _self.lobby_automator, _self.window_controller)
+                # Give the stage manager the owned-brawler roster so start_game
+                # can reconcile the recorded brawler against what's actually
+                # equipped (canonical-name mapping needs the candidate list).
+                if self._push_max is not None:
+                    _self.Stage_manager._owned_brawler_names = list(self._push_max.brawlers.keys())
                 _self.states_requiring_data = ["lobby"]
                 _no_swap = bool(self._push_max and self._push_max.no_swap)
                 if _no_swap:

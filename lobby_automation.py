@@ -75,6 +75,47 @@ def _fr_aliases(brawler: str) -> list[str]:
         return []
     return [v] if isinstance(v, str) else list(v)
 
+
+def resolve_equipped_to_canonical(ocr_name, candidates) -> "str | None":
+    """Map an OCR'd equipped-brawler name (English OR French) back to the
+    canonical English name from `candidates` (the owned-brawler roster).
+
+    For each candidate we try its English name AND its French alias(es),
+    matching against the OCR string accent/punctuation-insensitively. Used to
+    reconcile what the bot THINKS it equipped (the intended pick) with what BS
+    actually shows above the PLAY button — so a mis-tapped / missed selection
+    doesn't get the match recorded under the wrong brawler.
+
+    Returns the best-matching canonical name (Ratcliff/Obershelp ratio ≥ 0.7),
+    or None when nothing matches confidently. None means "can't tell" — the
+    caller MUST keep the intended name and never treat None as a mismatch."""
+    if not ocr_name or not candidates:
+        return None
+    target = _normalize_name(ocr_name)
+    # A 1–2 char OCR token is too ambiguous to map safely (it would fuzzy-hit
+    # half the roster) — bail rather than reconcile to a wrong brawler.
+    if len(target) < 3:
+        return None
+    best = None  # (ratio, canonical)
+    for canon in candidates:
+        for nm in [canon, *_fr_aliases(canon)]:
+            n = _normalize_name(nm)
+            if not n:
+                continue
+            # Exact normalized match wins outright.
+            if n == target:
+                return canon
+            # The full candidate name appears inside the OCR token (OCR often
+            # fuses the trophy badge onto the name: 'corbac' → 'corbac1234').
+            # Only this direction is safe (a short token inside a long name is
+            # the unsafe direction that lets 'bo' match 'bonnie').
+            if len(n) >= 3 and n in target:
+                return canon
+            ratio = difflib.SequenceMatcher(None, target, n).ratio()
+            if ratio >= 0.7 and (best is None or ratio > best[0]):
+                best = (ratio, canon)
+    return best[1] if best else None
+
 class LobbyAutomation:
 
     def __init__(self, window_controller):
