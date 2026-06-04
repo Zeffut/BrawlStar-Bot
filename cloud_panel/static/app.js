@@ -1400,9 +1400,12 @@ let _sessionActive = false;
 let _instanceCharging = false;
 
 // Buttons that mustn't run during a session (could derail the bot).
+// NOTE: "gc-capture" is deliberately NOT here — a screenshot is read-only
+// (GET /screenshot, ADB screencap, no taps) so it's always safe, and being
+// able to grab a frame *during* a push is exactly how you check the bot.
 const SESSION_GUARDED_BUTTONS = [
   "gc-play-one", "gc-goto-lobby", "gc-refresh-state",
-  "gc-refresh-brawlers", "gc-capture",
+  "gc-refresh-brawlers",
 ];
 const SESSION_GUARDED_SELECTS = ["gc-brawler-select"];
 // Also gate the top-bar action: starting a new session while the
