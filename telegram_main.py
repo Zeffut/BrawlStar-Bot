@@ -276,6 +276,20 @@ def _manage_schedule_powersave(bot) -> None:
         pass
 
 
+def _resolve_account_id(accounts: "list[dict]", serial: "str | None") -> "int | None":
+    """Resolve which account id this worker should grind under.
+
+    Prefer an exact device-serial match; otherwise, on a single-account worker
+    (exactly one row), use that sole account. Returns None when the choice is
+    ambiguous (0 or >1 accounts and no serial match) — the caller must then
+    DEFER rather than grind un-persisted.
+    """
+    match = next((a for a in accounts if a.get("device_serial") == serial), None)
+    if match is None and len(accounts) == 1:
+        match = accounts[0]
+    return match["id"] if match else None
+
+
 def _try_resume_session(bot) -> None:
     """Re-launch the last task if the bot was interrupted mid-session."""
     state = _load_resume_state()
@@ -296,6 +310,26 @@ def _try_resume_session(bot) -> None:
             return
     except Exception:
         pass
+    # Bind the account BEFORE building the session. _bootstrap_account runs in a
+    # separate thread and can lose the cold-boot race against this resume (e.g.
+    # the HP reboots and the WiFi-ADB / brawlace fetch lags), leaving
+    # runner._account_id None — which SILENTLY disables match persistence AND
+    # the data-driven pick order (db.start_session, brawler_efficiency and
+    # log_match are ALL gated on _account_id), so the bot grinds for hours
+    # recording nothing and on tier-prior order. Resolve it here from the local
+    # DB (populated by any prior run); defer the resume if we can't yet.
+    if bot.runner._account_id is None:
+        try:
+            _serial = device.adb_serial()
+        except Exception:
+            _serial = None
+        _aid = _resolve_account_id(db.list_accounts(), _serial)
+        if _aid is None:
+            log.warning("resume: account not yet bound and not resolvable from "
+                        "local DB — deferring (retried next keepalive tick)")
+            return
+        bot.runner._account_id = _aid
+        log.info("resume: bound account id=%s before start (bootstrap-race fix)", _aid)
     mode = state.get("mode") or "single"
     log.info("RESUMING %s session (started %.0fs ago): brawler=%s target_total=%s",
              mode, time.time() - state.get("started_at", 0),
