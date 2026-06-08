@@ -433,7 +433,7 @@ class PlaySchedule:
         if st == "play":
             return True, "actif" if self.enabled else "schedule off"
         if st == "sleep":
-            return False, (f"sommeil ({_hhmm(self._today_sleep.start_min)}–"
+            return False, (f"sommeil ({_hhmm(self._today_sleep.start_min)}-"
                            f"{_hhmm(self._today_sleep.end_min)})")
         if st == "pause":
             return False, f"pause ({self._active_pause_label})"
@@ -454,13 +454,13 @@ def get() -> PlaySchedule:
         with _GET_LOCK:
             if _SCHEDULE is None:
                 _SCHEDULE = PlaySchedule()
-                log.info("play schedule loaded: enabled=%s sleep≈%dh-%dh±%dmin "
-                         "block=%d-%dmin break=%d-%dmin cap≈%d±%d blocks≈%s "
+                log.info("play schedule loaded: enabled=%s sleep~%dh-%dh+-%dmin "
+                         "block=%d-%dmin break=%d-%dmin cap~%d+-%d blocks~%s "
                          "pause_windows=%d dayoff_days=%s chance=%.2f",
                          _SCHEDULE.enabled, _SCHEDULE.sleep_start, _SCHEDULE.sleep_end,
                          _SCHEDULE.sleep_jitter, _SCHEDULE.block_min, _SCHEDULE.block_max,
                          _SCHEDULE.break_min, _SCHEDULE.break_max,
                          _SCHEDULE.daily_cap, _SCHEDULE.cap_jitter,
-                         _SCHEDULE.max_blocks or "∞", len(_SCHEDULE.pause_windows_cfg),
+                         _SCHEDULE.max_blocks or "inf", len(_SCHEDULE.pause_windows_cfg),
                          _SCHEDULE.dayoff_weekdays, _SCHEDULE.dayoff_chance)
     return _SCHEDULE
