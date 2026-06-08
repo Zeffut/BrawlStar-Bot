@@ -874,6 +874,7 @@ function openDeviceConsoleForInstance(instanceId, instanceUid) {
   document.getElementById("device-panel").hidden = false;
   deviceConsoleOpen = true;
   refreshDevicePanelForInstance(instanceId);
+  loadSchedule();
   if (deviceTimer) clearInterval(deviceTimer);
   deviceTimer = setInterval(() => refreshDevicePanelForInstance(instanceId), 5000);
   _startStream(instanceId);   // live ~13fps stream
@@ -911,6 +912,7 @@ async function refreshDevicePanel() {
     api(`/api/instances/${inst.id}/logs?limit=120`).catch(() => []),
   ]);
   _renderDevicePanel(healthRes, logsRes, {available: false});
+  loadSchedule();
 }
 
 function _renderDevicePanel(healthRes, logsRes, shotRes) {
@@ -1865,6 +1867,67 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
     }
     gcRefreshAll();
   }));
+
+// ----------------- Play-schedule editor -----------------
+
+const SCHED_TEMPLATE = `# Overrides du planning (cfg/schedule.local.toml) — vide = défauts commités.
+# Mêmes clés que [schedule] de general_config.toml. Appliqué à chaud (~10s).
+[schedule]
+# daily_match_cap = 150
+# dayoff_weekdays = ["sunday"]
+#
+# [[schedule.pause_windows]]
+# start = "12:30"
+# end = "13:15"
+# label = "dejeuner"
+`;
+
+async function loadSchedule() {
+  if (!selectedInstanceForDevice) return;
+  const st = document.getElementById("sched-status");
+  if (st) st.textContent = "chargement…";
+  try {
+    const r = await api(`/api/instances/${selectedInstanceForDevice}/schedule`);
+    if (r.ok && r.data) {
+      const d = r.data;
+      document.getElementById("sched-toml").value = (d.raw && d.raw.trim()) ? d.raw : SCHED_TEMPLATE;
+      const e = d.effective || {};
+      document.getElementById("sched-effective").textContent = e.error
+        ? ("erreur: " + e.error)
+        : `état=${e.state} · sommeil ${e.sleep} · quota ${e.matches_today}/${e.today_cap}`
+          + ` · blocs ${e.blocks_today}/${e.today_block_cap || "∞"} · pauses ${e.pause_windows}`
+          + (e.is_dayoff ? " · JOUR DE REPOS" : "");
+      if (st) st.textContent = "";
+    } else {
+      if (st) st.textContent = "❌ " + (r.error || "indisponible");
+    }
+  } catch (err) {
+    if (st) st.textContent = "❌ " + err.message;
+  }
+}
+
+async function saveSchedule() {
+  if (!selectedInstanceForDevice) return;
+  const toml = document.getElementById("sched-toml").value;
+  const st = document.getElementById("sched-status");
+  st.textContent = "envoi…";
+  try {
+    const r = await api(`/api/instances/${selectedInstanceForDevice}/schedule`,
+                        {method: "PUT", body: {toml}});
+    const d = r.data || {};
+    if (r.ok && d.ok) {
+      st.textContent = "✅ appliqué (à chaud sous ~10s)";
+      setTimeout(loadSchedule, 1500);
+    } else {
+      st.textContent = "❌ " + (d.error || r.error || "échec");
+    }
+  } catch (err) {
+    st.textContent = "❌ " + err.message;
+  }
+}
+
+document.getElementById("sched-load")?.addEventListener("click", loadSchedule);
+document.getElementById("sched-save")?.addEventListener("click", saveSchedule);
 
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();

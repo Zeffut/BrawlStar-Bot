@@ -307,6 +307,17 @@
             <h4>Logs <span class="muted" id="logs-count"></span></h4>
             <pre id="device-logs"></pre>
           </div>
+          <div class="device-card" style="grid-column:1/-1">
+            <h4>Planning (play-schedule)</h4>
+            <p class="muted" style="font-size:11px;margin:0 0 8px">Édite les overrides du planning (cfg/schedule.local.toml). Vide = défauts. Appliqué sans redémarrage.</p>
+            <pre id="sched-effective" style="font-size:11px;background:#0d1117;border:1px solid #2a3445;border-radius:6px;padding:8px;margin-bottom:10px;white-space:pre-wrap;word-break:break-word">—</pre>
+            <textarea id="sched-toml" rows="14" spellcheck="false" style="width:100%;box-sizing:border-box;font-family:'JetBrains Mono',monospace;font-size:12px;background:#0d1117;color:#c4ccd8;border:1px solid #2a3445;border-radius:6px;padding:8px;resize:vertical"></textarea>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+              <button class="header-btn" id="sched-load">↻ Recharger</button>
+              <button class="header-btn primary" id="sched-save">Appliquer (à chaud)</button>
+              <span id="sched-status" class="muted" style="font-size:12px"></span>
+            </div>
+          </div>
         </div>
       </section>
 

@@ -1066,6 +1066,37 @@ async def api_instance_cmd(instance_db_id: int, payload: CommandPayload) -> dict
         return {"ok": False, "error": str(exc)}
 
 
+class SchedulePayload(BaseModel):
+    toml: str = ""
+
+
+@app.get("/api/instances/{instance_db_id}/schedule")
+async def api_instance_schedule_get(instance_db_id: int) -> dict:
+    """Read the worker's play-schedule (local override raw TOML + effective)."""
+    inst_id = _resolve_instance(instance_db_id)
+    if not inst_id:
+        raise HTTPException(404, "instance not found")
+    try:
+        data = await HUB.send_command(inst_id, "schedule_get", {}, timeout_s=12)
+        return {"ok": True, "data": data}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.put("/api/instances/{instance_db_id}/schedule")
+async def api_instance_schedule_put(instance_db_id: int, payload: SchedulePayload) -> dict:
+    """Write the worker's play-schedule local override (hot-reloaded ~10s)."""
+    inst_id = _resolve_instance(instance_db_id)
+    if not inst_id:
+        raise HTTPException(404, "instance not found")
+    try:
+        data = await HUB.send_command(inst_id, "schedule_set",
+                                      {"toml": payload.toml}, timeout_s=12)
+        return {"ok": True, "data": data}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 @app.get("/api/instances/{instance_db_id}/screenshot")
 async def api_instance_screenshot(instance_db_id: int, refresh: bool = False) -> dict:
     """Return the last screenshot pushed by the worker.
