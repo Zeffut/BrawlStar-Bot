@@ -27,6 +27,7 @@
   </div>
   <div style="display:flex;gap:8px;align-items:center">
     <button id="btn-fleet-overview" class="header-btn" title="Vue d'ensemble de la flotte">🛰️ Flotte</button>
+    <button id="btn-planning" class="header-btn" title="Planning de jeu global">⏰ Planning</button>
     <button id="btn-global-config" class="header-btn" title="Global panel configuration">⚙️ Global Config</button>
     <button id="sidebar-toggle" class="sidebar-toggle" title="Show/hide instances" aria-label="toggle sidebar">☰</button>
   </div>
@@ -307,17 +308,6 @@
             <h4>Logs <span class="muted" id="logs-count"></span></h4>
             <pre id="device-logs"></pre>
           </div>
-          <div class="device-card" style="grid-column:1/-1">
-            <h4>Planning (play-schedule)</h4>
-            <p class="muted" style="font-size:11px;margin:0 0 8px">Édite les overrides du planning (cfg/schedule.local.toml). Vide = défauts. Appliqué sans redémarrage.</p>
-            <pre id="sched-effective" style="font-size:11px;background:#0d1117;border:1px solid #2a3445;border-radius:6px;padding:8px;margin-bottom:10px;white-space:pre-wrap;word-break:break-word">—</pre>
-            <textarea id="sched-toml" rows="14" spellcheck="false" style="width:100%;box-sizing:border-box;font-family:'JetBrains Mono',monospace;font-size:12px;background:#0d1117;color:#c4ccd8;border:1px solid #2a3445;border-radius:6px;padding:8px;resize:vertical"></textarea>
-            <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-              <button class="header-btn" id="sched-load">↻ Recharger</button>
-              <button class="header-btn primary" id="sched-save">Appliquer (à chaud)</button>
-              <span id="sched-status" class="muted" style="font-size:12px"></span>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -340,6 +330,237 @@
     </div>
   </section>
 </main>
+
+<!-- ===================== Planning View ===================== -->
+<section id="planning-view" hidden style="padding:24px 32px;max-width:900px;margin:0 auto;box-sizing:border-box">
+<style>
+#planning-view h2.pv-title {
+  font-size:22px; font-weight:700; margin:0 0 6px;
+  background: linear-gradient(90deg,#4f8cf0,#7dd3fc); -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+}
+#planning-view .pv-section-title {
+  font-size:13px; font-weight:600; color:var(--muted,#888);
+  text-transform:uppercase; letter-spacing:.07em; margin:0 0 10px;
+}
+#sched-effective-banner {
+  background:#0d1117; border:1px solid #2a3445; border-radius:8px;
+  padding:8px 12px; font-size:11px; font-family:'JetBrains Mono',monospace;
+  color:#7dd3fc; white-space:pre-wrap; word-break:break-word; margin-top:8px;
+}
+.pv-row {
+  display:flex; flex-wrap:wrap; gap:12px; margin-bottom:4px;
+}
+.pv-row label {
+  display:flex; flex-direction:column; gap:4px;
+  font-size:12px; color:var(--muted,#888); flex:1; min-width:100px;
+}
+.pv-row input[type=number], .pv-row input[type=time] {
+  padding:7px 10px; border-radius:6px;
+  border:1px solid var(--surface-3,#2a3445);
+  background:var(--surface-1,#1a1d24);
+  color:var(--text,#ddd); font-family:inherit; font-size:13px; width:100%;
+  box-sizing:border-box;
+}
+.pv-row input:focus { outline:none; border-color:var(--primary,#4f8cf0); }
+.pv-row input[type=range] { width:100%; accent-color:var(--primary,#4f8cf0); }
+.pv-chip-row { display:flex; flex-wrap:wrap; gap:6px; margin:6px 0; }
+.pv-chip {
+  padding:5px 12px; border-radius:20px; border:1px solid var(--surface-3,#2a3445);
+  background:var(--surface-1,#1a1d24); color:var(--muted,#888);
+  font-size:12px; font-weight:500; cursor:pointer; transition:all .15s;
+}
+.pv-chip:hover { border-color:var(--primary,#4f8cf0); color:var(--primary-2,#6ea4ff); }
+.pv-chip.active {
+  background:var(--primary,#4f8cf0); border-color:var(--primary,#4f8cf0);
+  color:#fff; font-weight:600;
+}
+.pv-pause-row {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  background:var(--surface-1,#1a1d24); border:1px solid var(--surface-3,#2a3445);
+  border-radius:8px; padding:8px 10px; margin-bottom:6px;
+}
+.pv-pause-row input[type=time], .pv-pause-row input[type=number], .pv-pause-row input[type=text] {
+  padding:5px 8px; border-radius:6px; border:1px solid var(--surface-3,#2a3445);
+  background:#0d1117; color:var(--text,#ddd); font-family:inherit; font-size:12px;
+}
+.pv-pause-row label { font-size:11px; color:var(--muted,#888); display:flex; flex-direction:column; gap:2px; }
+.pv-pause-row .pv-rm { background:none; border:none; color:#ef4444; font-size:16px; cursor:pointer; padding:2px 6px; border-radius:4px; }
+.pv-pause-row .pv-rm:hover { background:rgba(239,68,68,.12); }
+/* 24h timeline */
+#sched-timeline {
+  position:relative; height:40px; background:#0d1117;
+  border:1px solid #2a3445; border-radius:8px; overflow:hidden; margin-top:8px;
+}
+#sched-timeline .tl-track {
+  position:absolute; inset:0;
+}
+#sched-timeline .tl-seg {
+  position:absolute; top:4px; bottom:4px; border-radius:4px;
+}
+#sched-timeline .tl-seg.sleep  { background:rgba(79,140,240,.45); }
+#sched-timeline .tl-seg.pause  { background:rgba(245,158,11,.55); }
+#sched-timeline .tl-ticks {
+  position:absolute; bottom:0; left:0; right:0; height:12px;
+  display:flex;
+}
+#sched-timeline .tl-tick {
+  position:absolute; bottom:0; font-size:9px; color:#4a5568;
+  transform:translateX(-50%); white-space:nowrap;
+}
+.pv-legend { display:flex; gap:14px; font-size:11px; margin-top:6px; }
+.pv-legend span { display:flex; align-items:center; gap:5px; color:var(--muted,#888); }
+.pv-legend span::before {
+  content:""; display:inline-block; width:12px; height:12px; border-radius:3px;
+}
+.pv-legend .leg-sleep::before { background:rgba(79,140,240,.65); }
+.pv-legend .leg-pause::before { background:rgba(245,158,11,.75); }
+#planning-view details { margin-top:0; }
+#planning-view details summary {
+  cursor:pointer; font-size:13px; font-weight:600;
+  color:var(--text,#ddd); padding:4px 0; list-style:none;
+  display:flex; align-items:center; gap:6px;
+}
+#planning-view details summary::before { content:"▸"; color:var(--muted,#888); transition:transform .15s; }
+#planning-view details[open] summary::before { transform:rotate(90deg); }
+#planning-view details .pv-row { margin-top:10px; }
+.pv-apply-row { display:flex; align-items:center; gap:12px; padding-top:4px; }
+#sched-apply-status { font-size:12px; }
+</style>
+
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:20px">
+    <h2 class="pv-title">⏰ Planning de jeu</h2>
+    <span id="pv-back" style="font-size:12px;color:var(--primary-2,#6ea4ff);cursor:pointer" onclick="showFleetOverview()">← retour flotte</span>
+  </div>
+
+  <!-- Card 1 — Master toggle + live state -->
+  <div class="cfg-section">
+    <label class="cfg-toggle">
+      <input type="checkbox" id="sched-enabled">
+      <strong>Planning activé</strong>
+      <span class="muted" style="font-size:11px;font-weight:400">(sinon le bot joue 24/7)</span>
+    </label>
+    <div id="sched-effective-banner">—</div>
+  </div>
+
+  <!-- Card 2 — Sommeil -->
+  <div class="cfg-section">
+    <div class="pv-section-title">🌙 Sommeil</div>
+    <div class="pv-row">
+      <label>Heure de coucher (0–23)
+        <input type="number" id="sched-sleep-start" min="0" max="23" value="23">
+      </label>
+      <label>Heure de réveil (0–23)
+        <input type="number" id="sched-sleep-end" min="0" max="23" value="7">
+      </label>
+      <label>Variation ± (minutes)
+        <input type="number" id="sched-sleep-jitter" min="0" max="120" value="30">
+      </label>
+    </div>
+  </div>
+
+  <!-- Card 3 — Sessions -->
+  <div class="cfg-section">
+    <div class="pv-section-title">🎮 Sessions</div>
+    <div class="pv-row">
+      <label>Bloc min (min)
+        <input type="number" id="sched-block-min" min="1" max="480" value="30">
+      </label>
+      <label>Bloc max (min)
+        <input type="number" id="sched-block-max" min="1" max="480" value="90">
+      </label>
+      <label>Pause min (min)
+        <input type="number" id="sched-break-min" min="1" max="240" value="15">
+      </label>
+      <label>Pause max (min)
+        <input type="number" id="sched-break-max" min="1" max="240" value="45">
+      </label>
+    </div>
+    <div class="pv-row" style="margin-top:8px">
+      <label>Blocs max / jour <span class="muted" style="font-size:10px">(0 = illimité)</span>
+        <input type="number" id="sched-max-blocks" min="0" max="50" value="0">
+      </label>
+      <label>Variation blocs ± (min)
+        <input type="number" id="sched-blocks-jitter" min="0" max="60" value="10">
+      </label>
+    </div>
+  </div>
+
+  <!-- Card 4 — Quota -->
+  <div class="cfg-section">
+    <div class="pv-section-title">🎯 Quota journalier</div>
+    <div class="pv-row">
+      <label>Plafond matchs / jour
+        <input type="number" id="sched-cap" min="0" max="1000" value="150">
+      </label>
+      <label>Variation quota ± (matchs)
+        <input type="number" id="sched-cap-jitter" min="0" max="100" value="20">
+      </label>
+    </div>
+  </div>
+
+  <!-- Card 5 — Jour de repos -->
+  <div class="cfg-section">
+    <div class="pv-section-title">😴 Jour de repos</div>
+    <div style="font-size:11px;color:var(--muted,#888);margin-bottom:8px">Jours à exclure systématiquement</div>
+    <div class="pv-chip-row" id="sched-dayoff-chips">
+      <button class="pv-chip" data-day="monday">Lun</button>
+      <button class="pv-chip" data-day="tuesday">Mar</button>
+      <button class="pv-chip" data-day="wednesday">Mer</button>
+      <button class="pv-chip" data-day="thursday">Jeu</button>
+      <button class="pv-chip" data-day="friday">Ven</button>
+      <button class="pv-chip" data-day="saturday">Sam</button>
+      <button class="pv-chip" data-day="sunday">Dim</button>
+    </div>
+    <div class="pv-row" style="margin-top:12px;align-items:center">
+      <label style="flex:2">Probabilité de repos aléatoire : <strong id="sched-dayoff-chance-val">0%</strong>
+        <input type="range" id="sched-dayoff-chance" min="0" max="100" value="0" step="1">
+      </label>
+    </div>
+  </div>
+
+  <!-- Card 6 — Pauses diurnes -->
+  <div class="cfg-section">
+    <div class="pv-section-title">⏸️ Fenêtres de pause diurnes</div>
+    <div id="sched-pause-windows"></div>
+    <button class="header-btn" id="sched-add-pause" style="margin-top:4px">+ Ajouter une pause</button>
+  </div>
+
+  <!-- Card 7 — Week-end overrides -->
+  <div class="cfg-section">
+    <details id="sched-we-details">
+      <summary>📅 Réglages différents le week-end (samedi / dimanche)</summary>
+      <div class="pv-row">
+        <label>Coucher week-end (0–23) <span class="muted" style="font-size:10px">vide = pas d'override</span>
+          <input type="number" id="sched-we-sleep-start" min="0" max="23" placeholder="—">
+        </label>
+        <label>Réveil week-end (0–23) <span class="muted" style="font-size:10px">vide = pas d'override</span>
+          <input type="number" id="sched-we-sleep-end" min="0" max="23" placeholder="—">
+        </label>
+        <label>Plafond matchs week-end <span class="muted" style="font-size:10px">vide = pas d'override</span>
+          <input type="number" id="sched-we-cap" min="0" max="1000" placeholder="—">
+        </label>
+      </div>
+    </details>
+  </div>
+
+  <!-- Card 8 — 24h timeline -->
+  <div class="cfg-section">
+    <div class="pv-section-title">Frise 24 h</div>
+    <div id="sched-timeline">
+      <div class="tl-track" id="tl-track"></div>
+    </div>
+    <div class="pv-legend">
+      <span class="leg-sleep">Sommeil</span>
+      <span class="leg-pause">Pause diurne</span>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="pv-apply-row">
+    <button class="header-btn primary" id="sched-apply">💾 Appliquer à la flotte</button>
+    <span id="sched-apply-status"></span>
+  </div>
+</section>
 
 <div id="toast-stack"></div>
 <script src="/static/app.js?v=20260603h"></script>

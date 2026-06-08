@@ -874,7 +874,6 @@ function openDeviceConsoleForInstance(instanceId, instanceUid) {
   document.getElementById("device-panel").hidden = false;
   deviceConsoleOpen = true;
   refreshDevicePanelForInstance(instanceId);
-  loadSchedule();
   if (deviceTimer) clearInterval(deviceTimer);
   deviceTimer = setInterval(() => refreshDevicePanelForInstance(instanceId), 5000);
   _startStream(instanceId);   // live ~13fps stream
@@ -912,7 +911,6 @@ async function refreshDevicePanel() {
     api(`/api/instances/${inst.id}/logs?limit=120`).catch(() => []),
   ]);
   _renderDevicePanel(healthRes, logsRes, {available: false});
-  loadSchedule();
 }
 
 function _renderDevicePanel(healthRes, logsRes, shotRes) {
@@ -1868,66 +1866,288 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
     gcRefreshAll();
   }));
 
-// ----------------- Play-schedule editor -----------------
+// ============================================================
+// Global Planning Tab
+// ============================================================
 
-const SCHED_TEMPLATE = `# Overrides du planning (cfg/schedule.local.toml) — vide = défauts commités.
-# Mêmes clés que [schedule] de general_config.toml. Appliqué à chaud (~10s).
-[schedule]
-# daily_match_cap = 150
-# dayoff_weekdays = ["sunday"]
-#
-# [[schedule.pause_windows]]
-# start = "12:30"
-# end = "13:15"
-# label = "dejeuner"
-`;
+function showPlanningView() {
+  _fleetView = false;
+  selectedAccountId = null;
+  // Hide all other top-level views
+  document.getElementById("empty-state").hidden = true;
+  document.getElementById("detail-content").hidden = true;
+  const dp = document.getElementById("device-panel");
+  if (dp) dp.hidden = true;
+  document.getElementById("planning-view").hidden = false;
+  loadGlobalSchedule();
+}
 
-async function loadSchedule() {
-  if (!selectedInstanceForDevice) return;
-  const st = document.getElementById("sched-status");
-  if (st) st.textContent = "chargement…";
+// Patch showFleetOverview to also hide planning view
+const _origShowFleetOverview = showFleetOverview;
+showFleetOverview = function() {
+  document.getElementById("planning-view").hidden = true;
+  _origShowFleetOverview();
+};
+
+// Patch selectAccount to hide planning view
+const _origSelectAccount = selectAccount;
+selectAccount = async function(id) {
+  document.getElementById("planning-view").hidden = true;
+  return _origSelectAccount(id);
+};
+
+async function loadGlobalSchedule() {
+  const banner = document.getElementById("sched-effective-banner");
+  if (banner) banner.textContent = "chargement…";
   try {
-    const r = await api(`/api/instances/${selectedInstanceForDevice}/schedule`);
-    if (r.ok && r.data) {
-      const d = r.data;
-      document.getElementById("sched-toml").value = (d.raw && d.raw.trim()) ? d.raw : SCHED_TEMPLATE;
-      const e = d.effective || {};
-      document.getElementById("sched-effective").textContent = e.error
-        ? ("erreur: " + e.error)
-        : `état=${e.state} · sommeil ${e.sleep} · quota ${e.matches_today}/${e.today_cap}`
-          + ` · blocs ${e.blocks_today}/${e.today_block_cap || "∞"} · pauses ${e.pause_windows}`
-          + (e.is_dayoff ? " · JOUR DE REPOS" : "");
-      if (st) st.textContent = "";
-    } else {
-      if (st) st.textContent = "❌ " + (r.error || "indisponible");
+    const r = await api("/api/config/schedule");
+    const cfg = r.config || {};
+    const eff = r.effective || null;
+
+    // Fill form controls
+    const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+    const num = (id, v) => { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+
+    chk("sched-enabled", cfg.enabled !== false);
+    num("sched-sleep-start", cfg.sleep_start_hour);
+    num("sched-sleep-end", cfg.sleep_end_hour);
+    num("sched-sleep-jitter", cfg.sleep_jitter_minutes);
+    num("sched-block-min", cfg.block_min_minutes);
+    num("sched-block-max", cfg.block_max_minutes);
+    num("sched-break-min", cfg.break_min_minutes);
+    num("sched-break-max", cfg.break_max_minutes);
+    num("sched-max-blocks", cfg.max_blocks_per_day);
+    num("sched-blocks-jitter", cfg.blocks_jitter);
+    num("sched-cap", cfg.daily_match_cap);
+    num("sched-cap-jitter", cfg.daily_cap_jitter);
+
+    // Dayoff weekday chips
+    const activeDays = new Set(cfg.dayoff_weekdays || []);
+    document.querySelectorAll("#sched-dayoff-chips .pv-chip").forEach(chip => {
+      chip.classList.toggle("active", activeDays.has(chip.dataset.day));
+    });
+
+    // Dayoff chance slider (0..1 → 0..100)
+    const chanceSlider = document.getElementById("sched-dayoff-chance");
+    const chanceVal = document.getElementById("sched-dayoff-chance-val");
+    const chance = Math.round((cfg.dayoff_chance || 0) * 100);
+    if (chanceSlider) chanceSlider.value = chance;
+    if (chanceVal) chanceVal.textContent = chance + "%";
+
+    // Pause windows
+    const container = document.getElementById("sched-pause-windows");
+    if (container) {
+      container.innerHTML = "";
+      for (const w of (cfg.pause_windows || [])) {
+        addPauseRow(w);
+      }
     }
-  } catch (err) {
-    if (st) st.textContent = "❌ " + err.message;
+
+    // Weekend overrides
+    const we = cfg.weekend || {};
+    const weN = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v != null) ? v : ""; };
+    weN("sched-we-sleep-start", we.sleep_start_hour);
+    weN("sched-we-sleep-end", we.sleep_end_hour);
+    weN("sched-we-cap", we.daily_match_cap);
+
+    // Live banner
+    if (banner) {
+      if (!eff) {
+        banner.textContent = "worker hors-ligne";
+      } else {
+        banner.textContent =
+          `état=${eff.state} · sommeil ${eff.sleep} · quota ${eff.matches_today}/${eff.today_cap}` +
+          ` · pauses ${eff.pause_windows}` +
+          (eff.is_dayoff ? " · JOUR DE REPOS" : "");
+      }
+    }
+
+    renderTimeline();
+  } catch (e) {
+    if (banner) banner.textContent = "❌ " + e.message;
   }
 }
 
-async function saveSchedule() {
-  if (!selectedInstanceForDevice) return;
-  const toml = document.getElementById("sched-toml").value;
-  const st = document.getElementById("sched-status");
-  st.textContent = "envoi…";
+function collectScheduleForm() {
+  const intVal = (id) => { const el = document.getElementById(id); return el && el.value !== "" ? parseInt(el.value, 10) : null; };
+  const chkVal = (id) => { const el = document.getElementById(id); return el ? el.checked : false; };
+
+  const dayoffDays = [];
+  document.querySelectorAll("#sched-dayoff-chips .pv-chip.active").forEach(chip => {
+    dayoffDays.push(chip.dataset.day);
+  });
+
+  const chanceSlider = document.getElementById("sched-dayoff-chance");
+  const dayoffChance = chanceSlider ? parseInt(chanceSlider.value, 10) / 100 : 0;
+
+  // Pause windows
+  const pauseWindows = [];
+  document.querySelectorAll("#sched-pause-windows .pv-pause-row").forEach(row => {
+    const start = row.querySelector(".pw-start")?.value || "";
+    const end = row.querySelector(".pw-end")?.value || "";
+    const jitter = parseInt(row.querySelector(".pw-jitter")?.value || "0", 10);
+    const label = row.querySelector(".pw-label")?.value || "";
+    if (start && end) pauseWindows.push({start, end, jitter_minutes: jitter, label});
+  });
+
+  // Weekend overrides: only include non-empty fields
+  const weekend = {};
+  const weStart = intVal("sched-we-sleep-start");
+  const weEnd   = intVal("sched-we-sleep-end");
+  const weCap   = intVal("sched-we-cap");
+  if (weStart != null) weekend.sleep_start_hour = weStart;
+  if (weEnd   != null) weekend.sleep_end_hour   = weEnd;
+  if (weCap   != null) weekend.daily_match_cap  = weCap;
+
+  const cfg = {
+    enabled:              chkVal("sched-enabled"),
+    sleep_start_hour:     intVal("sched-sleep-start"),
+    sleep_end_hour:       intVal("sched-sleep-end"),
+    sleep_jitter_minutes: intVal("sched-sleep-jitter"),
+    block_min_minutes:    intVal("sched-block-min"),
+    block_max_minutes:    intVal("sched-block-max"),
+    break_min_minutes:    intVal("sched-break-min"),
+    break_max_minutes:    intVal("sched-break-max"),
+    max_blocks_per_day:   intVal("sched-max-blocks"),
+    blocks_jitter:        intVal("sched-blocks-jitter"),
+    daily_match_cap:      intVal("sched-cap"),
+    daily_cap_jitter:     intVal("sched-cap-jitter"),
+    dayoff_weekdays:      dayoffDays,
+    dayoff_chance:        dayoffChance,
+    pause_windows:        pauseWindows,
+  };
+  if (Object.keys(weekend).length) cfg.weekend = weekend;
+  return cfg;
+}
+
+async function saveGlobalSchedule() {
+  const statusEl = document.getElementById("sched-apply-status");
+  if (statusEl) { statusEl.textContent = "envoi…"; statusEl.style.color = ""; }
   try {
-    const r = await api(`/api/instances/${selectedInstanceForDevice}/schedule`,
-                        {method: "PUT", body: {toml}});
-    const d = r.data || {};
-    if (r.ok && d.ok) {
-      st.textContent = "✅ appliqué (à chaud sous ~10s)";
-      setTimeout(loadSchedule, 1500);
+    const r = await api("/api/config/schedule", {method: "PUT", body: {config: collectScheduleForm()}});
+    if (r && r.ok) {
+      const applied = r.applied != null ? r.applied : "";
+      const summary = applied ? ` (${applied} worker${applied > 1 ? "s" : ""})` : "";
+      if (statusEl) { statusEl.textContent = "✅ appliqué à la flotte" + summary; statusEl.style.color = "#22c55e"; }
+      setTimeout(loadGlobalSchedule, 1500);
     } else {
-      st.textContent = "❌ " + (d.error || r.error || "échec");
+      const err = (r && r.error) || "échec";
+      if (statusEl) { statusEl.textContent = "❌ " + err; statusEl.style.color = "#ef4444"; }
     }
-  } catch (err) {
-    st.textContent = "❌ " + err.message;
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = "❌ " + e.message; statusEl.style.color = "#ef4444"; }
+  }
+  setTimeout(() => { if (statusEl) { statusEl.textContent = ""; statusEl.style.color = ""; } }, 6000);
+}
+
+function addPauseRow(w) {
+  w = w || {};
+  const container = document.getElementById("sched-pause-windows");
+  if (!container) return;
+  const row = document.createElement("div");
+  row.className = "pv-pause-row";
+  row.innerHTML = `
+    <label>Début<input type="time" class="pw-start" value="${w.start || ""}"></label>
+    <label>Fin<input type="time" class="pw-end" value="${w.end || ""}"></label>
+    <label>Variation ± (min)<input type="number" class="pw-jitter" min="0" max="120" value="${w.jitter_minutes != null ? w.jitter_minutes : 0}" style="width:60px"></label>
+    <label>Label<input type="text" class="pw-label" placeholder="ex: déjeuner" value="${w.label || ""}" style="width:110px"></label>
+    <button class="pv-rm" title="Supprimer">✕</button>
+  `;
+  row.querySelector(".pv-rm").addEventListener("click", () => { row.remove(); renderTimeline(); });
+  // Re-render timeline on pause time changes
+  row.querySelector(".pw-start").addEventListener("change", renderTimeline);
+  row.querySelector(".pw-end").addEventListener("change", renderTimeline);
+  container.appendChild(row);
+  renderTimeline();
+}
+
+function renderTimeline() {
+  const track = document.getElementById("tl-track");
+  if (!track) return;
+  track.innerHTML = "";
+
+  const sleepStart = parseInt(document.getElementById("sched-sleep-start")?.value || "23", 10);
+  const sleepEnd   = parseInt(document.getElementById("sched-sleep-end")?.value   || "7",  10);
+
+  // Helper: hour (0–24) → percentage across 24h bar
+  const pct = (h) => (h / 24 * 100).toFixed(3) + "%";
+  const timePct = (hhmm) => {
+    const [h, m] = (hhmm || "0:0").split(":").map(Number);
+    return ((h + m / 60) / 24 * 100).toFixed(3) + "%";
+  };
+  const timeW = (startHH, endHH) => {
+    // wraps midnight
+    let d = endHH - startHH;
+    if (d < 0) d += 24;
+    return (d / 24 * 100).toFixed(3) + "%";
+  };
+
+  // Sleep segment (may wrap midnight)
+  const seg = document.createElement("div");
+  seg.className = "tl-seg sleep";
+  const sleepDur = ((sleepEnd - sleepStart + 24) % 24) || 24;
+  seg.style.left = pct(sleepStart);
+  seg.style.width = (sleepDur / 24 * 100).toFixed(3) + "%";
+  // Handle wrap: clip at 100% and add a second segment for the wrapped part
+  if (sleepStart + sleepDur > 24) {
+    seg.style.width = ((24 - sleepStart) / 24 * 100).toFixed(3) + "%";
+    const seg2 = document.createElement("div");
+    seg2.className = "tl-seg sleep";
+    seg2.style.left = "0%";
+    seg2.style.width = (sleepEnd / 24 * 100).toFixed(3) + "%";
+    track.appendChild(seg2);
+  }
+  track.appendChild(seg);
+
+  // Pause segments
+  document.querySelectorAll("#sched-pause-windows .pv-pause-row").forEach(row => {
+    const startStr = row.querySelector(".pw-start")?.value || "";
+    const endStr   = row.querySelector(".pw-end")?.value   || "";
+    if (!startStr || !endStr) return;
+    const [sh, sm] = startStr.split(":").map(Number);
+    const [eh, em] = endStr.split(":").map(Number);
+    const startH = sh + sm / 60;
+    const endH   = eh + em / 60;
+    const dur    = endH - startH;
+    if (dur <= 0) return;
+    const pseg = document.createElement("div");
+    pseg.className = "tl-seg pause";
+    pseg.style.left = (startH / 24 * 100).toFixed(3) + "%";
+    pseg.style.width = (dur / 24 * 100).toFixed(3) + "%";
+    track.appendChild(pseg);
+  });
+
+  // Hour ticks (0, 6, 12, 18, 24)
+  for (const h of [0, 6, 12, 18, 24]) {
+    const tick = document.createElement("div");
+    tick.className = "tl-tick";
+    tick.style.left = pct(h);
+    tick.style.bottom = "2px";
+    tick.textContent = h === 24 ? "24h" : h + "h";
+    track.appendChild(tick);
   }
 }
 
-document.getElementById("sched-load")?.addEventListener("click", loadSchedule);
-document.getElementById("sched-save")?.addEventListener("click", saveSchedule);
+// Wire dayoff chips
+document.querySelectorAll("#sched-dayoff-chips .pv-chip").forEach(chip => {
+  chip.addEventListener("click", () => chip.classList.toggle("active"));
+});
+
+// Wire dayoff chance slider
+document.getElementById("sched-dayoff-chance")?.addEventListener("input", (e) => {
+  const v = document.getElementById("sched-dayoff-chance-val");
+  if (v) v.textContent = e.target.value + "%";
+});
+
+// Wire timeline re-render on sleep inputs
+["sched-sleep-start", "sched-sleep-end"].forEach(id => {
+  document.getElementById(id)?.addEventListener("input", renderTimeline);
+});
+
+// Wire nav button + apply button
+document.getElementById("btn-planning")?.addEventListener("click", showPlanningView);
+document.getElementById("sched-apply")?.addEventListener("click", saveGlobalSchedule);
+document.getElementById("sched-add-pause")?.addEventListener("click", () => addPauseRow(null));
 
 setInterval(refreshAll, REFRESH_MS);
 refreshAll();
