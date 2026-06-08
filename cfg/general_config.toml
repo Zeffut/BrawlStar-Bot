@@ -10,18 +10,57 @@ run_for_minutes = 600
 current_emulator = "BlueStacks"
 emulator_port = 5037
 
+# ============================================================================
 # Humane play schedule (play_schedule.py) — keeps the bot from grinding 24/7.
-# Sleep window + randomized play blocks/breaks + a randomized daily match cap.
-# Set enabled = false to restore non-stop behavior. Hours are LOCAL time
-# (worker timezone — keep the HP on Europe/Paris so these are French hours).
+# Toutes les heures sont en HEURE LOCALE du worker (garder le HP sur Europe/Paris).
+# Config en 3 couches : defaults code <- ce fichier <- cfg/schedule.local.toml
+# (gitignoree, editable en live sur le HP). Hot-reload : modifier puis sauver
+# applique sans redemarrer le worker (sous ~10 s). enabled=false -> 24/7.
+# ============================================================================
 [schedule]
 enabled = true
-sleep_start_hour = 1      # bed around ~01:00 …
-sleep_end_hour = 9        # … wake around ~09:00 (~8h sleep)
-sleep_jitter_minutes = 40 # bed/wake wobble ±40 min each day (human, not on-the-hour)
-block_min_minutes = 40    # a play block lasts 40–85 min …
+timezone = "Europe/Paris"     # informatif (warn si != tz systeme) ; l'OS gouverne
+
+# --- Sommeil nocturne ---
+sleep_start_hour = 1          # coucher ~01:00 ...
+sleep_end_hour = 9            # ... reveil ~09:00 (~8h)
+sleep_jitter_minutes = 40     # coucher/reveil varient +/-40 min/jour (humain)
+
+# --- Blocs de jeu / pauses courtes ---
+block_min_minutes = 40        # un bloc dure 40-85 min ...
 block_max_minutes = 85
-break_min_minutes = 20    # … then a break of 20–70 min
+break_min_minutes = 20        # ... puis une pause de 20-70 min (jeu ferme)
 break_max_minutes = 70
-daily_match_cap = 180     # ~130–230 matches/day (was ~520 at 24/7)
+max_blocks_per_day = 0        # 0 = illimite ; sinon plafonne le nb de blocs/jour
+blocks_jitter = 0             # +/-jitter sur ce plafond
+
+# --- Quota de matchs/jour ---
+daily_match_cap = 180         # ~130-230 matchs/jour
 daily_cap_jitter = 50
+
+# --- Jour de repos (journee entiere sans jeu) ---
+dayoff_weekdays = []          # jours fixes, ex. ["sunday"]
+dayoff_chance = 0.0           # proba qu'un jour soit OFF (0..1, deterministe/jour)
+
+# --- Fenetres de pause diurnes (jeu ferme pendant) ---
+# Decommenter / ajouter autant que voulu :
+# [[schedule.pause_windows]]
+# start = "12:30"
+# end = "13:30"
+# jitter_minutes = 20
+# label = "dejeuner"
+#
+# [[schedule.pause_windows]]
+# start = "18:00"
+# end = "19:30"
+# jitter_minutes = 30
+# label = "soiree"
+
+# --- Overrides week-end (samedi+dimanche) : surcharge n'importe quelle cle ---
+# [schedule.weekend]
+# sleep_start_hour = 2
+# daily_match_cap = 260
+
+# --- Overrides par jour precis : surcharge n'importe quelle cle ---
+# [schedule.days.sunday]
+# daily_match_cap = 90

@@ -1,0 +1,11 @@
+# Couche d'override LOCALE du planning (gitignoree -- jamais ecrasee par git pull).
+# Copier en `cfg/schedule.local.toml` et editer pour peaufiner EN LIVE sur le HP.
+# Memes cles que [schedule] de general_config.toml. Hot-reload applique sous ~10 s.
+[schedule]
+# daily_match_cap = 150
+# dayoff_weekdays = ["sunday"]
+#
+# [[schedule.pause_windows]]
+# start = "12:30"
+# end = "13:15"
+# label = "dejeuner"

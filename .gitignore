@@ -29,6 +29,7 @@ cfg/alerts.toml
 cfg/device.toml
 revente/captures/
 cfg/imap.toml
+cfg/schedule.local.toml
 
 # Playwright MCP scratch artifacts
 .playwright-mcp/
