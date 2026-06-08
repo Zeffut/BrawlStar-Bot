@@ -209,3 +209,57 @@ def test_resolve_day_params_per_day_beats_weekend():
     assert sun["daily_match_cap"] == 90                     # days.sunday gagne
     sat = _resolve_day_params(base, overrides, weekday=5)   # samedi
     assert sat["daily_match_cap"] == 260                    # weekend
+
+
+def _ts_on(weekday: int, hour: int) -> float:
+    """Timestamp at given LOCAL hour on the NEXT date matching `weekday` (0=Mon)."""
+    import datetime as _dt
+    d = _dt.date.today()
+    while d.weekday() != weekday:
+        d += _dt.timedelta(days=1)
+    lt = time.struct_time((d.year, d.month, d.day, hour, 30, 0,
+                           weekday, 0, -1))
+    return time.mktime(lt)
+
+
+def test_pause_window_blocks_play():
+    cfg = {**CFG, "pause_windows": [{"start": "12:00", "end": "13:00",
+                                     "jitter_minutes": 0, "label": "déjeuner"}]}
+    s = PlaySchedule(cfg)
+    ok, why = s.should_play_now(_ts(12))     # 12:30 — inside the lunch window
+    assert not ok and "déjeuner" in why
+    assert s.state(_ts(12)) == "pause"
+    assert s.should_play_now(_ts(15))[0]     # 15:30 — active
+
+
+def test_max_blocks_per_day_caps():
+    s = PlaySchedule({**CFG, "max_blocks_per_day": 2, "blocks_jitter": 0})
+    now = _ts(14)
+    s.block_minutes(); s.block_minutes()     # consume 2 blocks
+    ok, why = s.should_play_now(now)
+    assert not ok and "quota" in why
+    assert s.state(now) == "cap"
+
+
+def test_dayoff_explicit_weekday():
+    s = PlaySchedule({**CFG, "dayoff_weekdays": ["sunday"]})
+    sun = _ts_on(6, 15)                       # Sunday 15:30
+    ok, why = s.should_play_now(sun)
+    assert not ok and "repos" in why
+    assert s.state(sun) == "dayoff"
+    assert s.should_play_now(_ts_on(2, 15))[0]   # Wednesday active
+
+
+def test_dayoff_chance_deterministic():
+    # chance=1.0 → every day is off; chance=0.0 → never.
+    assert PlaySchedule({**CFG, "dayoff_chance": 1.0}).state(_ts(15)) == "dayoff"
+    assert PlaySchedule({**CFG, "dayoff_chance": 0.0}).state(_ts(15)) != "dayoff"
+
+
+def test_weekend_override_changes_cap():
+    cfg = {**CFG, "daily_match_cap": 5, "daily_cap_jitter": 0,
+           "weekend": {"daily_match_cap": 2}}
+    s = PlaySchedule(cfg)
+    sat = _ts_on(5, 14)
+    s.record_match(sat); s.record_match(sat)
+    assert not s.should_play_now(sat)[0]      # weekend cap=2 hit
