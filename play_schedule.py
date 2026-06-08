@@ -64,6 +64,58 @@ def _hhmm(minute_of_day: int) -> str:
     return "%02dh%02d" % (m // 60, m % 60)
 
 
+def _parse_hhmm(s) -> "int | None":
+    """Parse 'HH:MM' (or a bare 'HH') into minutes-of-day [0..1439]. None if junk."""
+    if s is None:
+        return None
+    txt = str(s).strip()
+    if not txt:
+        return None
+    try:
+        if ":" in txt:
+            h, m = txt.split(":", 1)
+            mins = int(h) * 60 + int(m)
+        else:
+            mins = int(txt) * 60
+    except (ValueError, TypeError):
+        return None
+    if mins < 0 or mins > 1439:
+        return None
+    return mins
+
+
+class _Window:
+    """A daily closed time window [start, end) in minutes-of-day, with optional
+    per-day jitter. Handles midnight wrap (start > end). Reused for the nightly
+    sleep window AND the daytime pause windows."""
+
+    __slots__ = ("start_min", "end_min", "jitter", "label")
+
+    def __init__(self, start_min: int, end_min: int, jitter: int = 0,
+                 label: str = "pause"):
+        self.start_min = int(start_min) % 1440
+        self.end_min = int(end_min) % 1440
+        self.jitter = max(0, int(jitter))
+        self.label = label or "pause"
+
+    def contains(self, minute_of_day: int) -> bool:
+        s, e = self.start_min, self.end_min
+        if s == e:
+            return False
+        if s < e:
+            return s <= minute_of_day < e
+        return minute_of_day >= s or minute_of_day < e   # wraps midnight
+
+    def rolled(self, rng) -> "_Window":
+        """Return a copy with start/end jittered by ±jitter (same rng → same
+        result). Empty windows (start==end) are returned unchanged."""
+        if not self.jitter or self.start_min == self.end_min:
+            return _Window(self.start_min, self.end_min, 0, self.label)
+        s = (self.start_min + rng.randint(-self.jitter, self.jitter)) % 1440
+        e = (self.end_min + rng.randint(-self.jitter, self.jitter)) % 1440
+        return _Window(s, e, 0, self.label)
+
+
 class PlaySchedule:
     def __init__(self, cfg: dict | None = None):
         cfg = cfg or _load_cfg()

@@ -138,3 +138,45 @@ def test_jitter_keeps_deep_window_and_far_outside_correct():
     s = PlaySchedule({**CFG, "sleep_jitter_minutes": 40})
     assert s.state(_ts(4)) == "sleep"            # 04:30 — deep inside even ±40
     assert s.state(_ts(14)) == "play"            # 14:30 — far outside
+
+
+from play_schedule import _parse_hhmm, _Window
+
+
+def test_parse_hhmm():
+    assert _parse_hhmm("01:00") == 60
+    assert _parse_hhmm("12:30") == 750
+    assert _parse_hhmm("9") == 540          # bare hour
+    assert _parse_hhmm("23:59") == 1439
+    assert _parse_hhmm("bad") is None
+    assert _parse_hhmm("") is None
+
+
+def test_window_contains_simple():
+    w = _Window(start_min=60, end_min=540, jitter=0, label="sleep")  # 01:00–09:00
+    assert w.contains(180)        # 03:00 inside
+    assert not w.contains(600)    # 10:00 outside
+    assert w.contains(60)         # inclusive start
+    assert not w.contains(540)    # exclusive end
+
+
+def test_window_contains_wraps_midnight():
+    w = _Window(start_min=1380, end_min=420, jitter=0, label="sleep")  # 23:00–07:00
+    assert w.contains(1410)       # 23:30 inside
+    assert w.contains(60)         # 01:00 inside (after midnight)
+    assert not w.contains(600)    # 10:00 outside
+
+
+def test_window_empty_when_start_eq_end():
+    w = _Window(start_min=300, end_min=300, jitter=0, label="x")
+    assert not w.contains(300)
+    assert not w.contains(0)
+
+
+def test_window_roll_jittered_deterministic_and_bounded():
+    import random
+    w = _Window(start_min=60, end_min=540, jitter=40, label="sleep")
+    r1 = w.rolled(random.Random("sched:2026-06-08"))
+    r2 = w.rolled(random.Random("sched:2026-06-08"))
+    assert (r1.start_min, r1.end_min) == (r2.start_min, r2.end_min)   # same seed
+    assert abs(((r1.start_min - 60 + 720) % 1440) - 720) <= 40        # within ±40
