@@ -30,6 +30,7 @@ _OUR_LOGGERS = [
     "host_bootstrap", "device", "cloud_sync",
     "game_api", "screen_capture", "worker_link",
     "lobby_automation", "play", "push_max", "trophy_observer",
+    "play_schedule",  # humane schedule: surface load/reload/new-day/pause logs
     "bot",  # generic fallback
 ]
 
