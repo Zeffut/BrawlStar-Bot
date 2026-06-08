@@ -310,3 +310,53 @@ def test_hot_reload_picks_up_new_mtime(tmp_path, monkeypatch):
     s._last_reload_check = 0.0             # bypass the 10 s throttle
     s.state(now + 1)                       # triggers _maybe_reload
     assert s.daily_cap == 100             # tunables updated in place
+
+
+def test_hot_reload_preserves_day_counters(tmp_path, monkeypatch):
+    """A mid-day config reload must NOT zero the match counter (cap-safety):
+    the bot must not be able to blow past the daily cap by saving config."""
+    import sys, types, play_schedule as ps
+
+    def _tiny_load(path):
+        out = {"schedule": {}}
+        try:
+            with open(path) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or line.startswith("["):
+                        continue
+                    k, _, v = line.partition("=")
+                    k = k.strip(); v = v.strip()
+                    if v in ("true", "false"):
+                        out["schedule"][k] = (v == "true")
+                    else:
+                        try: out["schedule"][k] = int(v)
+                        except ValueError: out["schedule"][k] = v.strip('"')
+        except OSError:
+            pass
+        return out
+
+    fake_utils = types.ModuleType("utils")
+    fake_utils.load_toml_as_dict = _tiny_load
+    monkeypatch.setitem(sys.modules, "utils", fake_utils)
+
+    base = tmp_path / "general_config.toml"
+    local = tmp_path / "schedule.local.toml"
+    base.write_text(
+        "[schedule]\nenabled = true\nsleep_start_hour = 1\nsleep_end_hour = 9\n"
+        "block_min_minutes = 40\nblock_max_minutes = 85\n"
+        "break_min_minutes = 20\nbreak_max_minutes = 70\n"
+        "daily_match_cap = 200\ndaily_cap_jitter = 0\n")
+    monkeypatch.setattr(ps, "_config_paths", lambda: [str(base), str(local)])
+
+    s = ps.PlaySchedule()
+    now = _ts(14)
+    for _ in range(50):
+        s.record_match(now)
+    assert s._matches_today == 50
+    # Save a config change mid-day → reload must keep the counter.
+    local.write_text("[schedule]\ndaily_match_cap = 100\ndaily_cap_jitter = 0\n")
+    s._last_reload_check = 0.0
+    s.state(now + 1)                      # triggers _maybe_reload
+    assert s.daily_cap == 100             # tunables updated
+    assert s._matches_today == 50         # counter PRESERVED (cap-safety)

@@ -225,6 +225,7 @@ class PlaySchedule:
         self._blocks_today = 0
         self._last_reload_check = 0.0
         self._active_pause_label = "pause"
+        self._force_resolve = False
         self._apply_cfg(cfg)
         # Today's resolved values (rolled in _ensure_day).
         self._today_cap = self.daily_cap
@@ -282,8 +283,10 @@ class PlaySchedule:
                            "days": cfg.get("days") or {}}
         # Keep the raw base for per-day override resolution.
         self._base_cfg = dict(cfg)
-        # Force a re-resolution of today's params on the next state() call.
-        self._day = None
+        # Force a re-resolution of today's params on the next _ensure_day WITHOUT
+        # faking a date change (which would zero the day's counters and let the
+        # bot blow past the daily cap on every config reload).
+        self._force_resolve = True
 
     def _base_sleep_window(self) -> "_Window":
         return _Window(self.sleep_start * 60, self.sleep_end * 60,
@@ -317,9 +320,8 @@ class PlaySchedule:
             return
         try:
             cfg, mt = _load_layered_cfg()
-            self._apply_cfg(cfg)        # sets self._day = None
+            self._apply_cfg(cfg)        # sets self._force_resolve = True
             self._mtimes = mt
-            self._day = None            # force re-resolve today's params
             log.info("play schedule: config reloaded (mtime changed)")
         except Exception:
             log.debug("schedule hot-reload failed — keeping current config",
@@ -333,12 +335,13 @@ class PlaySchedule:
         # that would let the bot exceed the daily cap. We DO still re-roll
         # the day's params (dayoff, sleep window, etc.) to answer correctly
         # for the queried timestamp, but counters are only reset going forward.
-        if self._day is not None and day == self._day:
+        if self._day is not None and day == self._day and not self._force_resolve:
             return
         date_advanced = self._day is None or day > self._day
         if date_advanced:
             self._matches_today = 0
             self._blocks_today = 0
+        self._force_resolve = False
         self._day = day
         rng = random.Random("sched:" + day)
         lt = time.localtime(now)
@@ -370,14 +373,14 @@ class PlaySchedule:
             is_off = random.Random("dayoff:" + day).random() < chance
         self._today_is_dayoff = is_off
         if date_advanced:
-            log.info("play schedule: new day %s (%s) — cap %d, blocks %s, "
-                     "sleep %s–%s, %d pause windows%s", day,
+            log.info("play schedule: new day %s (%s) - cap %d, blocks %s, "
+                     "sleep %s-%s, %d pause windows%s", day,
                      _WEEKDAY_NAMES[wd % 7], self._today_cap,
-                     self._today_block_cap or "∞",
+                     self._today_block_cap or "inf",
                      _hhmm(self._today_sleep.start_min),
                      _hhmm(self._today_sleep.end_min),
                      len(self._today_pause_windows),
-                     " — DAY OFF" if is_off else "")
+                     " - DAY OFF" if is_off else "")
 
     def record_match(self, now: "float | None" = None) -> None:
         now = now or time.time()
