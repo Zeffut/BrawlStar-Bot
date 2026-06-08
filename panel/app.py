@@ -299,6 +299,70 @@ def api_put_alert(event: str, payload: AlertUpdate) -> dict:
     return {"ok": True, "event": event, "config": entry}
 
 
+@app.get("/api/schedule")
+def api_get_schedule() -> dict:
+    """Editable local override (raw TOML) + live effective config."""
+    import os
+    raw = ""
+    try:
+        if os.path.exists("cfg/schedule.local.toml"):
+            with open("cfg/schedule.local.toml", "r", encoding="utf-8") as f:
+                raw = f.read()
+    except OSError:
+        pass
+    effective = {}
+    try:
+        import play_schedule
+        s = play_schedule.get()
+        s.state()  # force a day-resolve so _today_* are current
+        effective = {
+            "enabled": s.enabled,
+            "state": s.state(),
+            "sleep": f"{play_schedule._hhmm(s._today_sleep.start_min)}-{play_schedule._hhmm(s._today_sleep.end_min)}",
+            "today_cap": s._today_cap,
+            "matches_today": s._matches_today,
+            "today_block_cap": s._today_block_cap,
+            "blocks_today": s._blocks_today,
+            "pause_windows": len(s._today_pause_windows),
+            "is_dayoff": s._today_is_dayoff,
+            "block_minutes": f"{s.block_min}-{s.block_max}",
+            "break_minutes": f"{s.break_min}-{s.break_max}",
+        }
+    except Exception as exc:
+        effective = {"error": str(exc)}
+    return {"raw": raw, "effective": effective}
+
+
+class ScheduleUpdate(BaseModel):
+    toml: str = ""
+
+
+@app.put("/api/schedule")
+def api_put_schedule(payload: ScheduleUpdate) -> dict:
+    """Write the local schedule override. Validates TOML first. Empty text
+    deletes the file (revert to committed defaults). Hot-reload applies in ~10s."""
+    import os, tomllib
+    text = (payload.toml or "").strip()
+    if not text:
+        try:
+            if os.path.exists("cfg/schedule.local.toml"):
+                os.remove("cfg/schedule.local.toml")
+        except OSError as exc:
+            return {"ok": False, "error": f"remove failed: {exc}"}
+        return {"ok": True, "removed": True}
+    try:
+        tomllib.loads(text)
+    except Exception as exc:
+        return {"ok": False, "error": f"TOML invalide: {exc}"}
+    try:
+        os.makedirs("cfg", exist_ok=True)
+        with open("cfg/schedule.local.toml", "w", encoding="utf-8") as f:
+            f.write(text if text.endswith("\n") else text + "\n")
+    except OSError as exc:
+        return {"ok": False, "error": f"write failed: {exc}"}
+    return {"ok": True, "bytes": len(text)}
+
+
 def _write_alerts_toml(cfg: dict) -> None:
     lines: list[str] = []
     for event, entry in cfg.items():

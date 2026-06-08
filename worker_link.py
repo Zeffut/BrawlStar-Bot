@@ -764,6 +764,18 @@ def _cmd_alerts_update(args: dict) -> dict:
     return r.json()
 
 
+def _cmd_schedule_get(args: dict) -> dict:
+    return _local_get("/api/schedule")
+
+
+def _cmd_schedule_set(args: dict) -> dict:
+    import requests
+    r = requests.put(f"{LOCAL_PANEL}/api/schedule",
+                     json={"toml": args.get("toml", "")}, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
 def _local_snapshot() -> dict | None:
     """Fetch a lightweight snapshot (state + trophies + tag + session)."""
     try:
@@ -818,6 +830,9 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     # Telegram alerts config
     "alerts_get":            _cmd_alerts_get,
     "alerts_update":         _cmd_alerts_update,
+    # Play-schedule local override
+    "schedule_get":          _cmd_schedule_get,
+    "schedule_set":          _cmd_schedule_set,
 }
 
 
