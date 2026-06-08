@@ -262,14 +262,18 @@ def _manage_schedule_powersave(bot) -> None:
         return
     # Paused (sleep / daily cap / between-blocks break) → close the game and
     # turn the screen off. A break is long enough (20–70 min) to be worth it.
-    if st in ("sleep", "cap", "break") and not bot.runner._power_saved:
+    # Any non-"play" state is a pause → close the game + screen off. Generalized
+    # from an explicit allowlist so new schedule states (pause windows, day off)
+    # close the game automatically.
+    if st != "play" and not bot.runner._power_saved:
         try:
             api.enter_power_save()
             bot.runner._power_saved = True
             log.info("play schedule: %s → power-save (Brawl Stars closed, screen off)", st)
         except Exception:
             log.exception("schedule enter_power_save failed")
-    label = {"sleep": "sommeil", "cap": "quota du jour", "break": "pause"}.get(st, st)
+    label = {"sleep": "sommeil", "cap": "quota du jour", "break": "pause",
+             "pause": "pause", "dayoff": "jour de repos"}.get(st, st)
     try:
         _set_activity(f"💤 Pause — {label}")
     except Exception:
