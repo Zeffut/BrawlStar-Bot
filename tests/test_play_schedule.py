@@ -180,3 +180,32 @@ def test_window_roll_jittered_deterministic_and_bounded():
     r2 = w.rolled(random.Random("sched:2026-06-08"))
     assert (r1.start_min, r1.end_min) == (r2.start_min, r2.end_min)   # same seed
     assert abs(((r1.start_min - 60 + 720) % 1440) - 720) <= 40        # within ±40
+
+
+from play_schedule import _resolve_day_params, _DEFAULTS
+
+
+def test_resolve_day_params_base_only():
+    base = {"daily_match_cap": 180, "sleep_start_hour": 1}
+    out = _resolve_day_params(base, {}, weekday=2)   # mercredi
+    assert out["daily_match_cap"] == 180
+    assert out["sleep_start_hour"] == 1
+
+
+def test_resolve_day_params_weekend_override():
+    base = {"daily_match_cap": 180, "sleep_start_hour": 1}
+    overrides = {"weekend": {"daily_match_cap": 260, "sleep_start_hour": 2}}
+    sat = _resolve_day_params(base, overrides, weekday=5)   # samedi
+    assert sat["daily_match_cap"] == 260 and sat["sleep_start_hour"] == 2
+    wed = _resolve_day_params(base, overrides, weekday=2)   # mercredi
+    assert wed["daily_match_cap"] == 180                    # base inchangée
+
+
+def test_resolve_day_params_per_day_beats_weekend():
+    base = {"daily_match_cap": 180}
+    overrides = {"weekend": {"daily_match_cap": 260},
+                 "days": {"sunday": {"daily_match_cap": 90}}}
+    sun = _resolve_day_params(base, overrides, weekday=6)   # dimanche
+    assert sun["daily_match_cap"] == 90                     # days.sunday gagne
+    sat = _resolve_day_params(base, overrides, weekday=5)   # samedi
+    assert sat["daily_match_cap"] == 260                    # weekend

@@ -26,37 +26,130 @@ import time
 
 log = logging.getLogger("play_schedule")
 
+_WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday",
+                  "saturday", "sunday"]
+
 _DEFAULTS = {
     "enabled": True,
-    "sleep_start_hour": 1,      # local time: no play from ~01:00 …
-    "sleep_end_hour": 9,        # … until ~09:00 (≈8h "sleep")
-    "sleep_jitter_minutes": 40, # bed/wake times wobble ±this each day (human)
-    "block_min_minutes": 40,    # a play block lasts 40–85 min
+    "timezone": "Europe/Paris",   # informational; OS tz governs the clock
+    "sleep_start_hour": 1,
+    "sleep_end_hour": 9,
+    "sleep_jitter_minutes": 40,
+    "block_min_minutes": 40,
     "block_max_minutes": 85,
-    "break_min_minutes": 20,    # then a break of 20–70 min
+    "break_min_minutes": 20,
     "break_max_minutes": 70,
-    "daily_match_cap": 180,     # ~130–230 matches/day (vs ~520 at 24/7)
+    "daily_match_cap": 180,
     "daily_cap_jitter": 50,
+    "max_blocks_per_day": 0,      # 0 = unlimited
+    "blocks_jitter": 0,
+    "dayoff_weekdays": [],        # e.g. ["sunday"]
+    "dayoff_chance": 0.0,         # 0..1 probability per day (seeded)
+    # pause_windows is a list of dicts, handled separately (not a scalar).
 }
 
+# Keys whose value type is a plain scalar coerced to int.
+_SCALAR_KEYS = ("sleep_start_hour", "sleep_end_hour", "sleep_jitter_minutes",
+                "block_min_minutes", "block_max_minutes", "break_min_minutes",
+                "break_max_minutes", "daily_match_cap", "daily_cap_jitter",
+                "max_blocks_per_day", "blocks_jitter")
 
-def _load_cfg() -> dict:
-    cfg = dict(_DEFAULTS)
-    try:
-        from utils import load_toml_as_dict
-        section = (load_toml_as_dict("cfg/general_config.toml") or {}).get("schedule", {})
-        for k, v in (section or {}).items():
-            if k in cfg and v is not None:
-                cfg[k] = type(cfg[k])(v) if not isinstance(cfg[k], bool) else _as_bool(v)
-    except Exception:
-        log.debug("schedule config load failed — using defaults", exc_info=True)
-    return cfg
+
+def _resolve_day_params(base: dict, overrides: dict, weekday: int) -> dict:
+    """Resolve effective params for a given weekday (0=Mon..6=Sun).
+
+    base ← weekend (if Sat/Sun and present) ← days.<weekday-name> (if present).
+    Later layers win, key by key. Returns a new dict (base untouched).
+    """
+    out = dict(base)
+    if weekday >= 5:  # Saturday / Sunday
+        for k, v in (overrides.get("weekend") or {}).items():
+            out[k] = v
+    day_name = _WEEKDAY_NAMES[weekday % 7]
+    for k, v in ((overrides.get("days") or {}).get(day_name) or {}).items():
+        out[k] = v
+    return out
 
 
 def _as_bool(v) -> bool:
     if isinstance(v, bool):
         return v
     return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _config_paths() -> "list[str]":
+    return ["cfg/general_config.toml", "cfg/schedule.local.toml"]
+
+
+def _mtimes(paths) -> dict:
+    import os
+    out = {}
+    for p in paths:
+        try:
+            out[p] = os.path.getmtime(p)
+        except OSError:
+            out[p] = None
+    return out
+
+
+def _coerce_into(cfg: dict, section: dict) -> None:
+    """Merge a [schedule] section into cfg in place, coercing scalar types and
+    parsing the structured keys (dayoff_weekdays, pause_windows, overrides)."""
+    for k, v in (section or {}).items():
+        if v is None:
+            continue
+        if k == "enabled":
+            cfg["enabled"] = _as_bool(v)
+        elif k == "timezone":
+            cfg["timezone"] = str(v)
+        elif k == "dayoff_chance":
+            try:
+                cfg["dayoff_chance"] = max(0.0, min(1.0, float(v)))
+            except (TypeError, ValueError):
+                pass
+        elif k == "dayoff_weekdays":
+            if isinstance(v, (list, tuple)):
+                cfg["dayoff_weekdays"] = [str(x).strip().lower() for x in v]
+        elif k == "pause_windows":
+            if isinstance(v, (list, tuple)):
+                cfg["pause_windows"] = list(v)
+        elif k in ("weekend", "days"):
+            cfg[k] = v
+        elif k in _SCALAR_KEYS:
+            try:
+                cfg[k] = int(v)
+            except (TypeError, ValueError):
+                pass
+
+
+def _load_layered_cfg() -> "tuple[dict, dict]":
+    """Load the 3-layer config. Returns (resolved_cfg, mtimes).
+
+    Layers (later wins): _DEFAULTS ← general_config.toml[schedule] ←
+    schedule.local.toml[schedule] (or its flat top-level keys).
+    """
+    cfg = dict(_DEFAULTS)
+    cfg["pause_windows"] = []
+    cfg["weekend"] = {}
+    cfg["days"] = {}
+    paths = _config_paths()
+    try:
+        from utils import load_toml_as_dict
+        base = load_toml_as_dict(paths[0]) or {}
+        _coerce_into(cfg, base.get("schedule", {}) or {})
+        import os
+        if os.path.exists(paths[1]):
+            local = load_toml_as_dict(paths[1]) or {}
+            section = local.get("schedule", local)
+            _coerce_into(cfg, section or {})
+    except Exception:
+        log.debug("schedule config load failed — using defaults", exc_info=True)
+    return cfg, _mtimes(paths)
+
+
+def _load_cfg() -> dict:
+    # Backward-compat shim: existing callers expect a flat cfg dict.
+    return _load_layered_cfg()[0]
 
 
 def _hhmm(minute_of_day: int) -> str:
