@@ -1873,26 +1873,33 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
 function showPlanningView() {
   _fleetView = false;
   selectedAccountId = null;
-  // Hide all other top-level views
-  document.getElementById("empty-state").hidden = true;
-  document.getElementById("detail-content").hidden = true;
-  const dp = document.getElementById("device-panel");
-  if (dp) dp.hidden = true;
+  // #planning-view is a sibling AFTER <main> (which is display:grid, 100vh,
+  // overflow:hidden). Just unhiding planning-view leaves it below the fold
+  // behind the full-height main → black screen. Hide <main> via style.display
+  // (its `display:grid` rule beats the [hidden] attribute) and show the view.
+  const main = document.querySelector("main");
+  if (main) main.style.display = "none";
   document.getElementById("planning-view").hidden = false;
   loadGlobalSchedule();
 }
 
-// Patch showFleetOverview to also hide planning view
+function _hidePlanningView() {
+  document.getElementById("planning-view").hidden = true;
+  const main = document.querySelector("main");
+  if (main) main.style.display = "";   // restore the grid layout
+}
+
+// Patch showFleetOverview to leave the planning view + restore <main>.
 const _origShowFleetOverview = showFleetOverview;
 showFleetOverview = function() {
-  document.getElementById("planning-view").hidden = true;
+  _hidePlanningView();
   _origShowFleetOverview();
 };
 
-// Patch selectAccount to hide planning view
+// Patch selectAccount to leave the planning view + restore <main>.
 const _origSelectAccount = selectAccount;
 selectAccount = async function(id) {
-  document.getElementById("planning-view").hidden = true;
+  _hidePlanningView();
   return _origSelectAccount(id);
 };
 
