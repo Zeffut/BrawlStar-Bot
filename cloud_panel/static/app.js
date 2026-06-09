@@ -1240,7 +1240,18 @@ function _streamFeed(u8) {
 }
 
 function _streamConnect(instanceId) {
-  if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
+  // Detach handlers BEFORE closing the previous socket: a deliberate replace
+  // must NOT fire its onclose → which would schedule a 2s reconnect →
+  // _streamConnect → close → onclose → … a self-sustaining reconnect storm
+  // (the worker force-respawns a keyframe each cycle, so the stream never
+  // stabilises and looks like it constantly cuts).
+  if (_streamWS) {
+    try {
+      _streamWS.onclose = null; _streamWS.onerror = null; _streamWS.onmessage = null;
+      _streamWS.close();
+    } catch (_) {}
+    _streamWS = null;
+  }
   if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
   _streamInstanceId = instanceId;
   _streamLastByteAt = performance.now();   // fresh connection: don't flag stall immediately
