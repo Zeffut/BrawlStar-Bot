@@ -228,6 +228,24 @@ def recent_matches(account_id: int, limit: int = 100) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def count_matches_today(account_id: int, now: float | None = None) -> int:
+    """Number of matches logged for this account since LOCAL midnight. Used to
+    seed the humane schedule's daily cap so it survives worker restarts (an
+    in-memory counter resets to 0 on every restart → the cap is defeated)."""
+    if account_id is None:
+        return 0
+    now = now or time.time()
+    lt = time.localtime(now)
+    midnight = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0,
+                            lt.tm_wday, lt.tm_yday, -1))
+    with _lock:
+        row = conn().execute(
+            "SELECT COUNT(*) FROM matches WHERE account_id = ? AND timestamp >= ?",
+            (account_id, midnight),
+        ).fetchone()
+    return int(row[0]) if row and row[0] else 0
+
+
 def win_rate_by_brawler(account_id: int) -> list[dict]:
     with _lock:
         rows = conn().execute(

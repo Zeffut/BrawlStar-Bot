@@ -1103,6 +1103,14 @@ class BotRunner:
 
         # Open / refresh the DB session row tied to this run.
         if self._account_id is not None:
+            # Make the humane daily match cap restart-proof: seed the schedule's
+            # counter from matches already played today (DB), not an in-memory 0
+            # that resets on every worker restart (which let it hit 300+/day).
+            try:
+                _aid = self._account_id
+                play_schedule.set_match_count_provider(lambda: db.count_matches_today(_aid))
+            except Exception:
+                log.debug("set match-count provider failed", exc_info=True)
             self._session_id = db.start_session(
                 self._account_id, brawler, target,
                 start_trophies=self._initial_trophies or None,

@@ -360,3 +360,28 @@ def test_hot_reload_preserves_day_counters(tmp_path, monkeypatch):
     s.state(now + 1)                      # triggers _maybe_reload
     assert s.daily_cap == 100             # tunables updated
     assert s._matches_today == 50         # counter PRESERVED (cap-safety)
+
+
+def test_daily_cap_seeds_from_provider_restart_safe():
+    """The daily cap must survive worker restarts: a fresh PlaySchedule seeds
+    _matches_today from the DB-backed provider (matches already played today),
+    not 0. Otherwise every restart resets the counter and the cap is defeated."""
+    import play_schedule as ps
+    ps.set_match_count_provider(lambda: 200)   # 200 already played today (DB)
+    try:
+        s = ps.PlaySchedule({**CFG, "daily_match_cap": 180, "daily_cap_jitter": 0})
+        now = _ts(14)
+        ok, why = s.should_play_now(now)
+        assert s._matches_today == 200          # seeded from DB, not 0
+        assert not ok and "quota" in why        # already over cap=180 → blocked
+    finally:
+        ps.set_match_count_provider(None)
+
+
+def test_no_provider_seeds_zero_backward_compatible():
+    import play_schedule as ps
+    ps.set_match_count_provider(None)
+    s = ps.PlaySchedule({**CFG, "daily_match_cap": 5, "daily_cap_jitter": 0})
+    now = _ts(14)
+    assert s._matches_today == 0                 # no provider → 0 (unchanged)
+    assert s.should_play_now(now)[0]

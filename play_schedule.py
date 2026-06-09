@@ -26,6 +26,40 @@ import time
 
 log = logging.getLogger("play_schedule")
 
+# Provider (set by the worker) returning how many matches were already played
+# today, read from the DB. Lets the daily cap survive restarts (see _ensure_day).
+_MATCH_COUNT_PROVIDER = None
+
+
+def _today_match_count() -> int:
+    fn = _MATCH_COUNT_PROVIDER
+    if fn is None:
+        return 0
+    try:
+        return max(0, int(fn()))
+    except Exception:
+        log.debug("today-match-count provider failed", exc_info=True)
+        return 0
+
+
+def set_match_count_provider(fn) -> None:
+    """Register a callable() -> int giving today's match count (DB-backed).
+    Re-seeds the live singleton's counter immediately so a provider set after
+    startup (once the account is bound) corrects an earlier seed of 0."""
+    global _MATCH_COUNT_PROVIDER
+    _MATCH_COUNT_PROVIDER = fn
+    s = _SCHEDULE
+    if s is not None and fn is not None:
+        try:
+            with s._lock:
+                if s._day is not None:
+                    s._matches_today = _today_match_count()
+                    log.info("play schedule: re-seeded today's match count = %d "
+                             "(restart-safe daily cap)", s._matches_today)
+        except Exception:
+            log.debug("match-count re-seed failed", exc_info=True)
+
+
 _WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday",
                   "saturday", "sunday"]
 
@@ -339,7 +373,12 @@ class PlaySchedule:
             return
         date_advanced = self._day is None or day > self._day
         if date_advanced:
-            self._matches_today = 0
+            # Seed from the DB (matches already played today) rather than 0, so
+            # the daily cap SURVIVES worker restarts. An in-memory 0 reset on
+            # every restart let the bot blow past the cap (302 matches in a day
+            # with ~15 restarts). On a genuine new day the DB count for "today"
+            # is 0, so this is correct in both cases.
+            self._matches_today = _today_match_count()
             self._blocks_today = 0
         self._force_resolve = False
         self._day = day
