@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jmuxer@2.0.5/dist/jmuxer.min.js"></script>
-<link rel="stylesheet" href="/static/style.css?v=20260609a" />
+<link rel="stylesheet" href="/static/style.css?v=20260609b" />
 </head>
 <body>
 <header>
@@ -332,7 +332,7 @@
 </main>
 
 <!-- ===================== Planning View ===================== -->
-<section id="planning-view" hidden style="padding:24px 32px;max-width:900px;margin:0 auto;box-sizing:border-box">
+<section id="planning-view" hidden style="height:calc(100vh - 73px);overflow-y:auto;box-sizing:border-box"><div style="padding:24px 32px;max-width:900px;margin:0 auto;box-sizing:border-box">
 <style>
 #planning-view h2.pv-title {
   font-size:22px; font-weight:700; margin:0 0 6px;
@@ -560,9 +560,10 @@
     <button class="header-btn primary" id="sched-apply">💾 Appliquer à la flotte</button>
     <span id="sched-apply-status"></span>
   </div>
+  </div>
 </section>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260609a"></script>
+<script src="/static/app.js?v=20260609b"></script>
 </body>
 </html>
