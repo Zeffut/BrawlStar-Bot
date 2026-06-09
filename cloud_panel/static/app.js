@@ -1162,21 +1162,26 @@ function _streamReinit(targetId) {
   _streamMuxers.delete(targetId);
   _streamMakeMuxer(targetId);
 }
+// Decisive recovery: rebuild the WS *and* the muxers. Reconnecting drops the
+// cloud subscriber then re-adds it → the worker emits a FRESH KEYFRAME within
+// ~1s (a local muxer reinit alone would wait for the corrupt stream's next GOP
+// keyframe, which may never arrive). This is what a manual page reload did.
+function _streamForceRecover(reason) {
+  console.warn("[stream] force recover:", reason);
+  _streamLastByteAt = performance.now();              // reset the stall timer
+  for (const m of _streamMuxers.values()) m.frozen = 0;
+  if (_streamInstanceId) _streamConnect(_streamInstanceId);
+  for (const tid of [..._streamMuxers.keys()]) _streamReinit(tid);  // clean muxers + fresh 12s grace
+}
 function _streamStartWatchdog() {
   if (_streamWatchdog) return;
   _streamWatchdog = setInterval(() => {
     const now = performance.now();
-    // Global stall: NO H264 bytes for >8s while streaming. The per-muxer freeze
-    // check below only fires when data is still flowing; a half-open WebSocket
-    // (TCP died through a proxy/idle-timeout with no close event) or a worker
-    // restart stops the byte flow entirely → neither that check nor ws.onclose
-    // catches it, so the picture froze until a manual page reload. Force a full
-    // reconnect (re-subscribes → worker emits a fresh keyframe) + muxer rebuild.
+    // Global stall: NO H264 bytes for >8s while streaming (half-open WebSocket
+    // with no close event, or a worker restart). ws.onclose can't catch a
+    // half-open socket → recover explicitly.
     if (_streamMuxers.size && _streamLastByteAt && (now - _streamLastByteAt) > 8000) {
-      console.warn("[stream] no data for >8s → full reconnect (self-heal)");
-      _streamLastByteAt = now;   // reset so we retry at most every 8s, not every tick
-      if (_streamInstanceId) _streamConnect(_streamInstanceId);
-      for (const tid of [..._streamMuxers.keys()]) _streamReinit(tid);
+      _streamForceRecover("no data >8s");
       return;
     }
     for (const [tid, m] of _streamMuxers.entries()) {
@@ -1192,10 +1197,12 @@ function _streamStartWatchdog() {
       const changed = Math.abs(t - m.lastT) > 0.05;
       if (dataFlowing && !changed) {
         m.frozen++;
-        if (m.frozen >= 3) {                            // ~6s truly frozen with data
-          console.warn("[stream] frozen → reinit", tid);
-          _streamReinit(tid);                           // grants a fresh grace window
-          continue;
+        if (m.frozen >= 3) {                            // ~6s frozen despite data:
+          // the H264 stream is corrupt (a dropped chunk on the cloud relay's
+          // bounded queue). A local reinit waits for the next GOP keyframe that
+          // may not come — force a full reconnect to get a fresh keyframe NOW.
+          _streamForceRecover("frozen " + tid);
+          break;                                         // map mutated by recover
         }
       } else {
         m.frozen = 0;
