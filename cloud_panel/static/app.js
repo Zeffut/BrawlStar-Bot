@@ -1099,6 +1099,7 @@ const _STREAM_VIDEO = {                 // img target id → overlay <video> id
 const _streamMuxers = new Map();        // targetId → {video, muxer, lastBytes, lastT, frozen}
 let _streamBytes = 0;                    // total H264 bytes received this connection
 let _streamWatchdog = null;
+let _streamLastByteAt = 0;               // perf.now() of the last H264 byte received
 
 function _streamMakeMuxer(targetId) {
   if (_streamMuxers.has(targetId)) return;
@@ -1165,6 +1166,19 @@ function _streamStartWatchdog() {
   if (_streamWatchdog) return;
   _streamWatchdog = setInterval(() => {
     const now = performance.now();
+    // Global stall: NO H264 bytes for >8s while streaming. The per-muxer freeze
+    // check below only fires when data is still flowing; a half-open WebSocket
+    // (TCP died through a proxy/idle-timeout with no close event) or a worker
+    // restart stops the byte flow entirely → neither that check nor ws.onclose
+    // catches it, so the picture froze until a manual page reload. Force a full
+    // reconnect (re-subscribes → worker emits a fresh keyframe) + muxer rebuild.
+    if (_streamMuxers.size && _streamLastByteAt && (now - _streamLastByteAt) > 8000) {
+      console.warn("[stream] no data for >8s → full reconnect (self-heal)");
+      _streamLastByteAt = now;   // reset so we retry at most every 8s, not every tick
+      if (_streamInstanceId) _streamConnect(_streamInstanceId);
+      for (const tid of [..._streamMuxers.keys()]) _streamReinit(tid);
+      return;
+    }
     for (const [tid, m] of _streamMuxers.entries()) {
       // Skip while in the post-(re)create grace window (waiting for a keyframe).
       if (m.graceUntil && now < m.graceUntil) {
@@ -1212,6 +1226,7 @@ function _streamSyncLive(v) {
 }
 function _streamFeed(u8) {
   _streamBytes += u8.byteLength || 0;
+  _streamLastByteAt = performance.now();
   for (const {muxer} of _streamMuxers.values()) {
     try { muxer.feed({video: u8}); } catch (_) {}
   }
@@ -1221,6 +1236,7 @@ function _streamConnect(instanceId) {
   if (_streamWS) { try { _streamWS.close(); } catch (_) {} _streamWS = null; }
   if (_streamReconnect) { clearTimeout(_streamReconnect); _streamReconnect = null; }
   _streamInstanceId = instanceId;
+  _streamLastByteAt = performance.now();   // fresh connection: don't flag stall immediately
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
   let ws;
   try { ws = new WebSocket(`${proto}//${location.host}/ws/stream/${instanceId}`); }
