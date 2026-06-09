@@ -257,7 +257,7 @@ async function refreshAll() {
     }
   }
 
-  if (!_fleetView && !selectedAccountId && accounts.length) selectAccount(accounts[0].id);
+  if (!_fleetView && !_planningView && !selectedAccountId && accounts.length) selectAccount(accounts[0].id);
   // Keep the fleet overview fresh while it's the active view.
   if (_fleetView) _loadFleetOverview();
 }
@@ -265,6 +265,7 @@ async function refreshAll() {
 // ---- Fleet overview (landing / "🛰️ Flotte" button) ----
 // Default landing view: the fleet overview (not an auto-selected account).
 let _fleetView = true;
+let _planningView = false;  // true while the global Planning tab is open
 function showFleetOverview() {
   _fleetView = true;
   selectedAccountId = null;
@@ -1872,6 +1873,7 @@ document.getElementById("gc-play-one").addEventListener("click", () =>
 
 function showPlanningView() {
   _fleetView = false;
+  _planningView = true;   // block refreshAll's auto-select-account (kept kicking us out)
   selectedAccountId = null;
   // #planning-view is a sibling AFTER <main> (which is display:grid, 100vh,
   // overflow:hidden). Just unhiding planning-view leaves it below the fold
@@ -1884,6 +1886,7 @@ function showPlanningView() {
 }
 
 function _hidePlanningView() {
+  _planningView = false;
   document.getElementById("planning-view").hidden = true;
   const main = document.querySelector("main");
   if (main) main.style.display = "";   // restore the grid layout
