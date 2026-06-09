@@ -267,6 +267,7 @@ async function refreshAll() {
 let _fleetView = true;
 let _planningView = false;  // true while the global Planning tab is open
 function showFleetOverview() {
+  _hidePlanningView();
   _fleetView = true;
   selectedAccountId = null;
   for (const li of document.querySelectorAll("#accounts li")) li.classList.remove("active");
@@ -377,6 +378,7 @@ if (_brandEl) { _brandEl.style.cursor = "pointer"; _brandEl.title = "Accueil —
                 _brandEl.addEventListener("click", showFleetOverview); }
 
 async function selectAccount(id) {
+  _hidePlanningView();
   _fleetView = false;
   if (selectedAccountId !== id) {
     if (progressionChart) { progressionChart.destroy(); progressionChart = null; }
@@ -864,6 +866,7 @@ function closeDeviceConsole() {
 function openDeviceConsoleForInstance(instanceId, instanceUid) {
   // Direct opening for instances that have no account yet (e.g. fresh
   // PC_Upec with BlueStacks before Brawl Stars is installed/logged-in).
+  _hidePlanningView();
   selectedInstanceForDevice = instanceId;
   // Make sure the detail pane is visible so #device-panel renders.
   document.getElementById("empty-state").hidden = true;
@@ -1885,26 +1888,15 @@ function showPlanningView() {
   loadGlobalSchedule();
 }
 
+// Hoisted (function declaration) so the nav functions defined earlier can call
+// it. Idempotent: safe to call when not on the planning view.
 function _hidePlanningView() {
   _planningView = false;
-  document.getElementById("planning-view").hidden = true;
+  const pv = document.getElementById("planning-view");
+  if (pv) pv.hidden = true;
   const main = document.querySelector("main");
   if (main) main.style.display = "";   // restore the grid layout
 }
-
-// Patch showFleetOverview to leave the planning view + restore <main>.
-const _origShowFleetOverview = showFleetOverview;
-showFleetOverview = function() {
-  _hidePlanningView();
-  _origShowFleetOverview();
-};
-
-// Patch selectAccount to leave the planning view + restore <main>.
-const _origSelectAccount = selectAccount;
-selectAccount = async function(id) {
-  _hidePlanningView();
-  return _origSelectAccount(id);
-};
 
 async function loadGlobalSchedule() {
   const banner = document.getElementById("sched-effective-banner");
