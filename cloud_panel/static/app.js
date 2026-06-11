@@ -1956,6 +1956,7 @@ async function loadGlobalSchedule() {
     num("sched-blocks-jitter", cfg.blocks_jitter);
     num("sched-cap", cfg.daily_match_cap);
     num("sched-cap-jitter", cfg.daily_cap_jitter);
+    num("sched-sale-target", cfg.sale_target_trophies ?? 0);
 
     // Dayoff weekday chips
     const activeDays = new Set(cfg.dayoff_weekdays || []);
@@ -2048,6 +2049,7 @@ function collectScheduleForm() {
     blocks_jitter:        intVal("sched-blocks-jitter"),
     daily_match_cap:      intVal("sched-cap"),
     daily_cap_jitter:     intVal("sched-cap-jitter"),
+    sale_target_trophies: parseInt(document.getElementById("sched-sale-target")?.value, 10) || 0,
     dayoff_weekdays:      dayoffDays,
     dayoff_chance:        dayoffChance,
     pause_windows:        pauseWindows,
