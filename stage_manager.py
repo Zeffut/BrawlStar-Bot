@@ -260,7 +260,53 @@ class StageManager:
         except Exception as exc:
             log.warning("Brawl Stars restart failed: %s", exc)
 
+    def _dismiss_daily_reward(self) -> bool:
+        """The daily login-streak popup ('SÉRIE QUOTIDIENNE', 'RÉCUPÉRER') has
+        reward cards that visually match a Star Drop template in the detector's
+        region → the bot mis-reads it as a star_drop, fails the open gesture,
+        and restart-loops on it forever (the popup reappears at every login).
+        Detect it by its text and tap the green RÉCUPÉRER button to claim +
+        dismiss. Returns True if it handled the screen. Real star drops
+        ('touchez et maintenez') have no 'quotidienne' text → fall through."""
+        try:
+            from utils import extract_text_and_positions
+            import numpy as np
+            shot = self.window_controller.screenshot()
+            text = extract_text_and_positions(np.array(shot))
+            joined = " ".join(text.keys()).lower()
+            if not any(m in joined for m in (
+                    "quotidienn", "recompense du jour", "récompense du jour",
+                    "daily streak", "daily reward")):
+                return False
+            # Tap the claim button (RÉCUPÉRER / RECUPERER / CLAIM / RÉCLAMER).
+            for key, val in text.items():
+                k = key.lower().strip()
+                if any(t in k for t in ("récupér", "recuper", "réclam", "reclam", "claim")):
+                    cx, cy = val.get("center", [0, 0])
+                    if cx > 0 and cy > 0:
+                        log.info("daily-reward popup → tapping claim '%s' at (%d,%d)", key, cx, cy)
+                        self.window_controller.click(int(cx), int(cy))
+                        return True
+            # Fallback: claim button is bottom-right; close X is top-right.
+            fw = getattr(self.window_controller, "width", 0) or 0
+            fh = getattr(self.window_controller, "height", 0) or 0
+            if fw and fh:
+                log.info("daily-reward popup → claim text not found, tapping fallback positions")
+                self.window_controller.click(int(fw * 0.85), int(fh * 0.90))
+                time.sleep(0.6)
+                self.window_controller.click(int(fw * 0.95), int(fh * 0.08))
+                return True
+        except Exception:
+            log.debug("_dismiss_daily_reward failed", exc_info=True)
+        return False
+
     def click_star_drop(self):
+        # First: the "SÉRIE QUOTIDIENNE" daily-reward popup is mis-detected as a
+        # star drop (a reward card matches the template). Claim+dismiss it
+        # instead of looping the open gesture + BS restart.
+        if self._dismiss_daily_reward():
+            self._star_drop_attempts = 0
+            return
         # "TAP AND HOLD" / "TOUCHEZ ET MAINTENEZ". A perfectly static
         # synthesized hold (input swipe X Y X Y) is ignored by BS on a phone;
         # try a slow DRAG instead (a held touch *with* slight motion, like a
