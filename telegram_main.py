@@ -1127,7 +1127,7 @@ class BotRunner:
                 play_schedule.set_match_count_provider(lambda: db.count_matches_today(_aid))
                 play_schedule.set_trophy_total_provider(lambda: db.latest_account_trophies(_aid))
             except Exception:
-                log.debug("set match-count provider failed", exc_info=True)
+                log.debug("set schedule providers failed", exc_info=True)
             self._session_id = db.start_session(
                 self._account_id, brawler, target,
                 start_trophies=self._initial_trophies or None,
