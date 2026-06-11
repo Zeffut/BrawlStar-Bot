@@ -385,3 +385,32 @@ def test_no_provider_seeds_zero_backward_compatible():
     now = _ts(14)
     assert s._matches_today == 0                 # no provider → 0 (unchanged)
     assert s.should_play_now(now)[0]
+
+
+# ---- sale_ready gate (auto-stop at trophy sale target) ----
+
+def test_sale_ready_when_total_reaches_target():
+    s = PlaySchedule({"enabled": True, "sleep_start_hour": 3,
+                      "sleep_end_hour": 4, "sleep_jitter_minutes": 0,
+                      "sale_target_trophies": 25000})
+    s.set_trophy_total_provider(lambda: 24999)
+    noon = _ts(12)
+    assert s.state(noon) == "play"
+    s.set_trophy_total_provider(lambda: 25000)
+    assert s.state(noon) == "sale_ready"
+
+
+def test_sale_target_zero_never_triggers():
+    s = PlaySchedule({"enabled": True, "sleep_start_hour": 3,
+                      "sleep_end_hour": 4, "sleep_jitter_minutes": 0,
+                      "sale_target_trophies": 0})
+    s.set_trophy_total_provider(lambda: 999999)
+    assert s.state(_ts(12)) == "play"
+
+
+def test_sleep_outranks_sale_ready():
+    s = PlaySchedule({"enabled": True, "sleep_start_hour": 1,
+                      "sleep_end_hour": 9, "sleep_jitter_minutes": 0,
+                      "sale_target_trophies": 25000})
+    s.set_trophy_total_provider(lambda: 30000)
+    assert s.state(_ts(3)) == "sleep"
