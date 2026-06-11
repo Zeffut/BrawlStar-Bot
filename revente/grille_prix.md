@@ -32,3 +32,17 @@ Source : annonces réelles Eldorado + PlayerAuctions. Prix en $ (≈ ×0,92 pour
 - Compte ~20k tr **sans composition** = 7-13 $ (à peine rentable après commission)
 - Même palier **chargé** = 50-80 $
 - → la valeur est dans la **composition**, pas le compteur de trophées
+
+## Re-benchmark 2026-06-12 (Eldorado live)
+
+Le « basique » s'est encore dévalué — les trophées bruts ne paient plus :
+
+| Annonce observée | Prix |
+|---|---|
+| 15 000 tr, 52 brawlers, 2 légendaires | 9 $ |
+| 56 000 tr « basique » | 37 $ |
+| 45 000 tr, 28 max, **51 hypercharges** | 49,90 $ |
+| 75 000+ tr, 102 brawlers, 48 HC | 110 $ |
+
+→ Valeur marginale du trophée brut ≈ **0,7 $/1000 tr**. Une hypercharge ≈ **+5-8 $** (5 000 coins).
+→ Confirme la stratégie : largeur sous ~750/brawler, plateau de vente **25-28k**, convertir TOUT l'or en hypercharges (sur les P11) avant de lister, thésauriser les gemmes (1 600+ gemmes = gros argument d'annonce).
