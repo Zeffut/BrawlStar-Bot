@@ -246,6 +246,25 @@ def count_matches_today(account_id: int, now: float | None = None) -> int:
     return int(row[0]) if row and row[0] else 0
 
 
+def latest_account_trophies(account_id: "int | None") -> "int | None":
+    """Most recent account-wide trophy total logged for this account, or None.
+
+    Source of the play-schedule trophy gate (sale_ready). Reads the latest
+    non-NULL account_trophies_after — the authoritative running total written
+    after each match.
+    """
+    if account_id is None:
+        return None
+    with _lock:
+        row = conn().execute(
+            "SELECT account_trophies_after FROM matches "
+            "WHERE account_id = ? AND account_trophies_after IS NOT NULL "
+            "ORDER BY timestamp DESC, id DESC LIMIT 1",
+            (account_id,),
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
+
+
 def win_rate_by_brawler(account_id: int) -> list[dict]:
     with _lock:
         rows = conn().execute(

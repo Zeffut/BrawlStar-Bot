@@ -496,6 +496,12 @@
         <input type="number" id="sched-cap-jitter" min="0" max="100" value="20">
       </label>
     </div>
+    <div class="pv-row">
+      <label>Cible de revente (trophées, 0 = off)
+        <input type="number" id="sched-sale-target" min="0" step="500" value="0">
+        <span class="muted" style="font-size:10px">À ce total, le bot s'arrête et envoie un rapport de revente sur Telegram.</span>
+      </label>
+    </div>
   </div>
 
   <!-- Card 5 — Jour de repos -->
@@ -564,6 +570,6 @@
 </section>
 
 <div id="toast-stack"></div>
-<script src="/static/app.js?v=20260609g"></script>
+<script src="/static/app.js?v=20260612a"></script>
 </body>
 </html>

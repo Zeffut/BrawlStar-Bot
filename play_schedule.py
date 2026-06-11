@@ -60,6 +60,31 @@ def set_match_count_provider(fn) -> None:
             log.debug("match-count re-seed failed", exc_info=True)
 
 
+# Provider (set by the worker) returning the account-wide trophy TOTAL, read
+# from the DB (latest account_trophies_after). Drives the sale_ready gate.
+_TROPHY_TOTAL_PROVIDER = None
+
+
+def _trophy_total() -> "int | None":
+    fn = _TROPHY_TOTAL_PROVIDER
+    if fn is None:
+        return None
+    try:
+        v = fn()
+        return int(v) if v is not None else None
+    except Exception:
+        log.debug("trophy-total provider failed", exc_info=True)
+        return None
+
+
+def set_trophy_total_provider(fn) -> None:
+    """Register a callable() -> int|None giving the account's current trophy
+    total (DB-backed). Used by the sale_ready gate to auto-stop the grind when
+    the configured sale_target_trophies is reached."""
+    global _TROPHY_TOTAL_PROVIDER
+    _TROPHY_TOTAL_PROVIDER = fn
+
+
 _WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday",
                   "saturday", "sunday"]
 
@@ -79,6 +104,7 @@ _DEFAULTS = {
     "blocks_jitter": 0,
     "dayoff_weekdays": [],        # e.g. ["sunday"]
     "dayoff_chance": 0.0,         # 0..1 probability per day (seeded)
+    "sale_target_trophies": 0,    # 0 = disabled; >0 → sale_ready stops the grind
     # pause_windows is a list of dicts, handled separately (not a scalar).
 }
 
@@ -86,7 +112,8 @@ _DEFAULTS = {
 _SCALAR_KEYS = ("sleep_start_hour", "sleep_end_hour", "sleep_jitter_minutes",
                 "block_min_minutes", "block_max_minutes", "break_min_minutes",
                 "break_max_minutes", "daily_match_cap", "daily_cap_jitter",
-                "max_blocks_per_day", "blocks_jitter")
+                "max_blocks_per_day", "blocks_jitter",
+                "sale_target_trophies")
 
 
 def _resolve_day_params(base: dict, overrides: dict, weekday: int) -> dict:
@@ -259,6 +286,7 @@ class PlaySchedule:
         self._blocks_today = 0
         self._last_reload_check = 0.0
         self._active_pause_label = "pause"
+        self._trophy_provider = None
         self._force_resolve = False
         self._apply_cfg(cfg)
         # Today's resolved values (rolled in _ensure_day).
@@ -279,6 +307,22 @@ class PlaySchedule:
     @property
     def _today_sleep_end_min(self) -> int:
         return self._today_sleep.end_min
+
+    def set_trophy_total_provider(self, fn) -> None:
+        """Per-instance provider override (used by tests; production uses the
+        module-level provider via _trophy_total)."""
+        self._trophy_provider = fn
+
+    def _trophy_now(self) -> "int | None":
+        fn = getattr(self, "_trophy_provider", None)
+        if fn is not None:
+            try:
+                v = fn()
+                return int(v) if v is not None else None
+            except Exception:
+                log.debug("instance trophy provider failed", exc_info=True)
+                return None
+        return _trophy_total()
 
     # ---- config application ----
     @staticmethod
@@ -312,6 +356,7 @@ class PlaySchedule:
             self.dayoff_chance = max(0.0, min(1.0, float(cfg.get("dayoff_chance", 0.0))))
         except (TypeError, ValueError):
             self.dayoff_chance = 0.0
+        self.sale_target = max(0, int(cfg.get("sale_target_trophies", 0) or 0))
         self.pause_windows_cfg = list(cfg.get("pause_windows") or [])
         self._overrides = {"weekend": cfg.get("weekend") or {},
                            "days": cfg.get("days") or {}}
@@ -463,6 +508,10 @@ class PlaySchedule:
                 return "cap"
             if self._today_block_cap and self._blocks_today >= self._today_block_cap:
                 return "cap"
+            if self.sale_target > 0:
+                total = self._trophy_now()
+                if total is not None and total >= self.sale_target:
+                    return "sale_ready"
             if time.monotonic() < self._break_until:
                 return "break"
             return "play"
@@ -480,6 +529,8 @@ class PlaySchedule:
             return False, f"quota du jour atteint ({self._matches_today}/{self._today_cap})"
         if st == "dayoff":
             return False, "jour de repos"
+        if st == "sale_ready":
+            return False, f"pret a vendre (cible {self.sale_target} tr atteinte)"
         return False, "pause"
 
 

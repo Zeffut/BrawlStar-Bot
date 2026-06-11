@@ -16,6 +16,7 @@ DEFAULTS = {
     "blocks_jitter": 0,
     "daily_match_cap": 180,
     "daily_cap_jitter": 50,
+    "sale_target_trophies": 0,
     "dayoff_weekdays": [],
     "dayoff_chance": 0.0,
     "pause_windows": [],
@@ -25,7 +26,7 @@ DEFAULTS = {
 _SCALARS = ("sleep_start_hour", "sleep_end_hour", "sleep_jitter_minutes",
             "block_min_minutes", "block_max_minutes", "break_min_minutes",
             "break_max_minutes", "max_blocks_per_day", "blocks_jitter",
-            "daily_match_cap", "daily_cap_jitter")
+            "daily_match_cap", "daily_cap_jitter", "sale_target_trophies")
 _WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday",
              "saturday", "sunday")
 
