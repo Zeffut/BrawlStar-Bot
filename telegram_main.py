@@ -273,7 +273,8 @@ def _manage_schedule_powersave(bot) -> None:
         except Exception:
             log.exception("schedule enter_power_save failed")
     label = {"sleep": "sommeil", "cap": "quota du jour", "break": "pause",
-             "pause": "pause", "dayoff": "jour de repos"}.get(st, st)
+             "pause": "pause", "dayoff": "jour de repos",
+             "sale_ready": "prêt à vendre"}.get(st, st)
     try:
         _set_activity(f"💤 Pause — {label}")
     except Exception:
