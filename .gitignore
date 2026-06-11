@@ -30,6 +30,7 @@ cfg/device.toml
 revente/captures/
 cfg/imap.toml
 cfg/schedule.local.toml
+cfg/sale_report_state.json
 
 # Playwright MCP scratch artifacts
 .playwright-mcp/
