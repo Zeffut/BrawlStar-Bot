@@ -279,6 +279,22 @@ def _manage_schedule_powersave(bot) -> None:
     except Exception:
         pass
 
+    if st == "sale_ready":
+        try:
+            import sale_report
+            sched = play_schedule.get()
+            target = int(getattr(sched, "sale_target", 0) or 0)
+            tag = None
+            aid = getattr(bot.runner, "_account_id", None)
+            if aid is not None:
+                acc = db.get_account(aid)
+                if acc:
+                    tag = acc.get("tag")
+            if tag and target and not sale_report.already_notified(tag, target):
+                sale_report.build_and_send(tag, target, bot.send)
+        except Exception:
+            log.warning("sale-ready report trigger failed", exc_info=True)
+
 
 def _resolve_account_id(accounts: "list[dict]", serial: "str | None") -> "int | None":
     """Resolve which account id this worker should grind under.
@@ -1109,6 +1125,7 @@ class BotRunner:
             try:
                 _aid = self._account_id
                 play_schedule.set_match_count_provider(lambda: db.count_matches_today(_aid))
+                play_schedule.set_trophy_total_provider(lambda: db.latest_account_trophies(_aid))
             except Exception:
                 log.debug("set match-count provider failed", exc_info=True)
             self._session_id = db.start_session(
