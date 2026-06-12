@@ -80,6 +80,38 @@ class DeviceNotConnected(RuntimeError):
     """Raised when no ADB device is currently authorized."""
 
 
+# A WiFi (TCP) ADB session silently drops whenever the adb server restarts
+# or the network blips, and it does NOT come back on its own — someone has
+# to run `adb connect` again. Without this the bot stalls on
+# DeviceNotConnected ('waiting for battery') until a human intervenes.
+_TCP_RECONNECT_COOLDOWN_S = 20.0
+_last_tcp_connect: float = 0.0
+
+
+def _try_tcp_reconnect(serial: str, now: float) -> bool:
+    """Best-effort, throttled `adb connect` for a dropped WiFi serial.
+
+    Returns True if the serial is alive again afterwards. USB serials
+    (no ':') are never reconnectable this way and return False.
+    """
+    global _last_tcp_connect
+    if ":" not in serial:
+        return False
+    if now - _last_tcp_connect < _TCP_RECONNECT_COOLDOWN_S:
+        return False
+    _last_tcp_connect = now
+    try:
+        out = subprocess.check_output(
+            ["adb", "connect", serial],
+            stderr=subprocess.STDOUT, timeout=8,
+        ).decode("utf-8", errors="replace").strip()
+        log.info("adb connect %s -> %s", serial, out)
+    except Exception:
+        log.warning("adb connect %s failed", serial, exc_info=True)
+        return False
+    return _cached_serial_alive(serial)
+
+
 def adb_serial() -> str:
     """Return the device serial the bot should use.
 
@@ -102,8 +134,13 @@ def adb_serial() -> str:
                 log.info("adb device serial resolved → %s (forced)", forced)
             _cached, _cached_at = forced, now
             return forced
-        # Forced but not reachable: still return it (caller will know
-        # to surface the error), but don't cache so we re-check soon.
+        # Forced but not reachable: WiFi serials can be re-attached with
+        # `adb connect` — try that (throttled) before giving up.
+        if _try_tcp_reconnect(forced, now):
+            log.info("adb device serial recovered -> %s (tcp reconnect)", forced)
+            _cached, _cached_at = forced, now
+            return forced
+        # Don't cache so we re-check soon.
         raise DeviceNotConnected(f"forced serial {forced!r} not reachable")
     # No override: check cache validity.
     if _cached and (now - _cached_at) < _CACHE_TTL_S and _cached_serial_alive(_cached):
