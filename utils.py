@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import hashlib
 import io
 from io import BytesIO
@@ -71,13 +72,21 @@ def extract_text_and_positions(image_path):
     return text_details
 
 class DefaultEasyOCR:
+    """Lazy wrapper: the EasyOCR model loads on first readtext(), not at import,
+    so processes that never OCR skip the multi-second startup cost."""
+
     def __init__(self):
-        # Auto-pick the fastest device: CUDA → MPS (Apple Silicon) → CPU.
-        # Massively cooler on M-series Macs vs CPU.
-        self.reader = easyocr.Reader(['en'], gpu=True)
+        self._reader = None
+        self._lock = threading.Lock()
 
     def readtext(self, image_input):
-        return self.reader.readtext(image_input)
+        if self._reader is None:
+            with self._lock:
+                if self._reader is None:
+                    # Auto-pick the fastest device: CUDA → MPS (Apple Silicon) → CPU.
+                    # Massively cooler on M-series Macs vs CPU.
+                    self._reader = easyocr.Reader(['en'], gpu=True)
+        return self._reader.readtext(image_input)
 
 def load_toml_as_dict(file_path):
     path = get_json_path(file_path)

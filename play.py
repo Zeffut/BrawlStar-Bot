@@ -375,35 +375,28 @@ class Play(Movement):
             self.time_since_movement = time.time()
         return movement
 
-    def check_if_hypercharge_ready(self, frame):
-        screenshot = frame.crop((hypercharge_crop_area[0] * self.window_controller.width_ratio, hypercharge_crop_area[1] * self.window_controller.height_ratio, hypercharge_crop_area[2] * self.window_controller.width_ratio, hypercharge_crop_area[3] * self.window_controller.height_ratio))
-        purple_pixels = count_hsv_pixels(screenshot, (137, 158, 159), (179, 255, 255))
+    def _check_ability_ready(self, frame, crop_area, low_hsv, high_hsv, minimum, label):
+        wr = self.window_controller.width_ratio
+        hr = self.window_controller.height_ratio
+        screenshot = frame.crop((crop_area[0] * wr, crop_area[1] * hr,
+                                 crop_area[2] * wr, crop_area[3] * hr))
+        pixels = count_hsv_pixels(screenshot, low_hsv, high_hsv)
         if debug:
-            print("hypercharge purple pixels:", purple_pixels, "(if > ", self.hypercharge_pixels_minimum, " then hypercharge is ready)")
-            screenshot.save(f"debug_frames/hypercharge_debug_{int(time.time())}.png")
-        if purple_pixels > self.hypercharge_pixels_minimum:
-            return True
-        return False
+            print(f"{label} pixels:", pixels, "(if > ", minimum, f" then {label} is ready)")
+            screenshot.save(f"debug_frames/{label}_debug_{int(time.time())}.png")
+        return pixels > minimum
+
+    def check_if_hypercharge_ready(self, frame):
+        return self._check_ability_ready(frame, hypercharge_crop_area, (137, 158, 159), (179, 255, 255),
+                                         self.hypercharge_pixels_minimum, "hypercharge")
 
     def check_if_gadget_ready(self, frame):
-        screenshot = frame.crop((gadget_crop_area[0] * self.window_controller.width_ratio, gadget_crop_area[1] * self.window_controller.height_ratio, gadget_crop_area[2] * self.window_controller.width_ratio, gadget_crop_area[3] * self.window_controller.height_ratio))
-        green_pixels = count_hsv_pixels(screenshot, (57, 219, 165), (62, 255, 255))
-        if debug:
-            print("gadget green pixels:", green_pixels, "(if > ", self.gadget_pixels_minimum, " then gadget is ready)")
-            screenshot.save(f"debug_frames/gadget_debug_{int(time.time())}.png")
-        if green_pixels > self.gadget_pixels_minimum:
-            return True
-        return False
+        return self._check_ability_ready(frame, gadget_crop_area, (57, 219, 165), (62, 255, 255),
+                                         self.gadget_pixels_minimum, "gadget")
 
     def check_if_super_ready(self, frame):
-        screenshot = frame.crop((super_crop_area[0] * self.window_controller.width_ratio, super_crop_area[1] * self.window_controller.height_ratio, super_crop_area[2] * self.window_controller.width_ratio, super_crop_area[3] * self.window_controller.height_ratio))
-        yellow_pixels = count_hsv_pixels(screenshot, (19, 190, 232), (24, 240, 255))
-        if debug:
-            print("super yellow pixels:", yellow_pixels, "(if > ", self.super_pixels_minimum, " then super is ready)")
-            screenshot.save(f"debug_frames/super_debug_{int(time.time())}.png")
-        if yellow_pixels > self.super_pixels_minimum:
-            return True
-        return False
+        return self._check_ability_ready(frame, super_crop_area, (19, 190, 232), (24, 240, 255),
+                                         self.super_pixels_minimum, "super")
 
     def get_tile_data(self, frame):
         tile_data = self.Detect_tile_detector.detect_objects(frame, conf_tresh=self.wall_detection_confidence)
@@ -425,18 +418,8 @@ class Play(Movement):
         return combined_walls
 
     def combine_walls_from_history(self):
-        wall_counts = {}
-        for walls in self.wall_history:
-            for wall in walls:
-                wall_key = tuple(wall)
-                wall_counts[wall_key] = wall_counts.get(wall_key, 0) + 1
-
-        threshold = 1
-
-        combined_walls = [list(wall) for wall, count in wall_counts.items() if count >= threshold]
-        # print(f"Combined walls: {combined_walls}")
-
-        return combined_walls
+        unique = dict.fromkeys(tuple(wall) for walls in self.wall_history for wall in walls)
+        return [list(wall) for wall in unique]
 
     def get_movement(self, player_data, enemy_data, walls, brawler):
         brawler_info = (self.brawlers_info.get(brawler)

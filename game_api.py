@@ -241,6 +241,10 @@ class GameAPI:
         """
         import cv2
         wc = self.wc
+
+        def _pil(bgr):
+            return Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+
         # 1. ScreenRecorder pipe.
         try:
             import screen_capture as _sc
@@ -249,8 +253,7 @@ class GameAPI:
                 f = rec.get_frame()
                 age = rec.get_frame_age()
                 if f is not None and age is not None and age < 2.0:
-                    rgb = cv2.cvtColor(f, cv2.COLOR_BGR2RGB)
-                    return Image.fromarray(rgb)
+                    return _pil(f)
         except Exception:
             log.debug("screenrec grab failed", exc_info=True)
         # 2. Shared frame.
@@ -258,8 +261,7 @@ class GameAPI:
             if wc is not None and getattr(wc, "last_frame", None) is not None:
                 age = time.time() - getattr(wc, "last_frame_time", 0)
                 if age < 15.0:
-                    rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
-                    return Image.fromarray(rgb)
+                    return _pil(wc.last_frame)
         except Exception:
             log.debug("piggyback failed", exc_info=True)
         # 2. Own adb call — also writes back into wc.last_frame so the
@@ -284,8 +286,7 @@ class GameAPI:
         # 3. Last resort: stale wc.last_frame.
         if wc is not None and getattr(wc, "last_frame", None) is not None:
             try:
-                rgb = cv2.cvtColor(wc.last_frame, cv2.COLOR_BGR2RGB)
-                return Image.fromarray(rgb)
+                return _pil(wc.last_frame)
             except Exception:
                 pass
         raise RuntimeError("no screenshot available (wc.last_frame=None and adb failed)")
@@ -382,8 +383,8 @@ class GameAPI:
         log.warning("battery_status: all %d retries failed (last: %s)", retries, last_exc)
         return {"level": None, "charging": None}
 
-    def can_play(self) -> tuple[bool, str]:
-        """Return (ok, reason) — single hysteresis gate (30% / 80%).
+    def _battery_pause_update(self, lvl: "int | None") -> bool:
+        """Single hysteresis gate (30% / 80%) — the one place the pause flag moves.
 
         - Drop below LOW_PCT (30%) → paused.
         - Once paused, stay paused until level reaches RESUME_PCT (80%).
@@ -391,20 +392,21 @@ class GameAPI:
           it was doing: paused if it was paused, playing if it was
           playing. No mid-level toggle.
         """
+        was_paused = getattr(self, "_battery_paused", False)
+        self._battery_paused = (lvl is None or lvl < BATTERY_LOW_PCT
+                                or (was_paused and lvl < BATTERY_RESUME_PCT))
+        return self._battery_paused
+
+    def can_play(self) -> tuple[bool, str]:
+        """Return (ok, reason) from the battery hysteresis gate."""
         bat = self.battery_status()
         lvl = bat.get("level")
-        if lvl is None:
-            self._battery_paused = True
-            return False, "battery level unknown (ADB failure) — refusing to play"
-        was_paused = getattr(self, "_battery_paused", False)
-        # Engage pause when we drop below LOW.
-        if lvl < BATTERY_LOW_PCT:
-            self._battery_paused = True
-            return False, f"battery {lvl}% — will resume at {BATTERY_RESUME_PCT}%"
-        # Release pause only when we reach RESUME.
-        if was_paused and lvl < BATTERY_RESUME_PCT:
+        if self._battery_pause_update(lvl):
+            if lvl is None:
+                return False, "battery level unknown (ADB failure) — refusing to play"
+            if lvl < BATTERY_LOW_PCT:
+                return False, f"battery {lvl}% — will resume at {BATTERY_RESUME_PCT}%"
             return False, f"recharging ({lvl}%) — will resume at {BATTERY_RESUME_PCT}%"
-        self._battery_paused = False
         return True, f"battery OK ({lvl}%)"
 
     # ---- Power saver (idle low-battery handling) -----------------
@@ -515,17 +517,7 @@ class GameAPI:
         bat = self.battery_status()
         lvl = bat.get("level")
         chg = bat.get("charging")
-        # Mirror can_play()'s single-gate hysteresis (30% / 80%).
-        was_paused = getattr(self, "_battery_paused", False)
-        if lvl is None:
-            paused = True
-        elif lvl < BATTERY_LOW_PCT:
-            paused = True
-        elif was_paused and lvl < BATTERY_RESUME_PCT:
-            paused = True  # hysteresis: still recharging
-        else:
-            paused = False
-        self._battery_paused = paused
+        paused = self._battery_pause_update(lvl)
         # Rich "what am I doing" status. Battery pause overrides any published
         # activity (it's the real reason the bot is idle), and works even when
         # no session is running. Otherwise use the runner-published activity,
