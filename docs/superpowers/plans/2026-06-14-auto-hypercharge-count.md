@@ -48,8 +48,10 @@ _GEOM_WIDE = {
     "badge_in_cell": (0.02, 0.20, 0.80, 0.99),   # x0,x1,y0,y1 within cell
     # name strip: bottom band of the cell (right of the badge).
     "name_in_cell": (0.20, 0.98, 0.80, 0.99),
-    # detail screen: right ability column (blue bg) to scan for the flame.
-    "detail_hc": (0.82, 0.97, 0.10, 0.55),
+    # detail screen: the bottom-right ability slot = the hypercharge slot.
+    # Calibrated tight (excludes the magenta "POUVOIR/MAX 11" bar below, which
+    # otherwise false-positives): Maisie HC+ = 8010 magenta px, Shelly HC- = 0.
+    "detail_hc": (0.90, 0.99, 0.18, 0.40),
     # detail screen header region to OCR for the brawler name (large text top-left).
     "detail_name": (0.06, 0.40, 0.12, 0.24),
 }
@@ -193,7 +195,7 @@ def _detail_has_hypercharge(pil_image, w: int, h: int) -> bool:
     return _magenta_count(crop) >= HC_MIN_PX
 ```
 
-(Note: `_geom_for` is defined in Task 4; if implementing Task 3 first, temporarily inline the `detail_hc` ratios `(0.82,0.97,0.10,0.55)` and replace with `_geom_for` in Task 4.)
+(Note: `_geom_for` is defined in Task 4; if implementing Task 3 first, temporarily inline the `detail_hc` ratios `(0.90,0.99,0.18,0.40)` and replace with `_geom_for` in Task 4.)
 
 - [ ] **Step 4: Run test to verify it passes** — same command → PASS (both positive and negative).
 - [ ] **Step 5: Commit**
