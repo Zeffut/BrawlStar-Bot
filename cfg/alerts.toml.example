@@ -28,9 +28,13 @@ template = "⚠️ Could not read current trophies for {brawler}. Cycle started 
 enabled = false
 template = "🛑 Bot stopped during init (no match started)."
 
+# A healthy cycle (match + brawler-swap selection + post-match screens) can
+# legitimately run ~12 min between two match-ends, so the alert only fires
+# past that to avoid false "bloqué" notifications. Silent goto_lobby recovery
+# already kicks in at 12 min; hard worker restart at 18 min.
 [bot_stuck]
 enabled = true
-threshold_minutes = 8
+threshold_minutes = 13
 template = """⚠️ Bot semble bloqué
 Aucun match terminé depuis {minutes} min.
 Brawler en cours: {brawler} — {matches} matches dans cette session.

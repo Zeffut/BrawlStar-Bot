@@ -649,7 +649,7 @@ class BotRunner:
                     # and trigger an unjustified _os._exit(1) on a healthy session.
                     elapsed = time.monotonic() - self._last_match_at
                     cfg = _alerts_load().get("bot_stuck", {})
-                    alert_min = float(cfg.get("threshold_minutes", 8))
+                    alert_min = float(cfg.get("threshold_minutes", 13))
                     cur_brawler = (self.brawler_data[0]["brawler"]
                                    if self.brawler_data else "?")
                     # Alert once when first stuck (informational).
