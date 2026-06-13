@@ -624,12 +624,6 @@ class BotRunner:
     STUCK_RECOVERY_MIN = 12      # start active recovery (goto_lobby, retried)
     STUCK_HARD_RESTART_MIN = 18  # still stuck → hard-restart the worker
 
-    # Max trophies brawlace can lag behind the delta-tracked total before we
-    # treat the gap as estimation drift (not API lag) and re-anchor down.
-    # A single 40-85 min play block gains well under this; multi-thousand gaps
-    # are accumulated estimate error.
-    TROPHY_ANCHOR_TOLERANCE = 500
-
     def _start_stuck_watchdog(self) -> None:
         """Background thread: detect a wedged session (no match completing for
         too long) and recover with ESCALATION, not just a one-shot alert.
@@ -1071,28 +1065,17 @@ class BotRunner:
                 self._account_trophies = sum(
                     b.get("trophies", 0) for b in profile.get("brawlers", [])
                 )
-                # On RESUME, brawlace is a BOUNDED anchor, not a one-way floor.
-                # Per-match trophy deltas are ESTIMATED (trophy_observer range
-                # tables), not read from screen, so they slowly drift — and the
-                # old "brawlace is only an upward floor" rule let that drift
-                # accumulate without bound (observed ~3000 above the real total).
-                # brawlace lags reality by minutes-to-hours, so:
-                #  - gap within tolerance → trust the tracked total (don't discard
-                #    real gains brawlace hasn't caught up to — the old deficit bug);
-                #  - gap beyond tolerance → it's estimation drift, not lag, so
-                #    re-anchor DOWN to brawlace (the authoritative sum).
-                _brawlace = self._account_trophies  # authoritative sum-of-brawlers
+                # On RESUME, don't re-anchor DOWN to brawlace: it lags reality by
+                # minutes-to-hours, so re-seeding at every 40-85 min block snapped
+                # the panel total back to brawlace's stale value and discarded the
+                # real gains since (the "~1000 trophy deficit"). Carry the
+                # delta-tracked total forward; brawlace stays an UPWARD floor (the
+                # post-match catch-up still raises us if we genuinely missed gains).
                 _carry = self._resume_account_trophies
-                if _carry and _carry > _brawlace:
-                    if _carry - _brawlace <= self.TROPHY_ANCHOR_TOLERANCE:
-                        log.info("carry-forward account trophies: brawlace=%d < tracked=%d "
-                                 "(gap %d ≤ %d) → keep tracked",
-                                 _brawlace, _carry, _carry - _brawlace, self.TROPHY_ANCHOR_TOLERANCE)
-                        self._account_trophies = int(_carry)
-                    else:
-                        log.warning("re-anchor DOWN to brawlace: tracked=%d brawlace=%d "
-                                    "(gap %d > %d) → estimation drift, trusting brawlace",
-                                    _carry, _brawlace, _carry - _brawlace, self.TROPHY_ANCHOR_TOLERANCE)
+                if _carry and _carry > self._account_trophies:
+                    log.info("carry-forward account trophies: brawlace=%d < tracked=%d → keep tracked",
+                             self._account_trophies, _carry)
+                    self._account_trophies = int(_carry)
                 log.info("seeded account trophies: %d (sum of %d brawlers)",
                          self._account_trophies, len(profile.get("brawlers", [])))
         except Exception:
