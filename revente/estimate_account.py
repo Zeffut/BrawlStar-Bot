@@ -56,7 +56,7 @@ def run(tag: str | None = None, serial: str | None = None) -> dict:
     data = AccountData(
         tag=tag or "?", name=prof.get("name") or "?", trophies=trophies,
         brawlers=len(brawlers), power11=power11,
-        gems=cur.get("gems"), gold=cur.get("gold"),
+        gems=cur.get("gems"), gold=cur.get("gold"), bling=cur.get("bling"),
     )
     est = estimate(data)
     return {"ok": True, "account": data.__dict__, "estimate": est.__dict__}

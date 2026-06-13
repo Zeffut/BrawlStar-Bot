@@ -22,6 +22,7 @@ class AccountData:
     power11: int
     gems: int | None = None
     gold: int | None = None
+    bling: int | None = None
     level: int | None = None
     rare_skins: int = 0     # confirmed rare/old skins (visual pass)
     hypercharges: int = 0   # unlocked hypercharges (visual pass)

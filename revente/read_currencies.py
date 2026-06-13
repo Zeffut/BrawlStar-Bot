@@ -19,12 +19,33 @@ import re
 import subprocess
 
 # (y0, y1, x0, x1) as ratios of the lobby frame — top bar, left→right.
-# Verified live on BlueStacks 2560×1440 with easyocr (2026-05-31).
-_CROPS = {
+# The HUD layout depends on the device ASPECT RATIO, not just the pixel size:
+# the top-right currency cluster sits at different x on a 16:9 emulator vs a
+# tall ~19.5:9 phone, so a single ratio set does NOT transfer. We keep one set
+# per aspect bucket and pick by w/h.
+
+# 16:9 emulator (BlueStacks 2560×1440 / 1920×1080). Verified live 2026-05-31.
+_CROPS_16_9 = {
     "trophies": (0.020, 0.078, 0.218, 0.285),
     "gems":     (0.015, 0.078, 0.635, 0.715),
     "gold":     (0.015, 0.078, 0.735, 0.825),
 }
+
+# ~19.5:9 phone (Mi9T 2340×1080, landscape). Verified live 2026-06-13.
+# Cluster order here is bling | gold | gems. Trophies is intentionally OMITTED:
+# the stylised HUD font makes easyocr drop/duplicate a digit (reads 251770 for
+# 25170), so the orchestrator must take trophies from brawlace / delta-tracking,
+# never from this OCR.
+_CROPS_WIDE = {
+    "bling": (0.017, 0.067, 0.684, 0.747),
+    "gold":  (0.017, 0.067, 0.753, 0.834),
+    "gems":  (0.017, 0.067, 0.848, 0.900),
+}
+
+
+def _crops_for(w: int, h: int) -> dict:
+    """Pick the crop set for the frame's aspect ratio (phone vs 16:9 emulator)."""
+    return _CROPS_WIDE if (w / h) > 1.95 else _CROPS_16_9
 
 _READER = None
 
@@ -71,16 +92,18 @@ def _screencap(serial: str) -> bytes:
 
 
 def read_lobby_numbers(serial: str) -> dict:
-    """Return {'trophies': int|None, 'gems': int|None, 'gold': int|None}
-    from the current lobby screen. Assumes Brawl Stars is at the lobby.
+    """Return the lobby currencies (keys depend on device: gems/gold always,
+    plus trophies on 16:9 or bling on a phone) from the current lobby screen.
+    Assumes Brawl Stars is at the lobby.
 
-    Upscales each crop 3× greyscale before OCR for small-digit accuracy.
+    Crops are picked per aspect ratio (`_crops_for`), so this works on both the
+    BlueStacks emulator and a tall phone. Each crop is upscaled 3× before OCR.
     """
     from PIL import Image
     img = Image.open(io.BytesIO(_screencap(serial))).convert("RGB")
     w, h = img.size
     result: dict[str, int | None] = {}
-    for name, (y0, y1, x0, x1) in _CROPS.items():
+    for name, (y0, y1, x0, x1) in _crops_for(w, h).items():
         crop = img.crop((int(w * x0), int(h * y0), int(w * x1), int(h * y1)))
         result[name] = parse_currency_number(_ocr_digits(crop))
     return result
