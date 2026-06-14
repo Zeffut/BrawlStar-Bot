@@ -1219,6 +1219,39 @@ async def api_account_start(account_id: int, payload: AccountSessionPayload) -> 
     }, timeout_s=20)
 
 
+class ShopBody(BaseModel):
+    confirm: bool = False
+    max_count: int | None = None
+    coin_floor: int = 0
+    target_level: int = 11
+    scope: str = "current"
+    max_brawlers: int = 1
+
+
+@app.post("/api/accounts/{account_id}/shop/plan")
+async def api_account_shop_plan(account_id: int) -> dict:
+    # Dry-run read/enumeration : marche le carrousel, peut prendre du temps.
+    return await _cmd_for_account(account_id, "shop_plan", {}, timeout_s=600)
+
+
+@app.post("/api/accounts/{account_id}/shop/buy_hypercharges")
+async def api_account_shop_buy_hc(account_id: int, payload: ShopBody | None = None) -> dict:
+    p = payload or ShopBody()
+    return await _cmd_for_account(account_id, "shop_buy_hypercharges", {
+        "confirm": bool(p.confirm), "max_count": p.max_count,
+        "coin_floor": int(p.coin_floor),
+    }, timeout_s=900)
+
+
+@app.post("/api/accounts/{account_id}/shop/upgrade_power")
+async def api_account_shop_upgrade(account_id: int, payload: ShopBody | None = None) -> dict:
+    p = payload or ShopBody()
+    return await _cmd_for_account(account_id, "shop_upgrade_power", {
+        "confirm": bool(p.confirm), "target_level": int(p.target_level),
+        "scope": p.scope, "max_brawlers": int(p.max_brawlers),
+    }, timeout_s=900)
+
+
 @app.post("/api/accounts/{account_id}/stop")
 async def api_account_stop(account_id: int, payload: AccountSessionPayload | None = None) -> dict:
     force = bool(payload.force) if payload else False
