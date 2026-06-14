@@ -144,26 +144,40 @@ def _portrait_hash(pil_image, w: int, h: int) -> str:
     return "".join("1" if p >= avg else "0" for p in px)
 
 
-def _on_collection(img, w: int, h: int) -> bool:
-    """The grid screen shows the 'BRAWLERS (n/m)' header; a detail screen does not."""
-    return "brawler" in _ocr_text(img.crop((int(w * 0.30), 0, int(w * 0.70), int(h * 0.10))))
+def _grid_header_text(img, w: int, h: int) -> str:
+    return _ocr_text(img.crop((int(w * 0.28), 0, int(w * 0.72), int(h * 0.11))))
+
+
+def _looks_like_grid(text: str) -> bool:
+    """The grid's top-centre header is 'BRAWLERS (n/103)'. OCR garbles it, so match
+    its stablest fragments: the middle of bRAWLers and the fixed total '103'. A detail
+    screen's top-centre is empty (name is top-left, currencies top-right) → no match."""
+    return any(k in text for k in ("rawl", "brawl", "103", "/10"))
+
+
+def _on_collection(serial: str, w: int, h: int, samples: int = 2) -> bool:
+    """True if on the collection grid — voted over a few frames (OCR is flaky)."""
+    for i in range(samples):
+        if _looks_like_grid(_grid_header_text(_screencap(serial), w, h)):
+            return True
+        if i < samples - 1:
+            time.sleep(0.4)
+    return False
 
 
 def _ensure_grid(serial: str, w: int, h: int, g: dict) -> bool:
     """Normalise to the collection GRID. Opening the collection from the lobby may
     land on a brawler detail, so: tap BRAWLERS, and if we're on a detail, tap back."""
-    for _ in range(5):
-        img = _screencap(serial)
-        if _on_collection(img, w, h):
+    for _ in range(6):
+        if _on_collection(serial, w, h):
             return True
         # Either still on the lobby (open it) or on a detail (back out to the grid).
         _tap(serial, w, h, *g["brawlers_btn"])
-        time.sleep(2.0)
-        img = _screencap(serial)
-        if _on_collection(img, w, h):
+        time.sleep(2.2)
+        if _on_collection(serial, w, h):
             return True
         _tap(serial, w, h, *g["back_arrow"])
-        time.sleep(1.5)
+        time.sleep(1.6)
     return False
 
 
