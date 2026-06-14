@@ -102,3 +102,115 @@ def test_levels_to_target():
     assert levels_to_target(1, 99) == 10   # clamp cible à 11
     assert levels_to_target(5, 3) == 0     # cible déjà atteinte
     assert levels_to_target(0, 11) == 11   # garde-fou bas
+
+
+def test_buy_hypercharges_dry_run_spends_nothing(monkeypatch):
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    seq = ["shelly_detail.png", "maisie_detail.png", "bull_detail_p1.png",
+           "shelly_detail.png"]  # le 4e répète le hash de Shelly → wrap
+    it = iter(seq)
+    last = {"name": seq[-1]}
+
+    def fake_screencap(serial):
+        try:
+            last["name"] = next(it)
+        except StopIteration:
+            pass
+        return _img(last["name"])
+
+    monkeypatch.setattr(S, "_screencap", fake_screencap)
+    monkeypatch.setattr(S, "_enter_detail", lambda *a, **k: True)
+    monkeypatch.setattr(S, "_swipe_carousel_next", lambda *a, **k: None)
+    monkeypatch.setattr(S, "_read_coins", lambda serial: 10000)
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+
+    eng = S.ShopActionEngine("fake", dry_run=True, hc_cost=5000)
+    report = eng.buy_hypercharges()
+    assert report.dry_run is True
+    assert spends == []                                  # AUCUNE dépense en dry-run
+    assert len([a for a in report.planned
+                if a.kind == "buy_hypercharge"]) == 1    # 1 seul éligible (Shelly)
+
+
+def test_buy_hypercharges_live_taps_when_confirmed(monkeypatch):
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    monkeypatch.setattr(S, "_enter_detail", lambda *a, **k: True)
+    monkeypatch.setattr(S, "_swipe_carousel_next", lambda *a, **k: None)
+    monkeypatch.setattr(S, "_read_coins", lambda serial: 10000)
+    # une seule fiche éligible puis wrap immédiat
+    frames = iter(["shelly_detail.png", "shelly_detail.png", "shelly_detail.png"])
+    cur = {"n": "shelly_detail.png"}
+
+    def fake_screencap(serial):
+        try:
+            cur["n"] = next(frames)
+        except StopIteration:
+            pass
+        return _img(cur["n"])
+
+    monkeypatch.setattr(S, "_screencap", fake_screencap)
+    # confirm trouvé (centroïde vert factice) + vérif HC OK
+    monkeypatch.setattr(S, "_find_green_button_center", lambda *a, **k: (0.6, 0.8))
+    monkeypatch.setattr(S, "_confirm_hc_applied", lambda self, serial, w, h: True)
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+
+    eng = S.ShopActionEngine("fake", dry_run=False, hc_cost=5000)
+    report = eng.buy_hypercharges(confirm=True, max_count=1)
+    assert report.dry_run is False
+    assert len(spends) >= 1                               # au moins le tap d'achat
+    assert any(r.executed for r in report.results)
+
+
+def test_upgrade_power_current_dry_run(monkeypatch):
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    # Bull P1 : bouton vert présent → 1 action planifiée par tick jusqu'à cible.
+    monkeypatch.setattr(S, "_screencap", lambda s: _img("bull_detail_p1.png"))
+    monkeypatch.setattr(S, "_read_coins", lambda s: 100000)
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+    eng = S.ShopActionEngine("fake", dry_run=True)
+    rep = eng.upgrade_power(target_level=3, scope="current", max_steps=5)
+    assert rep.dry_run is True
+    assert spends == []
+    assert len(rep.planned) >= 1
+    assert all(a.kind == "upgrade_power" for a in rep.planned)
+
+
+def test_upgrade_power_live_stops_when_no_button(monkeypatch):
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    # 1er screen: bouton présent (Bull) ; après le tap+confirm: maxé (Shelly) → stop.
+    frames = iter(["bull_detail_p1.png", "shelly_detail.png", "shelly_detail.png"])
+    cur = {"n": "bull_detail_p1.png"}
+
+    def fake_cap(s):
+        try:
+            cur["n"] = next(frames)
+        except StopIteration:
+            pass
+        return _img(cur["n"])
+
+    monkeypatch.setattr(S, "_screencap", fake_cap)
+    monkeypatch.setattr(S, "_read_coins", lambda s: 100000)
+    monkeypatch.setattr(S, "_find_green_button_center", lambda *a, **k: (0.6, 0.8))
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+    eng = S.ShopActionEngine("fake", dry_run=False)
+    rep = eng.upgrade_power(target_level=11, scope="current", confirm=True, max_steps=5)
+    assert len(spends) >= 1
+    assert any(r.executed for r in rep.results)
+
+
+def test_cli_parser_defaults_to_plan():
+    from revente.shop_actions import _build_parser
+    p = _build_parser()
+    ns = p.parse_args(["--serial", "x"])
+    assert ns.action == "plan"
+    assert ns.confirm is False
+    ns2 = p.parse_args(["--serial", "x", "--buy-hc", "--confirm", "--max-count", "2"])
+    assert ns2.action == "buy-hc" and ns2.confirm is True and ns2.max_count == 2

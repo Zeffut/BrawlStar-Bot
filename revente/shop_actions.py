@@ -163,8 +163,11 @@ def _ocr_costs(pil_image, w: int, h: int):
 
 
 def is_maxed(pil_image, w: int, h: int) -> bool:
-    """Power 11 ⟺ no green AMÉLIORER button on the detail (OCR-free)."""
-    return detect_power_upgrade(pil_image, w, h) is None
+    """Power 11 ⟺ no green pixels in the upgrade-button zone (OCR-free).
+    Uses _green_count directly so it is not affected by a monkeypatch of
+    _find_green_button_center (which is reserved for the confirm-dialog seam)."""
+    crop = _crop_region(pil_image, w, h, UPGRADE_REGION)
+    return _green_count(crop) < GREEN_MIN_PX
 
 
 def hc_buy_eligible(pil_image, w: int, h: int) -> bool:
@@ -212,6 +215,15 @@ def _read_coins(serial: str) -> "int | None":
         return None
 
 
+def _confirm_hc_applied(engine, serial: str, w: int, h: int) -> bool:
+    """After a buy, re-read the detail: HC owned ⟺ magenta flame present.
+    Module-level so tests can monkeypatch via S._confirm_hc_applied.
+    `engine` is passed but unused (reserved for future subclass override)."""
+    time.sleep(1.2)
+    img = _screencap(serial)
+    return _detail_has_hypercharge(img, w, h)
+
+
 class ShopActionEngine:
     def __init__(self, serial: str, *, dry_run: bool = True,
                  hc_cost: int = HC_COST_DEFAULT):
@@ -222,12 +234,6 @@ class ShopActionEngine:
     # -- helpers --------------------------------------------------------
     def _cap(self):
         return _screencap(self.serial)
-
-    def _confirm_hc_applied(self, serial: str, w: int, h: int) -> bool:
-        """After a buy, re-read the detail: HC owned ⟺ magenta flame present."""
-        time.sleep(1.2)
-        img = _screencap(serial)
-        return _detail_has_hypercharge(img, w, h)
 
     def _tap_confirm(self, w: int, h: int) -> bool:
         """Locate and tap the green confirm button in a purchase dialog.
@@ -287,8 +293,8 @@ class ShopActionEngine:
                         _spend_tap(self.serial, w, h, *HC_SLOT_TAP)
                         time.sleep(1.0)
                         confirmed = self._tap_confirm(w, h)
-                        verified = confirmed and self._confirm_hc_applied(
-                            self.serial, w, h)
+                        verified = confirmed and _confirm_hc_applied(
+                            self, self.serial, w, h)
                         rep.results.append(ActionResult(
                             act, executed=True, verified=verified,
                             error=None if confirmed else "no confirm button found"))
