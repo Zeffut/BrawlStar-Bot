@@ -1,11 +1,18 @@
 """Auto-count owned hypercharges from the live Brawl Stars collection.
 
-Strategy: the hypercharge flame is only reliably isolable on a brawler's
-DETAIL screen (magenta flame in the bottom-right ability slot, on a solid blue
-background); grid color detection is too noisy and brawlace's P11 list is stale.
-So we scan the collection grid to find P11 brawlers (power-badge OCR), open each
-P11 card, and detect the flame on its detail screen. Pure helpers are unit-tested;
-navigation I/O is validated live. adb only.
+Hard-won live findings drive this design (Mi9T, 2026-06-14):
+- The hypercharge flame is only reliably isolable on a brawler's DETAIL screen
+  (magenta flame in the bottom-right ability slot, on a solid blue background).
+- BUT a NON-maxed brawler's detail shows purple power-up circles in that same
+  corner → false magenta. So HC only counts when the detail is also MAXED
+  ("NIVEAU MAX" text, matched fuzzily on the large yellow label).
+- The stylised HUD font makes per-card name/power OCR unreliable, and brawlace's
+  P11 list is stale. So we DON'T trust grid OCR: we open every card, gate on
+  maxed+flame, and dedup brawlers by a perceptual hash of the detail portrait
+  (no name OCR). Opening the collection may land on a detail, so we normalise to
+  the grid first.
+Pure helpers (_parse_power, _magenta_count, _detail_has_hypercharge) are unit-
+tested on real fixtures; navigation is validated live. adb only.
 """
 from __future__ import annotations
 import logging
@@ -31,13 +38,12 @@ _GEOM_WIDE = {
         (0.10, 0.36, 0.13, 0.47), (0.38, 0.63, 0.13, 0.47), (0.655, 0.905, 0.13, 0.47),
         (0.10, 0.36, 0.50, 0.84), (0.38, 0.63, 0.50, 0.84), (0.655, 0.905, 0.50, 0.84),
     ],
-    "badge_in_cell": (0.02, 0.20, 0.80, 0.99),   # power badge, fractions OF the cell
-    "name_in_cell":  (0.20, 0.98, 0.80, 0.99),   # name strip, fractions OF the cell
     "detail_hc":     (0.90, 0.99, 0.18, 0.40),   # bottom-right HC slot on detail screen
-    "detail_name":   (0.06, 0.40, 0.12, 0.24),   # brawler name on detail header
+    "detail_maxed":  (0.78, 1.00, 0.80, 0.93),   # "NIVEAU MAX !" yellow label (P11 only)
+    "portrait":      (0.30, 0.70, 0.18, 0.82),   # brawler render — perceptual-hash dedup
 }
-MAX_SCROLLS = 12
-MAX_TAPS = 10
+MAX_SCROLLS = 15
+MAX_TAPS = 60
 
 
 def _geom_for(w: int, h: int) -> dict:
@@ -64,11 +70,16 @@ def _magenta_count(pil_crop) -> int:
     return int(mask.sum() // 255)
 
 
+def _crop(pil_image, w: int, h: int, region) -> "object":
+    x0, x1, y0, y1 = region
+    return pil_image.crop((int(w * x0), int(h * y0), int(w * x1), int(h * y1)))
+
+
 def _detail_has_hypercharge(pil_image, w: int, h: int) -> bool:
-    """True if the detail screen's bottom-right ability slot shows the HC flame."""
-    x0, x1, y0, y1 = _geom_for(w, h)["detail_hc"]
-    crop = pil_image.crop((int(w * x0), int(h * y0), int(w * x1), int(h * y1)))
-    return _magenta_count(crop) >= HC_MIN_PX
+    """True if the detail screen's bottom-right ability slot shows the HC flame.
+    NOTE: only meaningful on a MAXED detail — a non-maxed detail shows purple
+    power-up circles in the same corner. Callers must gate with `_detail_is_maxed`."""
+    return _magenta_count(_crop(pil_image, w, h, _geom_for(w, h)["detail_hc"])) >= HC_MIN_PX
 
 
 def _screencap(serial: str):
@@ -103,75 +114,92 @@ def _ocr_text(pil_crop, allow: "str | None" = None) -> str:
     return " ".join(res).lower().strip()
 
 
-def _on_collection(serial: str, w: int, h: int) -> bool:
-    img = _screencap(serial)
-    crop = img.crop((int(w * 0.30), 0, int(w * 0.70), int(h * 0.10)))
-    return "brawler" in _ocr_text(crop)
+def _detail_is_maxed(pil_image, w: int, h: int) -> bool:
+    """True if the detail screen shows the maxed (P11) 'NIVEAU MAX' label.
+    OCR is fuzzy on the stylised font, so we match the 'max' substring."""
+    return "max" in _ocr_text(_crop(pil_image, w, h, _geom_for(w, h)["detail_maxed"]))
 
 
-def _detail_brawler_name(img, w: int, h: int) -> "str | None":
-    x0, x1, y0, y1 = _geom_for(w, h)["detail_name"]
-    txt = _ocr_text(img.crop((int(w * x0), int(h * y0), int(w * x1), int(h * y1))))
-    return txt or None
+def _portrait_hash(pil_image, w: int, h: int) -> str:
+    """Coarse perceptual hash of the brawler render — dedups brawlers across
+    scroll overlap without relying on (unreliable) name OCR."""
+    crop = _crop(pil_image, w, h, _geom_for(w, h)["portrait"]).convert("L").resize((12, 12))
+    px = list(crop.getdata())
+    avg = sum(px) / len(px)
+    return "".join("1" if p >= avg else "0" for p in px)
+
+
+def _on_collection(img, w: int, h: int) -> bool:
+    """The grid screen shows the 'BRAWLERS (n/m)' header; a detail screen does not."""
+    return "brawler" in _ocr_text(img.crop((int(w * 0.30), 0, int(w * 0.70), int(h * 0.10))))
+
+
+def _ensure_grid(serial: str, w: int, h: int, g: dict) -> bool:
+    """Normalise to the collection GRID. Opening the collection from the lobby may
+    land on a brawler detail, so: tap BRAWLERS, and if we're on a detail, tap back."""
+    for _ in range(5):
+        img = _screencap(serial)
+        if _on_collection(img, w, h):
+            return True
+        # Either still on the lobby (open it) or on a detail (back out to the grid).
+        _tap(serial, w, h, *g["brawlers_btn"])
+        time.sleep(2.0)
+        img = _screencap(serial)
+        if _on_collection(img, w, h):
+            return True
+        _tap(serial, w, h, *g["back_arrow"])
+        time.sleep(1.5)
+    return False
 
 
 def count_hypercharges(serial: str) -> dict:
-    """Open the collection, find P11 brawlers, confirm each one's hypercharge on
-    its detail screen. Returns {"count": int|None, "brawlers": [str]}. count=None
-    on a navigation failure (caller keeps hypercharges=0)."""
+    """Open the collection, open every brawler, and count those that are maxed AND
+    show the hypercharge flame. Dedups by portrait hash (names don't OCR reliably).
+    Returns {"count": int|None, "brawlers": []}. count=None on a navigation failure
+    (caller keeps hypercharges=0). `brawlers` is currently always [] — the stylised
+    name font is not OCR-reliable, so only the count is reported."""
     try:
         probe = _screencap(serial)
         w, h = probe.size
         g = _geom_for(w, h)
-        for _ in range(3):
-            if _on_collection(serial, w, h):
-                break
-            _tap(serial, w, h, *g["brawlers_btn"])
-            time.sleep(2.5)
-        else:
+        if not _ensure_grid(serial, w, h, g):
             return {"count": None, "brawlers": []}
 
         seen: set = set()
-        hc: list = []
+        hc = 0
         scrolls = 0
         taps = 0
-        while scrolls <= MAX_SCROLLS:
+        while scrolls <= MAX_SCROLLS and taps < MAX_TAPS:
             view = _screencap(serial)
-            new_on_view = False
+            if not _on_collection(view, w, h):
+                # Lost the grid (stray popup / nav glitch) — try to recover once.
+                if not _ensure_grid(serial, w, h, g):
+                    break
+                view = _screencap(serial)
+            new_this_view = 0
             for (cx0, cx1, cy0, cy1) in g["cells"]:
-                cw, ch = (cx1 - cx0), (cy1 - cy0)
-                nx0, nx1, ny0, ny1 = g["name_in_cell"]
-                name = _ocr_text(view.crop((
-                    int(w * (cx0 + cw * nx0)), int(h * (cy0 + ch * ny0)),
-                    int(w * (cx0 + cw * nx1)), int(h * (cy0 + ch * ny1)))))
-                if not name or name in seen:
-                    continue
-                seen.add(name)
-                new_on_view = True
-                bx0, bx1, by0, by1 = g["badge_in_cell"]
-                power = _parse_power(_ocr_text(view.crop((
-                    int(w * (cx0 + cw * bx0)), int(h * (cy0 + ch * by0)),
-                    int(w * (cx0 + cw * bx1)), int(h * (cy0 + ch * by1)))), allow="0123456789"))
-                if power is not None and power < 9:
-                    continue  # only P11 can have HC; tap ambiguous(None)/>=9 to be safe
                 if taps >= MAX_TAPS:
-                    log.warning("hc scan: MAX_TAPS hit, stopping early")
                     break
                 _tap(serial, w, h, (cx0 + cx1) / 2, (cy0 + cy1) / 2)
-                time.sleep(2.0)
+                time.sleep(1.8)
                 taps += 1
                 detail = _screencap(serial)
-                dname = _detail_brawler_name(detail, w, h)
-                if dname and _detail_has_hypercharge(detail, w, h):
-                    hc.append(dname)
+                if _on_collection(detail, w, h):
+                    continue  # tapped an empty/locked cell — still on the grid
+                ph = _portrait_hash(detail, w, h)
+                if ph not in seen:
+                    seen.add(ph)
+                    new_this_view += 1
+                    if _detail_is_maxed(detail, w, h) and _detail_has_hypercharge(detail, w, h):
+                        hc += 1
                 _tap(serial, w, h, *g["back_arrow"])
-                time.sleep(1.5)
-            if not new_on_view:
-                break
+                time.sleep(1.2)
+            if new_this_view == 0:
+                break  # whole view already seen → bottom reached
             _swipe(serial, w, h, g)
             time.sleep(1.3)
             scrolls += 1
-        return {"count": len(hc), "brawlers": sorted(set(hc))}
+        return {"count": hc, "brawlers": []}
     except Exception:
         log.exception("count_hypercharges failed")
         return {"count": None, "brawlers": []}
