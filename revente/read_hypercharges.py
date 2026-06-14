@@ -241,14 +241,22 @@ def _swipe_carousel_next(serial: str, w: int, h: int, g: dict) -> None:
                     str(ms)], capture_output=True, timeout=10)
 
 
-def _enter_first_detail(serial: str, w: int, h: int, g: dict) -> bool:
-    """From the collection grid, open a brawler detail (taps cells until one opens)."""
-    for (cx0, cx1, cy0, cy1) in g["cells"]:
-        grid = _screencap(serial)
+def _enter_detail(serial: str, w: int, h: int, g: dict) -> bool:
+    """Reach a brawler DETAIL screen (the carousel start) using IMAGE DIFFS only — no
+    header OCR (which proved unreliable). From the lobby: open the collection and tap a
+    cell; whether the collection opens to the grid or straight to a detail, a cell tap
+    leaves us on a detail. Confirmed by the screen differing a lot from the lobby."""
+    lobby = _screencap(serial)
+    cx0, cx1, cy0, cy1 = g["cells"][0]
+    for _ in range(4):
+        _tap(serial, w, h, *g["brawlers_btn"])
+        time.sleep(2.2)
         _tap(serial, w, h, (cx0 + cx1) / 2, (cy0 + cy1) / 2)
-        time.sleep(2.3)
-        if _img_mean_diff(grid, _screencap(serial)) >= _DETAIL_OPENED_DIFF:
-            return True  # a detail opened
+        time.sleep(2.2)
+        if _img_mean_diff(lobby, _screencap(serial)) >= _DETAIL_OPENED_DIFF:
+            return True
+        _tap(serial, w, h, *g["back_arrow"])  # popup/blocked → clear and retry
+        time.sleep(1.0)
     return False
 
 
@@ -267,9 +275,7 @@ def count_hypercharges(serial: str) -> dict:
         probe = _screencap(serial)
         w, h = probe.size
         g = _geom_for(w, h)
-        if not _ensure_grid(serial, w, h, g):
-            return {"count": None, "brawlers": []}
-        if not _enter_first_detail(serial, w, h, g):
+        if not _enter_detail(serial, w, h, g):
             return {"count": None, "brawlers": []}
 
         seen: set = set()
