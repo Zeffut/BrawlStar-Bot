@@ -454,3 +454,30 @@ git add -A && git commit -m "fix(revente): calibrate hypercharge scan geometry a
 - **Spec coverage:** detail-screen detection (T3), bounded P11 navigation (T5/T6), resolution-aware geometry (T4), estimator integration (T7), gems already shipped, live validation expecting count=1/maisie (T8), fixtures (T1). Robustness (caps, state checks, clean failure → count=None) in T6. YAGNI items (skins, worker auto-pause, 16:9) explicitly excluded. All covered.
 - **Placeholder scan:** constants are concrete (HSV, thresholds, ratios); all code steps show code. Geometry ratios are provisional-but-concrete and are explicitly re-verified/adjusted against fixtures in T1 and live in T8.
 - **Type consistency:** `_geom_for` keys (`brawlers_btn`, `back_arrow`, `scroll`, `cells`, `badge_in_cell`, `name_in_cell`, `detail_hc`, `detail_name`) used consistently in T5/T6. `count_hypercharges` returns `{"count","brawlers"}` consumed identically in T7/T8. `_parse_power`/`_magenta_count`/`_detail_has_hypercharge` signatures stable across tasks.
+
+---
+
+## Outcome (2026-06-14, after live validation)
+
+**Shipped & reliable:** gems auto-read (live-verified, 111 ✓); the HC detection
+primitives `_detail_has_hypercharge` + `_detail_is_maxed` + magenta calibration,
+unit-tested on real device fixtures (Maisie HC→True, Shelly P11→maxed/no-HC,
+Bull P1→excluded). `check_current_detail` (semi-auto, multi-frame vote) and
+`count_hypercharges` (opt-in `--scan-hc`) are committed.
+
+**NOT reliable — full auto-enumeration `count_hypercharges`.** Across 45+ live
+iterations it consistently returned count=0 vs a true 1 (Maisie). Root causes,
+all evidenced and independent:
+1. **Detail screen is animated** → single-frame OCR of "NIVEAU MAX" drifts (reads
+   "nlveaumaa", X→a). Mitigated with fragment match + multi-frame vote, still flaky.
+2. **Grid order is not stable** — unlocking brawlers (Donnie/Lola "NOUV") reordered
+   the grid, so fixed cell positions opened the wrong brawler (cell2 was Shelly, then
+   wasn't). Position-based tapping is unsound.
+3. **Coverage stalls** ~28/40 (scroll/dedup stops revealing deep brawlers → Maisie
+   never reached).
+4. Collection entry sometimes lands on a detail, not the grid.
+
+**Conclusion:** reliable HC counting via screen-scraping is blocked by Brawl Stars'
+animated, OCR-hostile, dynamically-ordered UI — the project's known brawler-navigation
+fragility. Pragmatic path: manual HC entry (small, rarely-changing number); the
+detection primitives + `check_current_detail` can assist a human-navigated flow.
