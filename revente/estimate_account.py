@@ -20,6 +20,7 @@ from pathlib import Path
 
 from revente.estimate import AccountData, estimate
 from revente.read_currencies import read_lobby_numbers
+from revente.read_hypercharges import count_hypercharges
 from revente.read_tag import _validate, detect_tag
 
 
@@ -53,13 +54,17 @@ def run(tag: str | None = None, serial: str | None = None) -> dict:
     if not trophies and cur.get("trophies"):
         trophies = cur["trophies"]
 
+    hc = count_hypercharges(serial)
+
     data = AccountData(
         tag=tag or "?", name=prof.get("name") or "?", trophies=trophies,
         brawlers=len(brawlers), power11=power11,
         gems=cur.get("gems"), gold=cur.get("gold"), bling=cur.get("bling"),
+        hypercharges=(hc.get("count") or 0),
     )
     est = estimate(data)
-    return {"ok": True, "account": data.__dict__, "estimate": est.__dict__}
+    return {"ok": True, "account": data.__dict__, "estimate": est.__dict__,
+            "hypercharge_brawlers": hc.get("brawlers", [])}
 
 
 if __name__ == "__main__":

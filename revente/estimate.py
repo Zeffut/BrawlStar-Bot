@@ -69,7 +69,7 @@ def estimate(data: AccountData) -> Estimate:
     # auto-measured reliably. If they weren't provided, the estimate is
     # indicative only and confidence is capped low.
     if data.hypercharges == 0 and data.rare_skins == 0:
-        notes.append("skins/hypercharges non mesurés — fourchette indicative")
+        notes.append("skins/hypercharges non mesurés ou nuls — fourchette indicative")
         confidence = "low"
     else:
         confidence = "medium"
