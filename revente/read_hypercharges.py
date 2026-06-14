@@ -167,40 +167,65 @@ def _ensure_grid(serial: str, w: int, h: int, g: dict) -> bool:
     return False
 
 
+def _img_mean_diff(a, b) -> float:
+    """Mean absolute pixel difference between two same-size RGB PIL images.
+    A robust, OCR-free 'did the screen change?' signal: grid↔detail differ a lot
+    (≫30); the same grid before/after a no-op action differs ≈0."""
+    import numpy as np
+    aa = np.asarray(a, dtype="int16")
+    bb = np.asarray(b, dtype="int16")
+    if aa.shape != bb.shape:
+        return 255.0
+    return float(np.abs(aa - bb).mean())
+
+
+def _vote_detail(serial: str, w: int, h: int, samples: int = 3) -> tuple:
+    """Majority vote of (maxed, hypercharge) over `samples` frames of the detail
+    currently open. The detail animates, so one frame's OCR of 'NIVEAU MAX' drifts;
+    voting stabilises it. Returns (maxed: bool, hypercharge: bool)."""
+    mv = hv = 0
+    for i in range(samples):
+        img = _screencap(serial)
+        if _detail_is_maxed(img, w, h):
+            mv += 1
+            if _detail_has_hypercharge(img, w, h):
+                hv += 1
+        if i < samples - 1:
+            time.sleep(0.4)
+    maxed = mv * 2 >= samples
+    return maxed, (maxed and hv * 2 >= samples)
+
+
 def check_current_detail(serial: str, samples: int = 3) -> dict:
     """Inspect the brawler DETAIL screen currently open on the device — RELIABLE,
     because it does no navigation (the fragile part). Open a brawler's detail
-    yourself (or via the bot), then call this. Returns
-    {"maxed": bool, "hypercharge": bool}; `hypercharge` is only meaningful when
-    `maxed` is True (non-maxed details show purple power circles in the same slot).
+    yourself (or via the bot), then call this. Returns {"maxed", "hypercharge"};
+    `hypercharge` is only meaningful when `maxed` is True (non-maxed details show
+    purple power circles in the same slot). Uses multi-frame voting (animated UI)."""
+    probe = _screencap(serial)
+    w, h = probe.size
+    maxed, hc = _vote_detail(serial, w, h, samples)
+    return {"maxed": maxed, "hypercharge": hc}
 
-    The detail screen is ANIMATED (brawler bobs, hint pointer pulses), so a single
-    frame's OCR of "NIVEAU MAX" drifts run to run. We sample `samples` frames and
-    take the majority vote, which stabilises both the maxed text and the flame.
-    This is the dependable way to confirm a hypercharge — the full-collection
-    `count_hypercharges` walk is best-effort and under-counts (see module docstring)."""
-    maxed_votes = 0
-    hc_votes = 0
-    for i in range(samples):
-        img = _screencap(serial)
-        w, h = img.size
-        mz = _detail_is_maxed(img, w, h)
-        if mz:
-            maxed_votes += 1
-            if _detail_has_hypercharge(img, w, h):
-                hc_votes += 1
-        if i < samples - 1:
-            time.sleep(0.5)
-    maxed = maxed_votes * 2 >= samples
-    return {"maxed": maxed, "hypercharge": maxed and hc_votes * 2 >= samples}
+
+# diff thresholds (mean abs RGB diff): grid↔detail is large; grid↔same-grid tiny.
+_DETAIL_OPENED_DIFF = 18.0   # post-tap screen differs this much from the grid → a detail opened
+_SCROLL_BOTTOM_DIFF = 6.0    # grid barely changed after a swipe → at the bottom
 
 
 def count_hypercharges(serial: str) -> dict:
-    """Open the collection, open every brawler, and count those that are maxed AND
-    show the hypercharge flame. Dedups by portrait hash (names don't OCR reliably).
-    Returns {"count": int|None, "brawlers": []}. count=None on a navigation failure
-    (caller keeps hypercharges=0). `brawlers` is currently always [] — the stylised
-    name font is not OCR-reliable, so only the count is reported."""
+    """Open the collection and count brawlers that are maxed AND show the
+    hypercharge flame. Returns {"count": int|None, "brawlers": []}; count=None on a
+    navigation failure (caller keeps hypercharges=0).
+
+    Designed against the live fragilities found on the Mi9T (see module docstring):
+    - 'did a detail open?' uses an IMAGE DIFF vs the grid (no flaky header OCR, and
+      robust to the grid reordering when brawlers are unlocked) — a tap that stays
+      on the grid (locked/empty cell or misfire) is skipped without a wasted back;
+    - maxed+HC use MULTI-FRAME VOTING (the detail animates → single-frame OCR drifts);
+    - dedup by portrait hash (names don't OCR);
+    - the bottom is detected by the grid not changing after a swipe (not by a
+      'no new portraits' heuristic, which the grid frames used to poison)."""
     try:
         probe = _screencap(serial)
         w, h = probe.size
@@ -208,40 +233,34 @@ def count_hypercharges(serial: str) -> dict:
         if not _ensure_grid(serial, w, h, g):
             return {"count": None, "brawlers": []}
 
-        # NOTE: we do NOT re-check _on_collection mid-scan. The collection header
-        # OCR is flaky, and a false "grid lost" used to reopen the collection at the
-        # TOP, making the next view all-seen → premature break before deep brawlers.
-        # Instead we trust the deterministic flow: tap a cell → detail; back → SAME
-        # grid position (verified, diff≈0); swipe → still grid. Portrait-hash dedup
-        # absorbs scroll overlap and any tap that didn't open a detail (grid hash
-        # repeats → seen). `empty_views` counts consecutive views with no new brawler
-        # so transient OCR/scroll hiccups don't end the scan on the first dry view.
         seen: set = set()
         hc = 0
-        empty_views = 0
         scrolls = 0
         taps = 0
-        while scrolls <= MAX_SCROLLS and taps < MAX_TAPS and empty_views < 2:
-            new_this_view = 0
+        while scrolls <= MAX_SCROLLS and taps < MAX_TAPS:
+            grid_ref = _screencap(serial)
             for (cx0, cx1, cy0, cy1) in g["cells"]:
                 if taps >= MAX_TAPS:
                     break
                 _tap(serial, w, h, (cx0 + cx1) / 2, (cy0 + cy1) / 2)
-                time.sleep(2.7)  # detail open-animation must finish or the maxed
-                #                  OCR reads a mid-transition frame and misses P11s
+                time.sleep(2.3)
                 taps += 1
-                detail = _screencap(serial)
-                ph = _portrait_hash(detail, w, h)
+                post = _screencap(serial)
+                if _img_mean_diff(grid_ref, post) < _DETAIL_OPENED_DIFF:
+                    continue  # tap didn't open a detail (still on the grid)
+                ph = _portrait_hash(post, w, h)
                 if ph not in seen:
                     seen.add(ph)
-                    new_this_view += 1
-                    if _detail_is_maxed(detail, w, h) and _detail_has_hypercharge(detail, w, h):
+                    _maxed, has_hc = _vote_detail(serial, w, h)
+                    if has_hc:
                         hc += 1
                 _tap(serial, w, h, *g["back_arrow"])
                 time.sleep(1.2)
-            empty_views = empty_views + 1 if new_this_view == 0 else 0
+            before = _screencap(serial)
             _swipe(serial, w, h, g)
             time.sleep(1.3)
+            if _img_mean_diff(before, _screencap(serial)) < _SCROLL_BOTTOM_DIFF:
+                break  # swipe changed nothing → bottom of the collection reached
             scrolls += 1
         return {"count": hc, "brawlers": []}
     except Exception:
