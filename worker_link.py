@@ -776,6 +776,64 @@ def _cmd_schedule_set(args: dict) -> dict:
     return r.json()
 
 
+def _session_is_running(tag: str) -> bool:
+    """True if a grind session is active for this tag (don't drive the device twice)."""
+    try:
+        st = _cmd_session_state({"tag": tag})
+        if not st.get("ok"):
+            return False
+        s = st.get("state") or {}
+        return bool(s.get("running") or s.get("active") or s.get("session_id"))
+    except Exception:
+        return False
+
+
+def _run_shop(args: dict, kind: str) -> dict:
+    """Shared driver for shop commands. kind ∈ {'plan','buy','upgrade'}."""
+    tag = args.get("tag")
+    if not tag:
+        return {"ok": False, "error": "missing tag"}
+    confirm = bool(args.get("confirm")) and kind != "plan"
+    if confirm and _session_is_running(tag):
+        return {"ok": False,
+                "error": "a grind session is running — stop it first (session_stop)"}
+    try:
+        serial = _adb_serial()
+    except Exception as exc:
+        return {"ok": False, "error": f"no device: {exc}"}
+    import revente.shop_actions as S
+    eng = S.ShopActionEngine(serial, dry_run=not confirm)
+    try:
+        if kind == "upgrade":
+            rep = eng.upgrade_power(
+                target_level=int(args.get("target_level", 11)),
+                scope=args.get("scope", "current"), confirm=confirm,
+                max_brawlers=int(args.get("max_brawlers", 1)))
+        else:  # plan | buy
+            rep = eng.buy_hypercharges(
+                max_count=args.get("max_count"),
+                coin_floor=int(args.get("coin_floor", 0)), confirm=confirm)
+        return {"ok": True, "report": rep.as_dict()}
+    except Exception as exc:
+        log.exception("shop command %s failed", kind)
+        return {"ok": False, "error": str(exc)}
+
+
+def _cmd_shop_plan(args: dict) -> dict:
+    """Dry-run: walk the collection and report which hypercharges would be bought."""
+    return _run_shop({**args, "confirm": False}, "plan")
+
+
+def _cmd_shop_buy_hypercharges(args: dict) -> dict:
+    """Buy hypercharges on maxed brawlers. Live only if args['confirm'] is True."""
+    return _run_shop(args, "buy")
+
+
+def _cmd_shop_upgrade_power(args: dict) -> dict:
+    """Raise power level(s). Live only if args['confirm'] is True."""
+    return _run_shop(args, "upgrade")
+
+
 def _local_snapshot() -> dict | None:
     """Fetch a lightweight snapshot (state + trophies + tag + session)."""
     try:
@@ -833,6 +891,10 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     # Play-schedule local override
     "schedule_get":          _cmd_schedule_get,
     "schedule_set":          _cmd_schedule_set,
+    # shop / upgrade actions
+    "shop_plan":              _cmd_shop_plan,
+    "shop_buy_hypercharges":  _cmd_shop_buy_hypercharges,
+    "shop_upgrade_power":     _cmd_shop_upgrade_power,
 }
 
 
