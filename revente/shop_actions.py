@@ -1,22 +1,24 @@
 """Perform brawler-detail upgrade actions on a live Brawl Stars device.
 
-Two capabilities (v1): unlock hypercharges on maxed (P11) brawlers that don't
+Two capabilities: unlock hypercharges on maxed (P11) brawlers that don't
 have one yet, and raise a brawler's power level. Standalone & serial-based
-(adb only), mirroring revente/read_hypercharges.py — it REUSES that module's
-detail-navigation primitives.
+(adb only).
+
+Navigation (LIVE-VERIFIED 2026-06-14):
+- The BRAWLERS button opens the TROPHÉES road, NOT the stats card →
+  the old carousel strategy (reused from read_hypercharges) is WRONG.
+- The correct path: lobby → tap the centre brawler (~0.52, 0.44) → opens
+  the COLLECTION GRID ("BRAWLERS (n/103)").  Then tap each tile → opens
+  that brawler's POUVOIR/stats card.  BACK returns to the grid.
+- The POUVOIR card has NO horizontal carousel: swiping does not advance.
 
 Design notes (calibrated on real Mi9T detail fixtures):
-- "Maxed" (power 11) is detected by the ABSENCE of the green AMÉLIORER button
-  in the bottom-right (OCR-free). A non-maxed detail shows a big green upgrade
-  button there; a maxed one shows the yellow "NIVEAU MAX !" label (no green).
+- "Maxed" (power 11) = ABSENCE of the green AMÉLIORER button (OCR-free).
 - Buttons are located by the centroid of the largest green blob in a region.
-- The hypercharge flame (magenta) is reused from read_hypercharges; HC is only
-  meaningful on a maxed detail (a non-maxed detail shows purple power circles
-  that also fire magenta — excluded by the maxed gate).
+- HC flame (magenta) reused from read_hypercharges; only meaningful on maxed.
 
-SAFETY: dry_run defaults to True everywhere. Live execution (real taps that
-SPEND in-game gold, irreversible) requires confirm=True and goes through the
-dedicated _spend_tap seam, so dry-run is provably tap-free.
+SAFETY: dry_run defaults to True. Live execution (real gold spend) requires
+confirm=True and goes through the dedicated _spend_tap seam only.
 """
 from __future__ import annotations
 
@@ -26,27 +28,44 @@ import time
 from dataclasses import dataclass, field
 
 from revente.read_hypercharges import (
-    _enter_detail, _swipe_carousel_next, _screencap, _geom_for,
+    _screencap, _geom_for,
     _portrait_hash, _detail_has_hypercharge, _img_mean_diff,
 )
 
 log = logging.getLogger("shop_actions")
 
-# --- geometry (ratios x0,x1,y0,y1 of the landscape frame) ---
+# ---------------------------------------------------------------------------
+# Geometry (ratios, landscape frame)
+# ---------------------------------------------------------------------------
 # Bottom-right green AMÉLIORER button area (power upgrade). Calibrated on Mi9T.
 UPGRADE_REGION = (0.74, 1.00, 0.80, 1.00)
-# Hypercharge slot to tap to buy (top-right ability cluster); CALIBRATE LIVE.
+# Hypercharge slot tap (top-right ability cluster). CALIBRATE LIVE.
 HC_SLOT_TAP = (0.945, 0.29)
-# Where a purchase-confirm dialog's green button appears; CALIBRATE LIVE.
+# Purchase-confirm dialog green button region. CALIBRATE LIVE.
 CONFIRM_REGION = (0.38, 0.82, 0.50, 0.92)
 
-# OpenCV HSV (H 0-180) for the bright in-game green of action buttons.
+# OpenCV HSV for the bright in-game green of action buttons.
 GREEN_HSV_LO = (35, 80, 80)
 GREEN_HSV_HI = (90, 255, 255)
-GREEN_MIN_PX = 1200          # calibrated between maxed (~0) and a real button
-HC_COST_DEFAULT = 5000       # coins per hypercharge (mirrors sale_report.HC_COST)
-MAX_CAROUSEL = 130
+GREEN_MIN_PX = 1200
+HC_COST_DEFAULT = 5000  # coins per hypercharge
 
+# ---------------------------------------------------------------------------
+# Grid navigation geometry — Mi9T 2340×1080 landscape, current BS UI.
+# LIVE-CALIBRATED 2026-06-14 (tune if UI or resolution differs).
+# ---------------------------------------------------------------------------
+BS_PKG = "com.supercell.brawlstars"
+GRID_OPEN_TAP  = (0.52, 0.44)           # lobby centre brawler → collection grid
+GRID_COLS      = (0.27, 0.52, 0.76)     # 3 column centres
+GRID_ROWS      = (0.30, 0.62)           # two fully-visible tile rows
+GRID_SCROLL    = (0.52, 0.80, 0.52, 0.34, 500)  # x0,y0,x1,y1,ms — swipe up one page
+GRID_BACK_ARROW = (0.025, 0.05)         # top-left back arrow (card → grid)
+MAX_GRID_PAGES = 12
+
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
 
 @dataclass
 class UpgradeButton:
@@ -58,7 +77,7 @@ class UpgradeButton:
 
 @dataclass
 class Action:
-    kind: str                # "buy_hypercharge" | "upgrade_power"
+    kind: str   # "buy_hypercharge" | "upgrade_power"
     coin_cost: int
     powerpoint_cost: int = 0
     note: str = ""
@@ -94,6 +113,10 @@ class Report:
         }
 
 
+# ---------------------------------------------------------------------------
+# Detection helpers (KEEP UNCHANGED — proven on real fixtures)
+# ---------------------------------------------------------------------------
+
 def _crop_region(pil_image, w: int, h: int, region):
     x0, x1, y0, y1 = region
     return pil_image.crop((int(w * x0), int(h * y0), int(w * x1), int(h * y1)))
@@ -108,8 +131,7 @@ def _green_count(pil_crop) -> int:
 
 
 def _find_green_button_center(pil_image, w: int, h: int, region):
-    """Centroid (xr, yr) of the largest green blob in `region`, or None if the
-    green area is below GREEN_MIN_PX. Coordinates are full-frame ratios."""
+    """Centroid (xr, yr) of the largest green blob in `region`, or None."""
     import numpy as np
     import cv2
     x0, x1, y0, y1 = region
@@ -135,8 +157,7 @@ def _find_green_button_center(pil_image, w: int, h: int, region):
 
 
 def detect_power_upgrade(pil_image, w: int, h: int):
-    """Return an UpgradeButton if the green AMÉLIORER button is present (power<11),
-    else None. The button centre is the green-blob centroid; costs are best-effort."""
+    """Return an UpgradeButton if the green AMÉLIORER button is present, else None."""
     center = _find_green_button_center(pil_image, w, h, UPGRADE_REGION)
     if center is None:
         return None
@@ -145,8 +166,7 @@ def detect_power_upgrade(pil_image, w: int, h: int):
 
 
 def _ocr_costs(pil_image, w: int, h: int):
-    """Best-effort OCR of the two cost numbers next to AMÉLIORER. Returns
-    (powerpoint_cost, coin_cost) or (None, None). Never raises (easyocr optional)."""
+    """Best-effort OCR of the two cost numbers. Returns (pp_cost, coin_cost)."""
     try:
         from revente.read_currencies import _ocr_digits
         crop = _crop_region(pil_image, w, h, (0.78, 1.00, 0.93, 1.00))
@@ -163,23 +183,19 @@ def _ocr_costs(pil_image, w: int, h: int):
 
 
 def is_maxed(pil_image, w: int, h: int) -> bool:
-    """Power 11 ⟺ no green pixels in the upgrade-button zone (OCR-free).
-    Uses _green_count directly so it is not affected by a monkeypatch of
-    _find_green_button_center (which is reserved for the confirm-dialog seam)."""
+    """Power 11 ⟺ no green pixels in the upgrade-button zone."""
     crop = _crop_region(pil_image, w, h, UPGRADE_REGION)
     return _green_count(crop) < GREEN_MIN_PX
 
 
 def hc_buy_eligible(pil_image, w: int, h: int) -> bool:
-    """True if this detail is a maxed brawler WITHOUT a hypercharge yet.
-    maxed = no green upgrade button; HC owned = magenta flame in the slot."""
+    """True if this detail is a maxed brawler WITHOUT a hypercharge yet."""
     return is_maxed(pil_image, w, h) and not _detail_has_hypercharge(pil_image, w, h)
 
 
 def plan_hypercharges(eligible: int, coins: int, *, hc_cost: int = HC_COST_DEFAULT,
                       coin_floor: int = 0, max_count: "int | None" = None) -> list:
-    """How many hypercharges to buy: bounded by eligible brawlers, by the coins
-    spendable above `coin_floor`, and by `max_count`. Pure / deterministic."""
+    """Pure planner: how many HCs to buy given resources."""
     if hc_cost <= 0:
         return []
     spendable = max(0, coins - coin_floor)
@@ -192,17 +208,268 @@ def plan_hypercharges(eligible: int, coins: int, *, hc_cost: int = HC_COST_DEFAU
 
 
 def levels_to_target(power_now: int, target: int) -> int:
-    """Number of +1 upgrades from power_now to reach target (target clamped 1..11)."""
+    """Number of +1 upgrades from power_now to reach target."""
     target = max(1, min(int(target), 11))
     return max(0, target - max(0, int(power_now)))
 
 
+# ---------------------------------------------------------------------------
+# SPEND seam (purchase/confirm taps only — dry-run must never call this)
+# ---------------------------------------------------------------------------
+
 def _spend_tap(serial: str, w: int, h: int, xr: float, yr: float) -> None:
-    """DEDICATED seam for purchase/confirm taps (irreversible spend). Kept separate
-    from navigation taps so dry-run is provably tap-free (tests spy on this)."""
+    """DEDICATED seam for irreversible purchase/confirm taps.
+    Kept separate from _nav_tap so dry-run is provably tap-free."""
     subprocess.run(["adb", "-s", serial, "shell", "input", "tap",
                     str(int(w * xr)), str(int(h * yr))], capture_output=True, timeout=10)
 
+
+# ---------------------------------------------------------------------------
+# Standalone navigation helpers (serial-based, no game_api import needed)
+# ---------------------------------------------------------------------------
+
+def _nav_tap(serial, w, h, xr, yr):
+    """Navigation tap (distinct from _spend_tap — purchase-tap-free in dry-run)."""
+    subprocess.run(["adb", "-s", serial, "shell", "input", "tap",
+                    str(int(w * xr)), str(int(h * yr))],
+                   capture_output=True, timeout=10)
+
+
+def _nav_swipe(serial, w, h, x0, y0, x1, y1, ms=400):
+    subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
+                    str(int(w * x0)), str(int(h * y0)),
+                    str(int(w * x1)), str(int(h * y1)),
+                    str(ms)], capture_output=True, timeout=12)
+
+
+def _adb_out(serial, *args, timeout=8):
+    return subprocess.run(["adb", "-s", serial, "shell", *args],
+                          capture_output=True, text=True, timeout=timeout).stdout or ""
+
+
+def _screen_state(pil_image):
+    """Classify the current screen via the project's state finder."""
+    try:
+        from state_finder.main import get_state
+        return get_state(pil_image)
+    except Exception:
+        return "unknown"
+
+
+def _ocr_map(pil_image):
+    """{text: {center,...}} via shared OCR. Empty dict on failure (easyocr absent)."""
+    try:
+        import numpy as np
+        from utils import extract_text_and_positions
+        return extract_text_and_positions(np.array(pil_image))
+    except Exception:
+        return {}
+
+
+def _is_locked(serial) -> bool:
+    """True if screen off or keyguard up."""
+    out = _adb_out(serial, "dumpsys", "window")
+    disp = _adb_out(serial, "dumpsys", "display")
+    return ("mScreenState=OFF" in disp) or ("mDreamingLockscreen=true" in out) or \
+           ("KeyguardController" in out and "showing=true" in out)
+
+
+def _unlock(serial):
+    """Wake + swipe up + enter PIN. Mirrors game_api.exit_power_save."""
+    if "mScreenState=OFF" in _adb_out(serial, "dumpsys", "display"):
+        subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "26"],
+                       capture_output=True, timeout=5)
+        time.sleep(0.6)
+    subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
+                    "540", "1500", "540", "500", "200"],
+                   capture_output=True, timeout=5)
+    time.sleep(0.6)
+    try:
+        from game_api import _load_lockscreen_pin
+        pin = _load_lockscreen_pin()
+    except Exception:
+        pin = None
+    if pin:
+        subprocess.run(["adb", "-s", serial, "shell", "input", "text", pin],
+                       capture_output=True, timeout=5)
+        time.sleep(0.3)
+        subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "66"],
+                       capture_output=True, timeout=5)
+        time.sleep(0.6)
+
+
+def _foreground_is_bs(serial) -> bool:
+    return BS_PKG in _adb_out(serial, "dumpsys", "window")
+
+
+def _launch_bs(serial):
+    subprocess.run(["adb", "-s", serial, "shell", "monkey", "-p", BS_PKG,
+                    "-c", "android.intent.category.LAUNCHER", "1"],
+                   capture_output=True, timeout=10)
+
+
+def _dismiss_team_invite(serial, w, h) -> bool:
+    """Detect INVITATION D'ÉQUIPE popup and tap REFUSER."""
+    m = _ocr_map(_screencap(serial))
+    joined = " ".join(k.lower() for k in m.keys())
+    has_invite = (
+        ("invitation" in joined and ("equipe" in joined or "team" in joined or "equip" in joined))
+        or ("refuser" in joined and "accepter" in joined)
+        or ("decline" in joined and "accept" in joined)
+    )
+    if not has_invite:
+        return False
+    for k, v in m.items():
+        if "refus" in k.lower() or "decline" in k.lower():
+            cx, cy = v.get("center", [0, 0])
+            if cx > 0 and cy > 0:
+                _nav_tap(serial, w, h, cx / w, cy / h)
+                return True
+    _nav_tap(serial, w, h, 0.38, 0.76)
+    return True
+
+
+def _ensure_lobby(serial, max_attempts=15) -> bool:
+    """Reach the lobby robustly (standalone, mirrors game_api.goto_lobby shotgun).
+    Unlock if locked, relaunch BS if not foreground, dismiss invites/popups."""
+    for i in range(max_attempts):
+        if _is_locked(serial):
+            _unlock(serial)
+            time.sleep(2.0)
+            continue
+        if not _foreground_is_bs(serial):
+            _launch_bs(serial)
+            time.sleep(8)
+            continue
+        img = _screencap(serial)
+        w, h = img.size
+        st = _screen_state(img)
+        if st == "lobby":
+            if _dismiss_team_invite(serial, w, h):
+                time.sleep(1.0)
+                continue
+            return True
+        if _dismiss_team_invite(serial, w, h):
+            time.sleep(1.0)
+            continue
+        # Shotgun dismiss (mirrors goto_lobby): centre tap, continue spots, X, BACK
+        for (xr, yr) in [(0.5, 0.5), (0.92, 0.94), (0.5, 0.93), (0.96, 0.05)]:
+            _nav_tap(serial, w, h, xr, yr)
+            time.sleep(0.3)
+        subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "4"],
+                       capture_output=True, timeout=5)
+        time.sleep(1.2)
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Grid navigation helpers
+# ---------------------------------------------------------------------------
+
+def _on_grid(pil_image, w, h) -> bool:
+    """True if the collection grid is showing (header contains BRAWLERS/103)."""
+    try:
+        from revente.read_hypercharges import _grid_header_text, _looks_like_grid
+        return _looks_like_grid(_grid_header_text(pil_image, w, h))
+    except Exception:
+        return False
+
+
+def _open_grid(serial, w, h) -> bool:
+    """From the lobby, open the collection grid (tap the centre brawler)."""
+    for _ in range(3):
+        img = _screencap(serial)
+        if _on_grid(img, w, h):
+            return True
+        _nav_tap(serial, w, h, *GRID_OPEN_TAP)
+        time.sleep(2.2)
+    return _on_grid(_screencap(serial), w, h)
+
+
+def _back_to_grid(serial, w, h) -> bool:
+    """From a brawler card, return to the grid (back arrow; dismiss popups)."""
+    for _ in range(4):
+        img = _screencap(serial)
+        if _on_grid(img, w, h):
+            return True
+        if _dismiss_team_invite(serial, w, h):
+            time.sleep(1.0)
+            continue
+        _nav_tap(serial, w, h, *GRID_BACK_ARROW)
+        time.sleep(1.4)
+    return _on_grid(_screencap(serial), w, h)
+
+
+def _scroll_grid(serial, w, h):
+    x0, y0, x1, y1, ms = GRID_SCROLL
+    _nav_swipe(serial, w, h, x0, y0, x1, y1, ms)
+
+
+# ---------------------------------------------------------------------------
+# Grid walk — visits each brawler's POUVOIR card once
+# ---------------------------------------------------------------------------
+
+def _walk_cards(serial, w, h, visit):
+    """Open the collection grid and visit each brawler's POUVOIR card exactly once.
+
+    `visit(card_img)` is called for each unique brawler (deduped by portrait hash).
+    Returns the number of unique cards visited. Re-opens the grid if lost.
+
+    Grid geometry constants (LIVE-CALIBRATED 2026-06-14) are module-level;
+    tune GRID_COLS / GRID_ROWS / GRID_SCROLL if the UI or resolution changes.
+    """
+    if not _open_grid(serial, w, h):
+        return 0
+    seen: set = set()
+    empty_pages = 0
+    for _page in range(MAX_GRID_PAGES):
+        new_here = 0
+        for yr in GRID_ROWS:
+            for xr in GRID_COLS:
+                # Verify still on grid before each tap
+                if not _on_grid(_screencap(serial), w, h):
+                    if not _open_grid(serial, w, h):
+                        return len(seen)
+                _nav_tap(serial, w, h, xr, yr)
+                time.sleep(1.9)
+                card = _screencap(serial)
+                if _on_grid(card, w, h):
+                    continue  # empty cell / nothing opened
+                ph = _portrait_hash(card, w, h)
+                if ph in seen:
+                    _back_to_grid(serial, w, h)
+                    continue
+                seen.add(ph)
+                new_here += 1
+                try:
+                    visit(card)
+                finally:
+                    _back_to_grid(serial, w, h)
+        if new_here == 0:
+            empty_pages += 1
+            if empty_pages >= 2:
+                break
+        else:
+            empty_pages = 0
+        _scroll_grid(serial, w, h)
+        time.sleep(1.5)
+    return len(seen)
+
+
+# ---------------------------------------------------------------------------
+# Hypercharge-tab guard
+# ---------------------------------------------------------------------------
+
+def _on_hypercharge_tab(pil_image, w, h) -> bool:
+    """True only if the open ability panel is the HYPERCHARGE tab.
+    Prevents buying a star power by mistake. Best-effort (easyocr optional)."""
+    joined = " ".join(k.lower() for k in _ocr_map(pil_image).keys())
+    return "hypercharge" in joined
+
+
+# ---------------------------------------------------------------------------
+# Coin reader + misc
+# ---------------------------------------------------------------------------
 
 def _read_coins(serial: str) -> "int | None":
     """Read current coins/gold from the lobby top bar (best-effort)."""
@@ -216,9 +483,7 @@ def _read_coins(serial: str) -> "int | None":
 
 
 def _read_power_level(pil_image, w: int, h: int):
-    """Best-effort OCR of the brawler power-level badge (1..11). Returns None if
-    unreadable (easyocr absent or OCR noise). CALIBRATE LIVE — region is a guess.
-    Secondary guard for target_level<11; the primary stop is button-absence (=P11)."""
+    """Best-effort OCR of the brawler power-level badge. CALIBRATE LIVE."""
     try:
         from revente.read_hypercharges import _ocr_text, _parse_power
         crop = _crop_region(pil_image, w, h, (0.74, 0.86, 0.30, 0.42))
@@ -228,13 +493,15 @@ def _read_power_level(pil_image, w: int, h: int):
 
 
 def _confirm_hc_applied(_engine, serial: str, w: int, h: int) -> bool:
-    """After a buy, re-read the detail: HC owned ⟺ magenta flame present.
-    Module-level so tests can monkeypatch via S._confirm_hc_applied.
-    `_engine` is reserved/unused (kept for future subclass override)."""
+    """After a buy, re-read the detail: HC owned ⟺ magenta flame present."""
     time.sleep(1.2)
     img = _screencap(serial)
     return _detail_has_hypercharge(img, w, h)
 
+
+# ---------------------------------------------------------------------------
+# ShopActionEngine
+# ---------------------------------------------------------------------------
 
 class ShopActionEngine:
     def __init__(self, serial: str, *, dry_run: bool = True,
@@ -243,13 +510,11 @@ class ShopActionEngine:
         self.dry_run = dry_run
         self.hc_cost = hc_cost
 
-    # -- helpers --------------------------------------------------------
     def _cap(self):
         return _screencap(self.serial)
 
     def _tap_confirm(self, w: int, h: int) -> bool:
-        """Locate and tap the green confirm button in a purchase dialog.
-        Returns False if no confirm button is found."""
+        """Locate and tap the green confirm button in a purchase dialog."""
         img = _screencap(self.serial)
         center = _find_green_button_center(img, w, h, CONFIRM_REGION)
         if center is None:
@@ -258,11 +523,23 @@ class ShopActionEngine:
         time.sleep(1.0)
         return True
 
-    # -- public actions -------------------------------------------------
+    # -- public actions ----------------------------------------------------
+
     def buy_hypercharges(self, *, max_count: "int | None" = None,
                          coin_floor: int = 0, confirm: bool = False) -> Report:
-        # NOTE: max_count caps PLANNED entries in dry-run too (intended: shop_plan
-        # uses the default max_count=None to enumerate all eligible brawlers).
+        """Walk every brawler via the collection GRID, buy HC on eligible ones.
+
+        Navigation (LIVE-VERIFIED 2026-06-14):
+        - Lobby → tap centre brawler → collection grid → tap each tile →
+          brawler POUVOIR card → BACK to grid for the next tile.
+        - The carousel strategy (old) is wrong for the current BS UI.
+
+        Hypercharge-tab GUARD: before each live buy, the ability panel is
+        inspected via OCR to confirm it shows the HYPERCHARGE tab (not a star
+        power or gadget tab). If the check fails the buy is skipped
+        (executed=False) with an explicit error. Note that HC_SLOT_TAP /
+        the ability-tab geometry still needs a supervised live calibration pass.
+        """
         live = (not self.dry_run) and confirm
         rep = Report(dry_run=not live)
         try:
@@ -271,57 +548,52 @@ class ShopActionEngine:
 
             probe = self._cap()
             w, h = probe.size
-            g = _geom_for(w, h)
-            if not _enter_detail(self.serial, w, h, g):
-                rep.summary = "could not reach a brawler detail screen"
+
+            if not _ensure_lobby(self.serial):
+                rep.summary = "could not reach the lobby"
                 return rep
 
             if live:
-                log.warning("HC_SLOT_TAP=%s is uncalibrated — verify before live use",
-                            HC_SLOT_TAP)
+                log.warning(
+                    "HC_SLOT_TAP=%s and ability-tab geometry are uncalibrated — "
+                    "verify before live use. The hypercharge-tab guard will "
+                    "abort if the wrong tab is open.", HC_SLOT_TAP)
 
-            seen: set = set()
-            dup_streak = 0
             bought = 0
-            for _ in range(MAX_CAROUSEL):
-                img = self._cap()
-                ph = _portrait_hash(img, w, h)
-                if ph in seen:
-                    dup_streak += 1
-                    if dup_streak >= 3:
-                        break
-                    _swipe_carousel_next(self.serial, w, h, g)
-                    time.sleep(1.5)
-                    continue
-                dup_streak = 0
-                seen.add(ph)
 
-                if hc_buy_eligible(img, w, h):
-                    # affordability + caps
-                    if (max_count is not None and bought >= max_count) or \
-                            (coins - self.hc_cost) < coin_floor:
-                        pass  # éligible mais non finançable / plafond atteint
-                    else:
-                        act = Action(kind="buy_hypercharge", coin_cost=self.hc_cost,
-                                     note=f"maxed brawler #{len(seen)}")
-                        rep.planned.append(act)
-                        if not live:
-                            rep.results.append(ActionResult(act, executed=False,
-                                                            verified=False))
-                        else:
-                            _spend_tap(self.serial, w, h, *HC_SLOT_TAP)
-                            time.sleep(1.0)
-                            confirmed = self._tap_confirm(w, h)
-                            verified = confirmed and _confirm_hc_applied(
-                                self, self.serial, w, h)
-                            rep.results.append(ActionResult(
-                                act, executed=True, verified=verified,
-                                error=None if confirmed else "no confirm button found"))
-                        coins -= self.hc_cost  # track running balance in both dry-run and live
-                        bought += 1
+            def visit(card_img):
+                nonlocal coins, bought
+                if not hc_buy_eligible(card_img, w, h):
+                    return
+                # affordability + caps
+                if (max_count is not None and bought >= max_count) or \
+                        (coins - self.hc_cost) < coin_floor:
+                    return  # eligible but unaffordable / cap reached
+                act = Action(kind="buy_hypercharge", coin_cost=self.hc_cost,
+                             note=f"maxed brawler (grid walk)")
+                rep.planned.append(act)
+                if not live:
+                    rep.results.append(ActionResult(act, executed=False, verified=False))
+                else:
+                    # Tap the HC slot to open the purchase panel
+                    _spend_tap(self.serial, w, h, *HC_SLOT_TAP)
+                    time.sleep(1.0)
+                    # Hypercharge-tab guard: confirm correct tab before spending
+                    panel_img = _screencap(self.serial)
+                    if not _on_hypercharge_tab(panel_img, w, h):
+                        rep.results.append(ActionResult(
+                            act, executed=False, verified=False,
+                            error="not on hypercharge tab — aborted to avoid wrong purchase"))
+                        return
+                    confirmed = self._tap_confirm(w, h)
+                    verified = confirmed and _confirm_hc_applied(self, self.serial, w, h)
+                    rep.results.append(ActionResult(
+                        act, executed=True, verified=verified,
+                        error=None if confirmed else "no confirm button found"))
+                coins -= self.hc_cost
+                bought += 1
 
-                _swipe_carousel_next(self.serial, w, h, g)
-                time.sleep(1.4)
+            _walk_cards(self.serial, w, h, visit)
 
             rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
             n_plan = len([a for a in rep.planned if a.kind == "buy_hypercharge"])
@@ -336,10 +608,8 @@ class ShopActionEngine:
                       confirm: bool = False, max_steps: int = 11,
                       max_brawlers: int = 1,
                       current_power: "int | None" = None) -> Report:
-        """Raise power level(s). scope='current' acts on the open detail; scope='walk'
-        walks the carousel applying the target to each brawler (up to max_brawlers).
-        current_power: if known, computes a precise step budget so target_level is
-        respected even when per-step OCR is unavailable."""
+        """Raise power level(s). scope='current' acts on the open detail.
+        scope='walk' walks the collection grid (LIVE-VERIFIED nav 2026-06-14)."""
         live = (not self.dry_run) and confirm
         rep = Report(dry_run=not live)
         try:
@@ -352,12 +622,8 @@ class ShopActionEngine:
 
             probe = self._cap()
             w, h = probe.size
-            g = _geom_for(w, h)
-            if scope == "walk" and not _enter_detail(self.serial, w, h, g):
-                rep.summary = "could not reach a brawler detail screen"
-                return rep
 
-            # C1: compute step budget from known current_power, or fall back to max_steps
+            # C1: compute step budget
             if current_power is not None:
                 step_budget = min(max_steps, levels_to_target(current_power, target_level))
             else:
@@ -367,25 +633,23 @@ class ShopActionEngine:
                         "upgrade_power: target_level=%s<11 with unknown current power; "
                         "relying on per-step OCR + max_steps backstop", target_level)
 
-            brawlers = max_brawlers if scope == "walk" else 1
-            seen: set = set()
-            dup_streak = 0
-            for _bi in range(brawlers):
-                if scope == "walk":
-                    ph = _portrait_hash(self._cap(), w, h)
-                    if ph in seen:
-                        dup_streak += 1
-                        if dup_streak >= 3:
-                            break
-                        _swipe_carousel_next(self.serial, w, h, g)
-                        time.sleep(1.4)
-                        continue
-                    dup_streak = 0
-                    seen.add(ph)
+            if scope == "walk":
+                if not _ensure_lobby(self.serial):
+                    rep.summary = "could not reach the lobby"
+                    return rep
+                visited = 0
+
+                def visit_upgrade(card_img):
+                    nonlocal visited
+                    if max_brawlers > 0 and visited >= max_brawlers:
+                        return
+                    self._upgrade_current(rep, w, h, target_level, live, step_budget)
+                    visited += 1
+
+                _walk_cards(self.serial, w, h, visit_upgrade)
+            else:
+                # scope='current': act on the already-open card
                 self._upgrade_current(rep, w, h, target_level, live, step_budget)
-                if scope == "walk":
-                    _swipe_carousel_next(self.serial, w, h, g)
-                    time.sleep(1.4)
 
             rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
             rep.summary = (f"{'planned' if not live else 'did'} "
@@ -399,13 +663,12 @@ class ShopActionEngine:
                          live: bool, step_budget: int) -> None:
         for _ in range(step_budget):
             img = self._cap()
-            # Secondary OCR guard: stop early when we can confirm the target is reached
             pwr = _read_power_level(img, w, h)
             if pwr is not None and levels_to_target(pwr, target_level) == 0:
                 break
             btn = detect_power_upgrade(img, w, h)
             if btn is None:
-                break  # maxé (P11) / plus de bouton — primary stop
+                break
             act = Action(kind="upgrade_power",
                          coin_cost=btn.coin_cost or 0,
                          powerpoint_cost=btn.powerpoint_cost or 0,
@@ -413,7 +676,7 @@ class ShopActionEngine:
             rep.planned.append(act)
             if not live:
                 rep.results.append(ActionResult(act, executed=False, verified=False))
-                break  # en dry-run, un seul tick suffit (l'écran ne change pas)
+                break  # dry-run: one tick suffices (screen doesn't change)
             before = img
             _spend_tap(self.serial, w, h, btn.xr, btn.yr)
             time.sleep(0.8)
@@ -426,6 +689,10 @@ class ShopActionEngine:
             if not verified:
                 break
 
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 def _build_parser():
     import argparse
@@ -459,7 +726,7 @@ def main(argv=None) -> int:
     if ns.action == "upgrade":
         rep = eng.upgrade_power(target_level=ns.target_level, scope=ns.scope,
                                 confirm=ns.confirm)
-    else:  # plan | buy-hc
+    else:
         rep = eng.buy_hypercharges(max_count=ns.max_count, coin_floor=ns.coin_floor,
                                    confirm=ns.confirm)
     print(json.dumps(rep.as_dict(), indent=2, ensure_ascii=False))
