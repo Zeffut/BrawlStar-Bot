@@ -12,7 +12,7 @@ def test_shop_routes_registered():
 
 def test_shop_body_model_defaults():
     app_mod = pytest.importorskip("cloud_panel.app")
-    b = app_mod.ShopBody()
-    assert b.confirm is False
-    assert b.target_level == 11
-    assert b.scope == "current"
+    assert app_mod.HypBuyBody().confirm is False
+    assert app_mod.HypBuyBody().coin_floor == 0
+    pu = app_mod.PowerUpgradeBody()
+    assert pu.confirm is False and pu.target_level == 11 and pu.scope == "current"

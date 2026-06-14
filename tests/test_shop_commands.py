@@ -60,3 +60,16 @@ def test_buy_hc_confirm_runs_live_when_idle(monkeypatch):
     out = W._cmd_shop_buy_hypercharges({"tag": "#T", "confirm": True})
     assert out["ok"] is True
     assert calls["dry"] is False and calls["buy"] == 1
+
+
+def test_upgrade_power_confirm_runs_live_when_idle(monkeypatch):
+    W, calls = _setup(monkeypatch, session_running=False)
+    out = W._cmd_shop_upgrade_power({"tag": "#T", "confirm": True})
+    assert out["ok"] is True
+    assert calls["dry"] is False and calls["upgrade"] == 1
+
+
+def test_missing_tag_refused(monkeypatch):
+    W, calls = _setup(monkeypatch)
+    out = W._cmd_shop_buy_hypercharges({})  # no tag
+    assert out["ok"] is False and "tag" in out["error"].lower()

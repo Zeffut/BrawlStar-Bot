@@ -777,31 +777,38 @@ def _cmd_schedule_set(args: dict) -> dict:
 
 
 def _session_is_running(tag: str) -> bool:
-    """True if a grind session is active for this tag (don't drive the device twice)."""
+    """True if a grind session is active for this tag. FAILS CLOSED: on any error or
+    unreadable state, return True (block the shop op) rather than risk two controllers
+    driving the same device. The local push_max_state endpoint reports 'active'."""
     try:
         st = _cmd_session_state({"tag": tag})
         if not st.get("ok"):
-            return False
+            return True
         s = st.get("state") or {}
-        return bool(s.get("running") or s.get("active") or s.get("session_id"))
+        return bool(s.get("active") or s.get("running") or s.get("session_id"))
     except Exception:
-        return False
+        return True
 
 
 def _run_shop(args: dict, kind: str) -> dict:
-    """Shared driver for shop commands. kind ∈ {'plan','buy','upgrade'}."""
+    """Shared driver for shop commands. kind ∈ {'plan','buy','upgrade'}.
+    The session guard is UNCONDITIONAL: every shop op drives the device (even the
+    dry-run plan walks the carousel via ADB), so it must never race a grind session."""
     tag = args.get("tag")
     if not tag:
         return {"ok": False, "error": "missing tag"}
-    confirm = bool(args.get("confirm")) and kind != "plan"
-    if confirm and _session_is_running(tag):
+    if _session_is_running(tag):
         return {"ok": False,
                 "error": "a grind session is running — stop it first (session_stop)"}
+    # confirm gates the irreversible SPEND; dry-run still walks the device (read-only).
+    confirm = bool(args.get("confirm")) and kind != "plan"
     try:
         serial = _adb_serial()
     except Exception as exc:
         return {"ok": False, "error": f"no device: {exc}"}
     import revente.shop_actions as S
+    # Double-locked: engine constructed dry_run=not confirm AND each method re-checks
+    # its own confirm flag — both must say "go" before any _spend_tap fires.
     eng = S.ShopActionEngine(serial, dry_run=not confirm)
     try:
         if kind == "upgrade":
