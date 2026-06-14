@@ -167,18 +167,32 @@ def _ensure_grid(serial: str, w: int, h: int, g: dict) -> bool:
     return False
 
 
-def check_current_detail(serial: str) -> dict:
+def check_current_detail(serial: str, samples: int = 3) -> dict:
     """Inspect the brawler DETAIL screen currently open on the device — RELIABLE,
     because it does no navigation (the fragile part). Open a brawler's detail
     yourself (or via the bot), then call this. Returns
     {"maxed": bool, "hypercharge": bool}; `hypercharge` is only meaningful when
     `maxed` is True (non-maxed details show purple power circles in the same slot).
+
+    The detail screen is ANIMATED (brawler bobs, hint pointer pulses), so a single
+    frame's OCR of "NIVEAU MAX" drifts run to run. We sample `samples` frames and
+    take the majority vote, which stabilises both the maxed text and the flame.
     This is the dependable way to confirm a hypercharge — the full-collection
     `count_hypercharges` walk is best-effort and under-counts (see module docstring)."""
-    img = _screencap(serial)
-    w, h = img.size
-    maxed = _detail_is_maxed(img, w, h)
-    return {"maxed": maxed, "hypercharge": maxed and _detail_has_hypercharge(img, w, h)}
+    maxed_votes = 0
+    hc_votes = 0
+    for i in range(samples):
+        img = _screencap(serial)
+        w, h = img.size
+        mz = _detail_is_maxed(img, w, h)
+        if mz:
+            maxed_votes += 1
+            if _detail_has_hypercharge(img, w, h):
+                hc_votes += 1
+        if i < samples - 1:
+            time.sleep(0.5)
+    maxed = maxed_votes * 2 >= samples
+    return {"maxed": maxed, "hypercharge": maxed and hc_votes * 2 >= samples}
 
 
 def count_hypercharges(serial: str) -> dict:
