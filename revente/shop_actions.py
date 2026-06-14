@@ -56,10 +56,10 @@ HC_COST_DEFAULT = 5000  # coins per hypercharge
 # ---------------------------------------------------------------------------
 BS_PKG = "com.supercell.brawlstars"
 GRID_OPEN_TAP  = (0.52, 0.44)           # lobby centre brawler → collection grid
-GRID_COLS      = (0.27, 0.52, 0.76)     # 3 column centres
-GRID_ROWS      = (0.30, 0.62)           # two fully-visible tile rows
+GRID_COLS      = (0.19, 0.50, 0.80)     # 3 column centres (tap the portrait)
+GRID_ROWS      = (0.27, 0.61)           # two fully-visible tile rows
 GRID_SCROLL    = (0.52, 0.80, 0.52, 0.34, 500)  # x0,y0,x1,y1,ms — swipe up one page
-GRID_BACK_ARROW = (0.025, 0.05)         # top-left back arrow (card → grid)
+GRID_BACK_ARROW = (0.025, 0.05)         # (unused; card→grid uses the BACK key)
 MAX_GRID_PAGES = 12
 
 
@@ -242,6 +242,13 @@ def _nav_swipe(serial, w, h, x0, y0, x1, y1, ms=400):
                     str(ms)], capture_output=True, timeout=12)
 
 
+def _nav_back(serial):
+    """Android BACK keyevent — the reliable way back from a brawler card to the
+    collection grid (the card's top-left counter is NOT a back button)."""
+    subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "4"],
+                   capture_output=True, timeout=5)
+
+
 def _adb_out(serial, *args, timeout=8):
     return subprocess.run(["adb", "-s", serial, "shell", *args],
                           capture_output=True, text=True, timeout=timeout).stdout or ""
@@ -386,8 +393,48 @@ def _open_grid(serial, w, h) -> bool:
     return _on_grid(_screencap(serial), w, h)
 
 
+def _ensure_grid(serial, w, h, max_attempts=20) -> bool:
+    """Reach the collection grid from ANY state. Anchored on the reliable _on_grid
+    OCR (the project's state_finder mis-classifies this account's lobby/grid as
+    'match'). Unlocks, relaunches BS if backgrounded, dismisses team invites, and
+    hard-relaunches to a clean lobby as a fallback when stuck."""
+    stuck = 0
+    for _ in range(max_attempts):
+        if _is_locked(serial):
+            _unlock(serial)
+            time.sleep(2.5)
+            continue
+        if not _foreground_is_bs(serial):
+            _launch_bs(serial)
+            time.sleep(10)
+            continue
+        if _on_grid(_screencap(serial), w, h):
+            return True
+        if _dismiss_team_invite(serial, w, h):
+            time.sleep(1.0)
+            continue
+        stuck += 1
+        if stuck % 6 == 0:
+            # Hard reset to a clean lobby (clears unknown popups/menus).
+            subprocess.run(["adb", "-s", serial, "shell", "am", "force-stop", BS_PKG],
+                           capture_output=True, timeout=6)
+            time.sleep(2)
+            _launch_bs(serial)
+            time.sleep(40)
+            continue
+        # From the lobby the centre-brawler tap opens the grid; from a card/menu
+        # the BACK key steps toward it. Alternate so we converge from either side.
+        if stuck % 2 == 1:
+            _nav_tap(serial, w, h, *GRID_OPEN_TAP)
+            time.sleep(1.8)
+        else:
+            _nav_back(serial)
+            time.sleep(1.4)
+    return _on_grid(_screencap(serial), w, h)
+
+
 def _back_to_grid(serial, w, h) -> bool:
-    """From a brawler card, return to the grid (back arrow; dismiss popups)."""
+    """From a brawler card, return to the grid via the BACK key (dismiss popups)."""
     for _ in range(4):
         img = _screencap(serial)
         if _on_grid(img, w, h):
@@ -395,7 +442,7 @@ def _back_to_grid(serial, w, h) -> bool:
         if _dismiss_team_invite(serial, w, h):
             time.sleep(1.0)
             continue
-        _nav_tap(serial, w, h, *GRID_BACK_ARROW)
+        _nav_back(serial)
         time.sleep(1.4)
     return _on_grid(_screencap(serial), w, h)
 
@@ -403,6 +450,27 @@ def _back_to_grid(serial, w, h) -> bool:
 def _scroll_grid(serial, w, h):
     x0, y0, x1, y1, ms = GRID_SCROLL
     _nav_swipe(serial, w, h, x0, y0, x1, y1, ms)
+
+
+def _scroll_to_top(serial, w, h, max_swipes=8):
+    """Swipe the grid DOWN until it stops moving (top), so the walk starts from a
+    consistent position (the grid re-opens at its last scroll otherwise)."""
+    prev = _screencap(serial)
+    for _ in range(max_swipes):
+        _nav_swipe(serial, w, h, 0.52, 0.34, 0.52, 0.80, 500)  # reverse of scroll
+        time.sleep(0.8)
+        cur = _screencap(serial)
+        if _img_mean_diff(prev, cur) < 4.0:
+            break
+        prev = cur
+
+
+def _card_is_locked(pil_image, w, h) -> bool:
+    """True if the open card is a LOCKED (unowned) brawler — it shows a DÉBLOQUER /
+    UNLOCK button instead of stats. Locked brawlers can't have a hypercharge, so the
+    walk skips them (they also read as a green 'button' = false non-maxed)."""
+    joined = " ".join(k.lower() for k in _ocr_map(pil_image).keys())
+    return any(t in joined for t in ("debloquer", "débloquer", "deblo", "unlock"))
 
 
 # ---------------------------------------------------------------------------
@@ -418,33 +486,48 @@ def _walk_cards(serial, w, h, visit):
     Grid geometry constants (LIVE-CALIBRATED 2026-06-14) are module-level;
     tune GRID_COLS / GRID_ROWS / GRID_SCROLL if the UI or resolution changes.
     """
-    if not _open_grid(serial, w, h):
+    # Bound the walk to OWNED brawlers (the grid header reads "n/103"); locked
+    # brawlers come after and would open unlock screens, not POUVOIR cards.
+    owned = _grid_owned_count(serial, w, h)
+    cap = (owned + 2) if owned else 48
+    if not _ensure_grid(serial, w, h):
         return 0
+    _scroll_to_top(serial, w, h)  # start from a consistent grid position
     seen: set = set()
     empty_pages = 0
     for _page in range(MAX_GRID_PAGES):
         new_here = 0
         for yr in GRID_ROWS:
             for xr in GRID_COLS:
-                # Verify still on grid before each tap
+                # PRE-TAP guard: must be on the grid before tapping a tile, else a
+                # tap lands on a card/menu and the walk drifts into garbage screens.
+                # (This guard is essential — removing it broke the walk live.)
                 if not _on_grid(_screencap(serial), w, h):
-                    if not _open_grid(serial, w, h):
+                    if not _ensure_grid(serial, w, h):
                         return len(seen)
                 _nav_tap(serial, w, h, xr, yr)
-                time.sleep(1.9)
+                time.sleep(1.8)
                 card = _screencap(serial)
+                # The reliable "did a real POUVOIR card open?" signal is OCR: a card
+                # has no grid header. (cv2 image-diff proved unreliable here — it let
+                # grid-scroll transitions through as false cards.)
                 if _on_grid(card, w, h):
-                    continue  # empty cell / nothing opened
-                ph = _portrait_hash(card, w, h)
-                if ph in seen:
+                    continue  # empty cell / nothing opened — still on the grid
+                if _card_is_locked(card, w, h):
+                    # LOCKED (unowned) brawler — can't have a hypercharge. Skip it
+                    # (don't count, don't classify; it would read as a false non-maxed).
                     _back_to_grid(serial, w, h)
                     continue
-                seen.add(ph)
-                new_here += 1
-                try:
+                ph = _portrait_hash(card, w, h)
+                if ph not in seen:
+                    seen.add(ph)
+                    new_here += 1
                     visit(card)
-                finally:
-                    _back_to_grid(serial, w, h)
+                if not _back_to_grid(serial, w, h):
+                    if not _ensure_grid(serial, w, h):
+                        return len(seen)
+                if len(seen) >= cap:
+                    return len(seen)
         if new_here == 0:
             empty_pages += 1
             if empty_pages >= 2:
@@ -452,8 +535,24 @@ def _walk_cards(serial, w, h, visit):
         else:
             empty_pages = 0
         _scroll_grid(serial, w, h)
-        time.sleep(1.5)
+        time.sleep(1.4)
     return len(seen)
+
+
+def _grid_owned_count(serial, w, h):
+    """Best-effort count of OWNED brawlers from the grid header 'BRAWLERS (n/103)'.
+    Returns the int n, or None if unreadable. Used to bound the walk."""
+    try:
+        import re
+        from revente.read_hypercharges import _grid_header_text
+        txt = _grid_header_text(_screencap(serial), w, h)
+        m = re.search(r"(\d+)\s*/\s*\d{2,3}", txt.replace(" ", ""))
+        if m:
+            n = int(m.group(1))
+            return n if 0 < n <= 110 else None
+    except Exception:
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
