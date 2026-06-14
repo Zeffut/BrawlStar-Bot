@@ -93,3 +93,12 @@ def test_plan_hypercharges_none_eligible_or_broke():
     from revente.shop_actions import plan_hypercharges
     assert plan_hypercharges(eligible=0, coins=99999) == []
     assert plan_hypercharges(eligible=5, coins=4999, hc_cost=5000) == []
+
+
+def test_levels_to_target():
+    from revente.shop_actions import levels_to_target
+    assert levels_to_target(9, 11) == 2
+    assert levels_to_target(11, 11) == 0
+    assert levels_to_target(1, 99) == 10   # clamp cible à 11
+    assert levels_to_target(5, 3) == 0     # cible déjà atteinte
+    assert levels_to_target(0, 11) == 11   # garde-fou bas
