@@ -42,8 +42,8 @@ _GEOM_WIDE = {
     "detail_maxed":  (0.78, 1.00, 0.80, 0.93),   # "NIVEAU MAX !" yellow label (P11 only)
     "portrait":      (0.30, 0.70, 0.18, 0.82),   # brawler render — perceptual-hash dedup
 }
-MAX_SCROLLS = 15
-MAX_TAPS = 60
+MAX_SCROLLS = 24
+MAX_TAPS = 110
 
 
 def _geom_for(w: int, h: int) -> dict:
@@ -116,8 +116,14 @@ def _ocr_text(pil_crop, allow: "str | None" = None) -> str:
 
 def _detail_is_maxed(pil_image, w: int, h: int) -> bool:
     """True if the detail screen shows the maxed (P11) 'NIVEAU MAX' label.
-    OCR is fuzzy on the stylised font, so we match the 'max' substring."""
-    return "max" in _ocr_text(_crop(pil_image, w, h, _geom_for(w, h)["detail_maxed"]))
+
+    The stylised font OCRs inconsistently: live reads of "NIVEAU MAX" come back as
+    "nlveaumaa", "nlmeaumaa", "nlleeau maa" (the X reads as 'a'!), so matching "max"
+    alone misses real P11s. We match any stable fragment of NIVEAU/MAX. A non-maxed
+    detail shows upgrade numbers ("20 20") / power circles instead — none of which
+    contain these fragments."""
+    t = _ocr_text(_crop(pil_image, w, h, _geom_for(w, h)["detail_maxed"]))
+    return any(k in t for k in ("eau", "niv", "max", "maa"))
 
 
 def _portrait_hash(pil_image, w: int, h: int) -> str:
