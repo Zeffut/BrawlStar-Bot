@@ -66,3 +66,30 @@ def test_is_maxed_by_green_absence():
     assert is_maxed(*_wh("shelly_detail.png")) is True
     assert is_maxed(*_wh("maisie_detail.png")) is True
     assert is_maxed(*_wh("bull_detail_p1.png")) is False
+
+
+def test_plan_hypercharges_affordability():
+    from revente.shop_actions import plan_hypercharges
+    # 3 brawlers éligibles, 12000 coins, 5000/HC → 2 achats
+    acts = plan_hypercharges(eligible=3, coins=12000, hc_cost=5000)
+    assert len(acts) == 2
+    assert all(a.kind == "buy_hypercharge" and a.coin_cost == 5000 for a in acts)
+
+
+def test_plan_hypercharges_coin_floor():
+    from revente.shop_actions import plan_hypercharges
+    # garder >=3000 coins → on ne dépense que 9000 → 1 achat
+    acts = plan_hypercharges(eligible=3, coins=12000, hc_cost=5000, coin_floor=3000)
+    assert len(acts) == 1
+
+
+def test_plan_hypercharges_max_count_cap():
+    from revente.shop_actions import plan_hypercharges
+    acts = plan_hypercharges(eligible=3, coins=100000, hc_cost=5000, max_count=1)
+    assert len(acts) == 1
+
+
+def test_plan_hypercharges_none_eligible_or_broke():
+    from revente.shop_actions import plan_hypercharges
+    assert plan_hypercharges(eligible=0, coins=99999) == []
+    assert plan_hypercharges(eligible=5, coins=4999, hc_cost=5000) == []
