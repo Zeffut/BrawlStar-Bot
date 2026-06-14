@@ -408,19 +408,22 @@ def _ensure_grid(serial, w, h, max_attempts=20) -> bool:
             _launch_bs(serial)
             time.sleep(10)
             continue
-        if _on_grid(_screencap(serial), w, h):
+        # The header OCR is flaky frame-to-frame; sample a few frames before deciding
+        # we are NOT on the grid. This avoids cascading into the expensive BS relaunch
+        # on a transient OCR miss (the main slowdown observed live).
+        if _on_grid_voted(serial, w, h):
             return True
         if _dismiss_team_invite(serial, w, h):
             time.sleep(1.0)
             continue
         stuck += 1
-        if stuck % 6 == 0:
-            # Hard reset to a clean lobby (clears unknown popups/menus).
+        if stuck % 10 == 0:
+            # Last-resort hard reset to a clean lobby (clears unknown popups/menus).
             subprocess.run(["adb", "-s", serial, "shell", "am", "force-stop", BS_PKG],
                            capture_output=True, timeout=6)
             time.sleep(2)
             _launch_bs(serial)
-            time.sleep(40)
+            time.sleep(28)
             continue
         # From the lobby the centre-brawler tap opens the grid; from a card/menu
         # the BACK key steps toward it. Alternate so we converge from either side.
@@ -430,7 +433,18 @@ def _ensure_grid(serial, w, h, max_attempts=20) -> bool:
         else:
             _nav_back(serial)
             time.sleep(1.4)
-    return _on_grid(_screencap(serial), w, h)
+    return _on_grid_voted(serial, w, h)
+
+
+def _on_grid_voted(serial, w, h, samples=3) -> bool:
+    """_on_grid sampled over a few frames (the header OCR is flaky); True if ANY
+    sample sees the grid. Cheaper than an expensive false relaunch."""
+    for i in range(samples):
+        if _on_grid(_screencap(serial), w, h):
+            return True
+        if i < samples - 1:
+            time.sleep(0.4)
+    return False
 
 
 def _back_to_grid(serial, w, h) -> bool:
