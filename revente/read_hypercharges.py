@@ -11,8 +11,17 @@ Hard-won live findings drive this design (Mi9T, 2026-06-14):
   maxed+flame, and dedup brawlers by a perceptual hash of the detail portrait
   (no name OCR). Opening the collection may land on a detail, so we normalise to
   the grid first.
-Pure helpers (_parse_power, _magenta_count, _detail_has_hypercharge) are unit-
-tested on real fixtures; navigation is validated live. adb only.
+Pure helpers (_parse_power, _magenta_count, _detail_has_hypercharge,
+_detail_is_maxed) are unit-tested on real fixtures and PROVEN correct, including
+live (Shelly P11 → maxed True; Bull P1 → excluded; Maisie HC → detected).
+
+RELIABILITY CAVEAT — the per-brawler DETECTION is solid, but the full-collection
+ENUMERATION is best-effort and currently UNDER-COUNTS: live OCR drifts frame to
+frame (e.g. "NIVEAU MAX" reads "nlveaumaa", the X→a), the top grid view's bottom
+row mis-taps, and reaching deep brawlers via scroll+portrait-dedup is unreliable.
+So `count_hypercharges` is a precise-but-low-recall LOWER BOUND, exposed opt-in
+(estimate_account --scan-hc), not authoritative. This is the project's known
+brawler-navigation fragility. adb only.
 """
 from __future__ import annotations
 import logging

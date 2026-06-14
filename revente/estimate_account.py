@@ -33,7 +33,8 @@ def _default_serial() -> str:
         return "127.0.0.1:5555"
 
 
-def run(tag: str | None = None, serial: str | None = None) -> dict:
+def run(tag: str | None = None, serial: str | None = None,
+        scan_hypercharges: bool = False) -> dict:
     serial = serial or _default_serial()
 
     if tag:
@@ -54,7 +55,11 @@ def run(tag: str | None = None, serial: str | None = None) -> dict:
     if not trophies and cur.get("trophies"):
         trophies = cur["trophies"]
 
-    hc = count_hypercharges(serial)
+    # Hypercharge auto-scan is OPT-IN: it walks the whole collection (slow, ~10 min)
+    # and the live OCR/navigation is not yet reliable enough to be authoritative
+    # (it under-counts on deep collections — see read_hypercharges docstring). Off by
+    # default so a normal estimate stays fast and never asserts a falsely-confident 0.
+    hc = count_hypercharges(serial) if scan_hypercharges else {"count": None, "brawlers": []}
 
     data = AccountData(
         tag=tag or "?", name=prof.get("name") or "?", trophies=trophies,
@@ -71,5 +76,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default=None)
     ap.add_argument("--serial", default=None)
+    ap.add_argument("--scan-hc", action="store_true",
+                    help="opt-in: auto-scan the collection for hypercharges (slow, experimental)")
     args = ap.parse_args()
-    print(json.dumps(run(args.tag, args.serial), ensure_ascii=False, indent=2))
+    print(json.dumps(run(args.tag, args.serial, scan_hypercharges=args.scan_hc),
+                     ensure_ascii=False, indent=2))
