@@ -60,7 +60,11 @@ GRID_COLS      = (0.19, 0.50, 0.80)     # 3 column centres (tap the portrait)
 GRID_ROWS      = (0.27, 0.61)           # two fully-visible tile rows
 GRID_SCROLL    = (0.52, 0.80, 0.52, 0.34, 500)  # x0,y0,x1,y1,ms — swipe up one page
 GRID_BACK_ARROW = (0.025, 0.05)         # (unused; card→grid uses the BACK key)
+GRID_SORT_CTRL = (0.62, 0.05)           # the sort control ("Rareté"/...) in the header
 MAX_GRID_PAGES = 12
+# Mean abs RGB diff threshold: a brawler card differs from the grid by ≫ this; the
+# same grid before/after an empty tap differs ≈0 (mirrors read_hypercharges._DETAIL_OPENED_DIFF).
+_OPENED_DIFF = 18.0
 
 
 # ---------------------------------------------------------------------------
@@ -487,8 +491,113 @@ def _card_is_locked(pil_image, w, h) -> bool:
     return any(t in joined for t in ("debloquer", "débloquer", "deblo", "unlock"))
 
 
+def _sort_grid_by(serial, w, h, *keywords) -> bool:
+    """Open the grid sort menu and select the option whose OCR'd label contains any
+    of `keywords` (space-stripped, lowercased). Returns True on success. Used to
+    cluster the P11 brawlers at the top so the walk opens only a handful of cards.
+
+    NOTE: the brawler-detail screens are reached from the grid; the grid's header
+    sort control opens a dropdown (Rareté / Trophées max. / Niveau de pouvoir / …)."""
+    _nav_tap(serial, w, h, *GRID_SORT_CTRL)
+    time.sleep(1.6)
+    m = _ocr_map(_screencap(serial))
+    for k, v in m.items():
+        kl = k.lower().replace(" ", "")
+        if any(kw in kl for kw in keywords):
+            c = v.get("center")
+            if c and c[0] > 0:
+                _nav_tap(serial, w, h, c[0] / w, c[1] / h)
+                time.sleep(2.0)
+                return True
+    _nav_back(serial)  # close the menu if nothing matched
+    time.sleep(0.8)
+    return False
+
+
 # ---------------------------------------------------------------------------
-# Grid walk — visits each brawler's POUVOIR card once
+# Fast hypercharge scan — sort high-power brawlers to the top, walk the cluster
+# ---------------------------------------------------------------------------
+
+def _walk_maxed_brawlers(serial, w, h, visit, *, max_open=26, stop_after_nonmaxed=6):
+    """Efficient scan for hypercharge eligibility: sort the grid by trophies (max
+    first) so the highest-power (P11) brawlers cluster at the TOP, then walk from the
+    top and STOP after several consecutive non-maxed cards (we've passed the P11
+    cluster). Opens only ~(#P11 + stop_after_nonmaxed) cards instead of the whole
+    collection. `visit(card_img)` is called for each MAXED (P11) brawler.
+
+    Caveat: a P11 brawler with very low trophies (maxed but never pushed) would sort
+    lower and could be missed — acceptable for push-strategy accounts where P11s are
+    the pushed (high-trophy) brawlers. Returns the count of maxed brawlers visited."""
+    if not _ensure_grid(serial, w, h):
+        return 0
+    # Trophées max. → high-trophy (≈ P11) first. Fall back to power sort if needed.
+    if not _sort_grid_by(serial, w, h, "tropheesmax", "trophymax", "trophiesmax"):
+        _sort_grid_by(serial, w, h, "niveaudepouvoir", "powerlevel")
+    _scroll_to_top(serial, w, h, max_swipes=3)  # sort already resets near the top
+    seen: set = set()
+    opened = 0
+    nonmaxed_streak = 0
+    visited = 0
+    for _page in range(MAX_GRID_PAGES):
+        page_new = 0
+        for yr in GRID_ROWS:
+            for xr in GRID_COLS:
+                # SPEED: use a fresh cv2 image-diff (≈50ms) instead of per-tile easyocr
+                # (≈2s on CPU). `before` is the CURRENT grid, captured right before the
+                # tap — so a card opening (huge diff) is told from an empty tap (≈0)
+                # reliably (the earlier failure used a stale per-page reference).
+                before = _screencap(serial)
+                _nav_tap(serial, w, h, xr, yr)
+                time.sleep(1.4)
+                card = _screencap(serial)
+                if _img_mean_diff(before, card) < _OPENED_DIFF:
+                    continue  # nothing opened — still on the grid (empty cell)
+                ph = _portrait_hash(card, w, h)
+                if ph in seen:
+                    _back_to_grid_fast(serial, before)
+                    continue
+                seen.add(ph)
+                opened += 1
+                page_new += 1
+                # No _card_is_locked OCR here: with the trophies-max sort, locked
+                # brawlers sit at the bottom (not the top cluster we walk); a stray
+                # locked card reads non-maxed and just feeds the early-stop streak.
+                if is_maxed(card, w, h):
+                    nonmaxed_streak = 0
+                    visited += 1
+                    visit(card)
+                else:
+                    nonmaxed_streak += 1
+                _back_to_grid_fast(serial, before)
+                if nonmaxed_streak >= stop_after_nonmaxed or opened >= max_open:
+                    return visited
+        if page_new == 0:
+            break  # a whole page opened nothing new → end of collection
+        _scroll_grid(serial, w, h)
+        time.sleep(1.1)
+    return visited
+
+
+def _back_to_grid_fast(serial, grid_ref):
+    """Return to the grid via BACK, verified by a cheap image-diff against grid_ref
+    (the grid captured just before the tile was tapped). Falls back to OCR _on_grid
+    only if the fast check keeps failing."""
+    for i in range(4):
+        _nav_back(serial)
+        time.sleep(0.9)
+        cur = _screencap(serial)
+        if _img_mean_diff(grid_ref, cur) < _OPENED_DIFF:
+            return True
+        w, h = cur.size
+        if _dismiss_team_invite(serial, w, h):
+            time.sleep(0.8)
+        if i >= 2 and _on_grid(cur, w, h):  # OCR fallback for a scrolled/changed grid
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Grid walk — visits each brawler's POUVOIR card once (full enumeration)
 # ---------------------------------------------------------------------------
 
 def _walk_cards(serial, w, h, visit):
@@ -706,7 +815,10 @@ class ShopActionEngine:
                 coins -= self.hc_cost
                 bought += 1
 
-            _walk_cards(self.serial, w, h, visit)
+            # Fast scan: sort high-power brawlers to the top and walk only the P11
+            # cluster (opens ~a dozen cards, not the whole 100+ collection). Each
+            # visited card is already MAXED; `visit` only needs to check the HC state.
+            _walk_maxed_brawlers(self.serial, w, h, visit)
 
             rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
             n_plan = len([a for a in rep.planned if a.kind == "buy_hypercharge"])

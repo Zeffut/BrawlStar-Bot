@@ -114,10 +114,11 @@ def test_levels_to_target():
 # old _enter_detail / _swipe_carousel_next to match the new grid navigation.
 
 def _make_walk_cards(fixture_sequence):
-    """Return a _walk_cards replacement that drives visit() over `fixture_sequence`.
-    Each entry is either a PIL image or a fixture name string.
-    The fake returns the count of cards visited (len of sequence)."""
-    def fake_walk_cards(serial, w, h, visit):
+    """Return a walk replacement (works for both _walk_cards and _walk_maxed_brawlers)
+    that drives visit() over `fixture_sequence`. Each entry is a PIL image or a fixture
+    name string. Returns the count of cards visited. Accepts the extra keyword args of
+    _walk_maxed_brawlers (max_open / stop_after_nonmaxed)."""
+    def fake_walk_cards(serial, w, h, visit, **kwargs):
         for item in fixture_sequence:
             img = _img(item) if isinstance(item, str) else item
             visit(img)
@@ -131,7 +132,7 @@ def test_buy_hypercharges_dry_run_spends_nothing(monkeypatch):
     monkeypatch.setattr(S.time, "sleep", lambda *_: None)
 
     # The walk drives: shelly (eligible), maisie (not eligible — has HC), bull (not maxed)
-    monkeypatch.setattr(S, "_walk_cards", _make_walk_cards(
+    monkeypatch.setattr(S, "_walk_maxed_brawlers", _make_walk_cards(
         ["shelly_detail.png", "maisie_detail.png", "bull_detail_p1.png"]
     ))
     monkeypatch.setattr(S, "_ensure_lobby", lambda *a, **k: True)
@@ -158,7 +159,7 @@ def test_buy_hypercharges_dry_run_respects_cumulative_affordability(monkeypatch)
 
     # Both cards report as eligible (monkeypatched hc_buy_eligible)
     monkeypatch.setattr(S, "hc_buy_eligible", lambda *a, **k: True)
-    monkeypatch.setattr(S, "_walk_cards", _make_walk_cards(
+    monkeypatch.setattr(S, "_walk_maxed_brawlers", _make_walk_cards(
         ["shelly_detail.png", "shelly_detail.png"]
     ))
     monkeypatch.setattr(S, "_ensure_lobby", lambda *a, **k: True)
@@ -180,7 +181,7 @@ def test_buy_hypercharges_live_taps_when_confirmed(monkeypatch):
     import revente.shop_actions as S
     monkeypatch.setattr(S.time, "sleep", lambda *_: None)
 
-    monkeypatch.setattr(S, "_walk_cards", _make_walk_cards(["shelly_detail.png"]))
+    monkeypatch.setattr(S, "_walk_maxed_brawlers", _make_walk_cards(["shelly_detail.png"]))
     monkeypatch.setattr(S, "_ensure_lobby", lambda *a, **k: True)
     monkeypatch.setattr(S, "_read_coins", lambda serial: 10000)
     monkeypatch.setattr(S, "_screencap", lambda s: _img("shelly_detail.png"))
@@ -206,7 +207,7 @@ def test_buy_hypercharges_live_blocked_when_wrong_tab(monkeypatch):
     import revente.shop_actions as S
     monkeypatch.setattr(S.time, "sleep", lambda *_: None)
 
-    monkeypatch.setattr(S, "_walk_cards", _make_walk_cards(["shelly_detail.png"]))
+    monkeypatch.setattr(S, "_walk_maxed_brawlers", _make_walk_cards(["shelly_detail.png"]))
     monkeypatch.setattr(S, "_ensure_lobby", lambda *a, **k: True)
     monkeypatch.setattr(S, "_read_coins", lambda serial: 10000)
     monkeypatch.setattr(S, "_screencap", lambda s: _img("shelly_detail.png"))
