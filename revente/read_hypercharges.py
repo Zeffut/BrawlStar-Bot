@@ -165,17 +165,20 @@ def count_hypercharges(serial: str) -> dict:
         if not _ensure_grid(serial, w, h, g):
             return {"count": None, "brawlers": []}
 
+        # NOTE: we do NOT re-check _on_collection mid-scan. The collection header
+        # OCR is flaky, and a false "grid lost" used to reopen the collection at the
+        # TOP, making the next view all-seen → premature break before deep brawlers.
+        # Instead we trust the deterministic flow: tap a cell → detail; back → SAME
+        # grid position (verified, diff≈0); swipe → still grid. Portrait-hash dedup
+        # absorbs scroll overlap and any tap that didn't open a detail (grid hash
+        # repeats → seen). `empty_views` counts consecutive views with no new brawler
+        # so transient OCR/scroll hiccups don't end the scan on the first dry view.
         seen: set = set()
         hc = 0
+        empty_views = 0
         scrolls = 0
         taps = 0
-        while scrolls <= MAX_SCROLLS and taps < MAX_TAPS:
-            view = _screencap(serial)
-            if not _on_collection(view, w, h):
-                # Lost the grid (stray popup / nav glitch) — try to recover once.
-                if not _ensure_grid(serial, w, h, g):
-                    break
-                view = _screencap(serial)
+        while scrolls <= MAX_SCROLLS and taps < MAX_TAPS and empty_views < 2:
             new_this_view = 0
             for (cx0, cx1, cy0, cy1) in g["cells"]:
                 if taps >= MAX_TAPS:
@@ -184,8 +187,6 @@ def count_hypercharges(serial: str) -> dict:
                 time.sleep(1.8)
                 taps += 1
                 detail = _screencap(serial)
-                if _on_collection(detail, w, h):
-                    continue  # tapped an empty/locked cell — still on the grid
                 ph = _portrait_hash(detail, w, h)
                 if ph not in seen:
                     seen.add(ph)
@@ -194,8 +195,7 @@ def count_hypercharges(serial: str) -> dict:
                         hc += 1
                 _tap(serial, w, h, *g["back_arrow"])
                 time.sleep(1.2)
-            if new_this_view == 0:
-                break  # whole view already seen → bottom reached
+            empty_views = empty_views + 1 if new_this_view == 0 else 0
             _swipe(serial, w, h, g)
             time.sleep(1.3)
             scrolls += 1
