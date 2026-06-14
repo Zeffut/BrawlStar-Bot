@@ -28,3 +28,14 @@ def test_30k_charged_top_of_grid():
                              power11=12, hypercharges=5, rare_skins=2))
     assert e.tier == "chargé"
     assert e.price_max_usd >= 60
+
+
+def test_load_override_reads_hypercharges_by_tag():
+    import pytest
+    pytest.importorskip("tomllib")  # estimate_account's import chain needs it (3.11+)
+    from revente.estimate_account import _load_override
+    # account_overrides.csv ships QPRCQ9RV2 → 1 hypercharge, 0 rare skins.
+    assert _load_override("QPRCQ9RV2") == {"hypercharges": 1, "rare_skins": 0}
+    assert _load_override("#QPRCQ9RV2") == {"hypercharges": 1, "rare_skins": 0}  # '#' tolerant
+    assert _load_override("UNKNOWNTAG") == {}
+    assert _load_override(None) == {}

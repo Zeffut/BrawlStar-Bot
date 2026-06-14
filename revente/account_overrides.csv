@@ -1,0 +1,9 @@
+# Manual / detection-assisted overrides for fields that cannot be read reliably
+# from the game or the API. The estimator prefers these over the (unreliable)
+# auto-scan. Confirm hypercharges with revente.read_hypercharges.check_current_detail
+# (open each P11 brawler's detail, it reports maxed+hypercharge reliably).
+#
+# tag,hypercharges,rare_skins
+# (tag with or without leading '#'. Blank/missing tag → treated as unmeasured.)
+QPRCQ9RV2,1,0
+PYLV98LG9,1,0

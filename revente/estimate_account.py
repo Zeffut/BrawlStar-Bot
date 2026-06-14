@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import tomllib
 from pathlib import Path
 
 from revente.estimate import AccountData, estimate
@@ -27,10 +26,37 @@ from revente.read_tag import _validate, detect_tag
 def _default_serial() -> str:
     p = Path(__file__).resolve().parent.parent / "cfg" / "device.toml"
     try:
+        import tomllib  # lazy: stdlib only on 3.11+; keep module importable on 3.9
         with p.open("rb") as f:
             return tomllib.load(f).get("serial", "127.0.0.1:5555")
     except Exception:
         return "127.0.0.1:5555"
+
+
+def _load_override(tag: str | None) -> dict:
+    """Read detection-assisted manual overrides (hypercharges, rare_skins) for a tag
+    from revente/account_overrides.csv. These are the RELIABLE source for fields the
+    game/API don't expose — see the file header. Returns {} if absent/unreadable."""
+    if not tag:
+        return {}
+    key = tag.lstrip("#").upper()
+    path = Path(__file__).resolve().parent / "account_overrides.csv"
+    try:
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if parts and parts[0].lstrip("#").upper() == key:
+                out = {}
+                if len(parts) > 1 and parts[1].isdigit():
+                    out["hypercharges"] = int(parts[1])
+                if len(parts) > 2 and parts[2].isdigit():
+                    out["rare_skins"] = int(parts[2])
+                return out
+    except Exception:
+        pass
+    return {}
 
 
 def run(tag: str | None = None, serial: str | None = None,
@@ -55,17 +81,21 @@ def run(tag: str | None = None, serial: str | None = None,
     if not trophies and cur.get("trophies"):
         trophies = cur["trophies"]
 
-    # Hypercharge auto-scan is OPT-IN: it walks the whole collection (slow, ~10 min)
-    # and the live OCR/navigation is not yet reliable enough to be authoritative
-    # (it under-counts on deep collections — see read_hypercharges docstring). Off by
-    # default so a normal estimate stays fast and never asserts a falsely-confident 0.
+    # Hypercharges/rare skins: prefer the reliable detection-assisted override file;
+    # else the OPT-IN auto-scan (slow + under-counts live, see read_hypercharges);
+    # else 0. The override is authoritative because the full screen-scrape walk is
+    # defeated by Brawl Stars' dynamic UI and no API exposes hypercharge ownership.
+    override = _load_override(tag)
     hc = count_hypercharges(serial) if scan_hypercharges else {"count": None, "brawlers": []}
+    hypercharges = override.get("hypercharges")
+    if hypercharges is None:
+        hypercharges = hc.get("count") or 0
 
     data = AccountData(
         tag=tag or "?", name=prof.get("name") or "?", trophies=trophies,
         brawlers=len(brawlers), power11=power11,
         gems=cur.get("gems"), gold=cur.get("gold"), bling=cur.get("bling"),
-        hypercharges=(hc.get("count") or 0),
+        hypercharges=hypercharges, rare_skins=override.get("rare_skins", 0),
     )
     est = estimate(data)
     return {"ok": True, "account": data.__dict__, "estimate": est.__dict__,
