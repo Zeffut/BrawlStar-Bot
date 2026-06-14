@@ -280,10 +280,20 @@ def count_hypercharges(serial: str) -> dict:
 
         seen: set = set()
         hc = 0
+        dup_streak = 0
         for _ in range(MAX_CAROUSEL):
             ph = _portrait_hash(_screencap(serial), w, h)
             if ph in seen:
-                break  # carousel wrapped around → every owned brawler seen
+                # A single repeat usually means the swipe didn't advance (animation
+                # timing), NOT a wrap. Re-swipe and retry; only stop after several
+                # consecutive repeats (genuinely wrapped around or stuck).
+                dup_streak += 1
+                if dup_streak >= 3:
+                    break
+                _swipe_carousel_next(serial, w, h, g)
+                time.sleep(1.5)
+                continue
+            dup_streak = 0
             seen.add(ph)
             _maxed, has_hc = _vote_detail(serial, w, h)
             if has_hc:
