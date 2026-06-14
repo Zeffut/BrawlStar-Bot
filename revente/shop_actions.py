@@ -39,8 +39,15 @@ log = logging.getLogger("shop_actions")
 # ---------------------------------------------------------------------------
 # Bottom-right green AMÉLIORER button area (power upgrade). Calibrated on Mi9T.
 UPGRADE_REGION = (0.74, 1.00, 0.80, 1.00)
-# Hypercharge slot tap (top-right ability cluster). CALIBRATE LIVE.
+# Hypercharge slot tap (top-right ability cluster) — opens the ability panel.
+# CALIBRATE LIVE (needs an eligible/unowned-HC brawler to confirm).
 HC_SLOT_TAP = (0.945, 0.29)
+# The HYPERCHARGE tab in the ability panel's tab row (rightmost). Tapped explicitly
+# before buying so the panel can't stay on the star-power tab (the wrong-buy cause).
+# CALIBRATE LIVE.
+HC_TAB_TAP = (0.90, 0.10)
+# Region where the green unlock/price button sits inside the ability panel. CALIBRATE LIVE.
+HC_BUY_REGION = (0.30, 0.78, 0.55, 0.96)
 # Purchase-confirm dialog green button region. CALIBRATE LIVE.
 CONFIRM_REGION = (0.38, 0.82, 0.50, 0.92)
 
@@ -765,15 +772,20 @@ class ShopActionEngine:
         live = (not self.dry_run) and confirm
         rep = Report(dry_run=not live)
         try:
-            rep.coins_before = _read_coins(self.serial)
-            coins = rep.coins_before if rep.coins_before is not None else 0
-
+            # Robust entry: unlock + ensure BS is foreground BEFORE reading dims, so
+            # the screencap is landscape (taps scale correctly). The grid walk's
+            # _ensure_grid then handles reaching the collection (OCR-anchored — the
+            # project's state_finder mis-classifies this account's lobby).
+            if _is_locked(self.serial):
+                _unlock(self.serial)
+                time.sleep(2.5)
+            if not _foreground_is_bs(self.serial):
+                _launch_bs(self.serial)
+                time.sleep(42)
             probe = self._cap()
             w, h = probe.size
-
-            if not _ensure_lobby(self.serial):
-                rep.summary = "could not reach the lobby"
-                return rep
+            rep.coins_before = _read_coins(self.serial)  # best-effort (lobby bar)
+            coins = rep.coins_before if rep.coins_before is not None else 0
 
             if live:
                 log.warning(
@@ -797,16 +809,32 @@ class ShopActionEngine:
                 if not live:
                     rep.results.append(ActionResult(act, executed=False, verified=False))
                 else:
-                    # Tap the HC slot to open the purchase panel
+                    # 1. Open the ability panel on the HC slot.
                     _spend_tap(self.serial, w, h, *HC_SLOT_TAP)
                     time.sleep(1.0)
-                    # Hypercharge-tab guard: confirm correct tab before spending
+                    # 2. Force the HYPERCHARGE tab (the panel can open on the star-power
+                    #    tab — that mistake bought a star power during calibration).
+                    _nav_tap(self.serial, w, h, *HC_TAB_TAP)
+                    time.sleep(0.8)
+                    # 3. GUARD: confirm we're really on the hypercharge view before any spend.
                     panel_img = _screencap(self.serial)
                     if not _on_hypercharge_tab(panel_img, w, h):
                         rep.results.append(ActionResult(
                             act, executed=False, verified=False,
-                            error="not on hypercharge tab — aborted to avoid wrong purchase"))
+                            error="hypercharge tab not confirmed — aborted to avoid wrong purchase"))
+                        _nav_back(self.serial); time.sleep(0.6)
                         return
+                    # 4. Tap the green unlock/price button inside the panel.
+                    buy = _find_green_button_center(panel_img, w, h, HC_BUY_REGION)
+                    if buy is None:
+                        rep.results.append(ActionResult(
+                            act, executed=False, verified=False,
+                            error="no unlock button found on hypercharge tab"))
+                        _nav_back(self.serial); time.sleep(0.6)
+                        return
+                    _spend_tap(self.serial, w, h, *buy)
+                    time.sleep(1.0)
+                    # 5. Confirm the purchase dialog (green CONFIRM), then verify.
                     confirmed = self._tap_confirm(w, h)
                     verified = confirmed and _confirm_hc_applied(self, self.serial, w, h)
                     rep.results.append(ActionResult(
