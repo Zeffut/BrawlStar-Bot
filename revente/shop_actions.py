@@ -77,8 +77,8 @@ class Report:
     dry_run: bool
     coins_before: "int | None" = None
     coins_after: "int | None" = None
-    planned: list = field(default_factory=list)
-    results: list = field(default_factory=list)
+    planned: list[Action] = field(default_factory=list)
+    results: list[ActionResult] = field(default_factory=list)
     summary: str = ""
 
     def as_dict(self) -> dict:
@@ -215,10 +215,22 @@ def _read_coins(serial: str) -> "int | None":
         return None
 
 
-def _confirm_hc_applied(engine, serial: str, w: int, h: int) -> bool:
+def _read_power_level(pil_image, w: int, h: int):
+    """Best-effort OCR of the brawler power-level badge (1..11). Returns None if
+    unreadable (easyocr absent or OCR noise). CALIBRATE LIVE — region is a guess.
+    Secondary guard for target_level<11; the primary stop is button-absence (=P11)."""
+    try:
+        from revente.read_hypercharges import _ocr_text, _parse_power
+        crop = _crop_region(pil_image, w, h, (0.74, 0.86, 0.30, 0.42))
+        return _parse_power(_ocr_text(crop))
+    except Exception:
+        return None
+
+
+def _confirm_hc_applied(_engine, serial: str, w: int, h: int) -> bool:
     """After a buy, re-read the detail: HC owned ⟺ magenta flame present.
     Module-level so tests can monkeypatch via S._confirm_hc_applied.
-    `engine` is passed but unused (reserved for future subclass override)."""
+    `_engine` is reserved/unused (kept for future subclass override)."""
     time.sleep(1.2)
     img = _screencap(serial)
     return _detail_has_hypercharge(img, w, h)
@@ -249,107 +261,145 @@ class ShopActionEngine:
     # -- public actions -------------------------------------------------
     def buy_hypercharges(self, *, max_count: "int | None" = None,
                          coin_floor: int = 0, confirm: bool = False) -> Report:
+        # NOTE: max_count caps PLANNED entries in dry-run too (intended: shop_plan
+        # uses the default max_count=None to enumerate all eligible brawlers).
         live = (not self.dry_run) and confirm
         rep = Report(dry_run=not live)
-        rep.coins_before = _read_coins(self.serial)
-        coins = rep.coins_before if rep.coins_before is not None else 0
+        try:
+            rep.coins_before = _read_coins(self.serial)
+            coins = rep.coins_before if rep.coins_before is not None else 0
 
-        probe = self._cap()
-        w, h = probe.size
-        g = _geom_for(w, h)
-        if not _enter_detail(self.serial, w, h, g):
-            rep.summary = "could not reach a brawler detail screen"
-            return rep
+            probe = self._cap()
+            w, h = probe.size
+            g = _geom_for(w, h)
+            if not _enter_detail(self.serial, w, h, g):
+                rep.summary = "could not reach a brawler detail screen"
+                return rep
 
-        seen: set = set()
-        dup_streak = 0
-        bought = 0
-        for _ in range(MAX_CAROUSEL):
-            img = self._cap()
-            ph = _portrait_hash(img, w, h)
-            if ph in seen:
-                dup_streak += 1
-                if dup_streak >= 3:
-                    break
-                _swipe_carousel_next(self.serial, w, h, g)
-                time.sleep(1.5)
-                continue
+            if live:
+                log.warning("HC_SLOT_TAP=%s is uncalibrated — verify before live use",
+                            HC_SLOT_TAP)
+
+            seen: set = set()
             dup_streak = 0
-            seen.add(ph)
+            bought = 0
+            for _ in range(MAX_CAROUSEL):
+                img = self._cap()
+                ph = _portrait_hash(img, w, h)
+                if ph in seen:
+                    dup_streak += 1
+                    if dup_streak >= 3:
+                        break
+                    _swipe_carousel_next(self.serial, w, h, g)
+                    time.sleep(1.5)
+                    continue
+                dup_streak = 0
+                seen.add(ph)
 
-            if hc_buy_eligible(img, w, h):
-                # affordability + caps
-                if (max_count is not None and bought >= max_count) or \
-                        (coins - self.hc_cost) < coin_floor:
-                    pass  # éligible mais non finançable / plafond atteint
-                else:
-                    act = Action(kind="buy_hypercharge", coin_cost=self.hc_cost,
-                                 note=f"maxed brawler #{len(seen)}")
-                    rep.planned.append(act)
-                    if not live:
-                        rep.results.append(ActionResult(act, executed=False,
-                                                        verified=False))
+                if hc_buy_eligible(img, w, h):
+                    # affordability + caps
+                    if (max_count is not None and bought >= max_count) or \
+                            (coins - self.hc_cost) < coin_floor:
+                        pass  # éligible mais non finançable / plafond atteint
                     else:
-                        _spend_tap(self.serial, w, h, *HC_SLOT_TAP)
-                        time.sleep(1.0)
-                        confirmed = self._tap_confirm(w, h)
-                        verified = confirmed and _confirm_hc_applied(
-                            self, self.serial, w, h)
-                        rep.results.append(ActionResult(
-                            act, executed=True, verified=verified,
-                            error=None if confirmed else "no confirm button found"))
-                        coins -= self.hc_cost
-                    bought += 1
+                        act = Action(kind="buy_hypercharge", coin_cost=self.hc_cost,
+                                     note=f"maxed brawler #{len(seen)}")
+                        rep.planned.append(act)
+                        if not live:
+                            rep.results.append(ActionResult(act, executed=False,
+                                                            verified=False))
+                        else:
+                            _spend_tap(self.serial, w, h, *HC_SLOT_TAP)
+                            time.sleep(1.0)
+                            confirmed = self._tap_confirm(w, h)
+                            verified = confirmed and _confirm_hc_applied(
+                                self, self.serial, w, h)
+                            rep.results.append(ActionResult(
+                                act, executed=True, verified=verified,
+                                error=None if confirmed else "no confirm button found"))
+                            coins -= self.hc_cost
+                        bought += 1
 
-            _swipe_carousel_next(self.serial, w, h, g)
-            time.sleep(1.4)
+                _swipe_carousel_next(self.serial, w, h, g)
+                time.sleep(1.4)
 
-        rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
-        n_plan = len([a for a in rep.planned if a.kind == "buy_hypercharge"])
-        rep.summary = (f"{'planned' if not live else 'bought'} {n_plan} hypercharge(s); "
-                       f"coins {rep.coins_before}→{rep.coins_after}")
+            rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
+            n_plan = len([a for a in rep.planned if a.kind == "buy_hypercharge"])
+            rep.summary = (f"{'planned' if not live else 'bought'} {n_plan} hypercharge(s); "
+                           f"coins {rep.coins_before}→{rep.coins_after}")
+        except Exception as exc:
+            log.exception("buy_hypercharges aborted")
+            rep.summary = f"aborted: {exc}"
         return rep
 
     def upgrade_power(self, *, target_level: int = 11, scope: str = "current",
                       confirm: bool = False, max_steps: int = 11,
-                      max_brawlers: int = 1) -> Report:
+                      max_brawlers: int = 1,
+                      current_power: "int | None" = None) -> Report:
         """Raise power level(s). scope='current' acts on the open detail; scope='walk'
-        walks the carousel applying the target to each brawler (up to max_brawlers)."""
+        walks the carousel applying the target to each brawler (up to max_brawlers).
+        current_power: if known, computes a precise step budget so target_level is
+        respected even when per-step OCR is unavailable."""
         live = (not self.dry_run) and confirm
         rep = Report(dry_run=not live)
-        rep.coins_before = _read_coins(self.serial)
-        probe = self._cap()
-        w, h = probe.size
-        g = _geom_for(w, h)
-        if scope == "walk" and not _enter_detail(self.serial, w, h, g):
-            rep.summary = "could not reach a brawler detail screen"
-            return rep
+        try:
+            rep.coins_before = _read_coins(self.serial)
+            probe = self._cap()
+            w, h = probe.size
+            g = _geom_for(w, h)
+            if scope == "walk" and not _enter_detail(self.serial, w, h, g):
+                rep.summary = "could not reach a brawler detail screen"
+                return rep
 
-        brawlers = max_brawlers if scope == "walk" else 1
-        seen: set = set()
-        for _bi in range(brawlers):
-            if scope == "walk":
-                ph = _portrait_hash(self._cap(), w, h)
-                if ph in seen:
-                    break
-                seen.add(ph)
-            self._upgrade_current(rep, w, h, target_level, live, max_steps)
-            if scope == "walk":
-                _swipe_carousel_next(self.serial, w, h, g)
-                time.sleep(1.4)
+            # C1: compute step budget from known current_power, or fall back to max_steps
+            if current_power is not None:
+                step_budget = min(max_steps, levels_to_target(current_power, target_level))
+            else:
+                step_budget = max_steps
+                if target_level < 11:
+                    log.warning(
+                        "upgrade_power: target_level=%s<11 with unknown current power; "
+                        "relying on per-step OCR + max_steps backstop", target_level)
 
-        rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
-        rep.summary = (f"{'planned' if not live else 'did'} "
-                       f"{len(rep.planned)} power upgrade(s)")
+            brawlers = max_brawlers if scope == "walk" else 1
+            seen: set = set()
+            dup_streak = 0
+            for _bi in range(brawlers):
+                if scope == "walk":
+                    ph = _portrait_hash(self._cap(), w, h)
+                    if ph in seen:
+                        dup_streak += 1
+                        if dup_streak >= 3:
+                            break
+                        _swipe_carousel_next(self.serial, w, h, g)
+                        time.sleep(1.4)
+                        continue
+                    dup_streak = 0
+                    seen.add(ph)
+                self._upgrade_current(rep, w, h, target_level, live, step_budget)
+                if scope == "walk":
+                    _swipe_carousel_next(self.serial, w, h, g)
+                    time.sleep(1.4)
+
+            rep.coins_after = _read_coins(self.serial) if live else rep.coins_before
+            rep.summary = (f"{'planned' if not live else 'did'} "
+                           f"{len(rep.planned)} power upgrade(s)")
+        except Exception as exc:
+            log.exception("upgrade_power aborted")
+            rep.summary = f"aborted: {exc}"
         return rep
 
     def _upgrade_current(self, rep: Report, w: int, h: int, target_level: int,
-                         live: bool, max_steps: int) -> None:
-        for _ in range(max_steps):
+                         live: bool, step_budget: int) -> None:
+        for _ in range(step_budget):
             img = self._cap()
+            # Secondary OCR guard: stop early when we can confirm the target is reached
+            pwr = _read_power_level(img, w, h)
+            if pwr is not None and levels_to_target(pwr, target_level) == 0:
+                break
             btn = detect_power_upgrade(img, w, h)
             if btn is None:
-                break  # maxé / plus de bouton
+                break  # maxé (P11) / plus de bouton — primary stop
             act = Action(kind="upgrade_power",
                          coin_cost=btn.coin_cost or 0,
                          powerpoint_cost=btn.powerpoint_cost or 0,

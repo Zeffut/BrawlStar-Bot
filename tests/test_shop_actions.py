@@ -107,6 +107,7 @@ def test_levels_to_target():
 def test_buy_hypercharges_dry_run_spends_nothing(monkeypatch):
     pytest.importorskip("cv2"); pytest.importorskip("numpy")
     import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
     seq = ["shelly_detail.png", "maisie_detail.png", "bull_detail_p1.png",
            "shelly_detail.png"]  # le 4e répète le hash de Shelly → wrap
     it = iter(seq)
@@ -137,6 +138,7 @@ def test_buy_hypercharges_dry_run_spends_nothing(monkeypatch):
 def test_buy_hypercharges_live_taps_when_confirmed(monkeypatch):
     pytest.importorskip("cv2"); pytest.importorskip("numpy")
     import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
     monkeypatch.setattr(S, "_enter_detail", lambda *a, **k: True)
     monkeypatch.setattr(S, "_swipe_carousel_next", lambda *a, **k: None)
     monkeypatch.setattr(S, "_read_coins", lambda serial: 10000)
@@ -168,6 +170,7 @@ def test_buy_hypercharges_live_taps_when_confirmed(monkeypatch):
 def test_upgrade_power_current_dry_run(monkeypatch):
     pytest.importorskip("cv2"); pytest.importorskip("numpy")
     import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
     # Bull P1 : bouton vert présent → 1 action planifiée par tick jusqu'à cible.
     monkeypatch.setattr(S, "_screencap", lambda s: _img("bull_detail_p1.png"))
     monkeypatch.setattr(S, "_read_coins", lambda s: 100000)
@@ -184,6 +187,7 @@ def test_upgrade_power_current_dry_run(monkeypatch):
 def test_upgrade_power_live_stops_when_no_button(monkeypatch):
     pytest.importorskip("cv2"); pytest.importorskip("numpy")
     import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
     # 1er screen: bouton présent (Bull) ; après le tap+confirm: maxé (Shelly) → stop.
     frames = iter(["bull_detail_p1.png", "shelly_detail.png", "shelly_detail.png"])
     cur = {"n": "bull_detail_p1.png"}
@@ -204,6 +208,23 @@ def test_upgrade_power_live_stops_when_no_button(monkeypatch):
     rep = eng.upgrade_power(target_level=11, scope="current", confirm=True, max_steps=5)
     assert len(spends) >= 1
     assert any(r.executed for r in rep.results)
+
+
+def test_upgrade_power_caps_at_target_with_known_power(monkeypatch):
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(S, "_screencap", lambda s: _img("bull_detail_p1.png"))  # bouton toujours présent
+    monkeypatch.setattr(S, "_read_coins", lambda s: 100000)
+    monkeypatch.setattr(S, "_read_power_level", lambda *a, **k: None)  # OCR indispo → budget gouverne
+    monkeypatch.setattr(S, "_find_green_button_center", lambda *a, **k: (0.6, 0.8))
+    monkeypatch.setattr(S, "_img_mean_diff", lambda a, b: 10.0)  # chaque upgrade "vérifié"
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+    eng = S.ShopActionEngine("fake", dry_run=False)
+    rep = eng.upgrade_power(target_level=11, current_power=9, scope="current", confirm=True)
+    # budget = levels_to_target(9, 11) = 2 → exactement 2 niveaux montés
+    assert sum(1 for r in rep.results if r.executed) == 2
 
 
 def test_cli_parser_defaults_to_plan():
