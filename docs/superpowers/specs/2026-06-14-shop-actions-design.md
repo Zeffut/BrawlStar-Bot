@@ -215,4 +215,36 @@ en phase de vérification, jamais de dépense sans confirmation.
 - Calibration géométrie 16:9 émulateur (seul le ~19.5:9 phone est calibré).
 - Intégration auto dans la boucle de grind (ex. « dépenser l'or en fin de
   session ») — possible plus tard sur ce moteur, mais non implémentée.
-```
+
+## 9. Découvertes test LIVE (2026-06-14, device QPRCQ9RV2 via HP) — RÉVISION NAV
+
+Le test sur le vrai device a invalidé l'hypothèse de navigation par **carrousel**
+(réutilisée de `read_hypercharges`). Constats vérifiés :
+
+- **Détection OK sur la bonne carte** : `_find_green_button_center` localise les
+  boutons ; green(UPGRADE_REGION)=0 ⇒ maxed ; magenta(detail_hc) ⇒ HC possédée.
+  FRANK P11 possédant sa HC → `hc_buy_eligible`=False = correct. La lecture des
+  devises marche (or lu = 11527, exact). **Le seul bug est la NAVIGATION.**
+- **Navigation correcte (UI actuelle)** : Lobby → taper le **brawler central**
+  (~0.52,0.44) ouvre la **GRILLE** « BRAWLERS (n/103) » (3 colonnes, niveau power
+  par tuile) → taper une **tuile** ouvre la **carte POUVOIR**. Le bouton gauche
+  « BRAWLERS » (0.06,0.435) ouvre les **TROPHÉES** (mauvais écran = bug d'origine).
+  **La carte n'a PAS de carrousel** → nav par grille (tuile→carte→retour→scroll).
+- **Flux d'achat** : carte → slot abilities (haut-droite) → **panneau à ONGLETS**
+  (GADGET / POUVOIR STAR / HYPERCHARGE) → bouton vert prix → dialogue
+  « CONFIRMER L'ACHAT » → confirm. ⚠️ **Le panneau peut s'ouvrir sur POUVOIR STAR,
+  pas HYPERCHARGE.** Erreur commise en calibration : achat du pouvoir star de FRANK
+  (2000 coins) au lieu d'une HC. **Garde obligatoire avant tout achat** : vérifier
+  que l'onglet actif est bien HYPERCHARGE (OCR du titre/onglet). Coût réel d'une HC
+  sur cette version : non confirmé (jamais atteint le vrai onglet).
+
+### Révisions à faire dans le code (TODO)
+1. Remplacer la nav carrousel par une **nav grille** : `_open_grid` (lobby→tap
+   centre, vérif header OCR), itération tuiles (tap→carte→détection→retour) + scroll.
+2. **Robustesse** : gérer verrou (PIN 2603), invites d'équipe (taper REFUSER),
+   BACK ignoré. Mieux : **intégrer `game_api.goto_lobby`/dismiss** (le bot a déjà
+   cette logique) plutôt que de la dupliquer en adb standalone.
+3. **Garde HYPERCHARGE-tab** avant tout `_spend_tap` d'achat HC (anti star-power).
+4. Live buying = passe **supervisée** d'abord (mapper l'onglet HC + coût), jamais
+   en autonomie aveugle sur le compte en vente.
+
