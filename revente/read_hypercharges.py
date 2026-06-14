@@ -199,7 +199,8 @@ def count_hypercharges(serial: str) -> dict:
                 if taps >= MAX_TAPS:
                     break
                 _tap(serial, w, h, (cx0 + cx1) / 2, (cy0 + cy1) / 2)
-                time.sleep(1.8)
+                time.sleep(2.7)  # detail open-animation must finish or the maxed
+                #                  OCR reads a mid-transition frame and misses P11s
                 taps += 1
                 detail = _screencap(serial)
                 ph = _portrait_hash(detail, w, h)
