@@ -40,3 +40,29 @@ def test_green_separation_nonmaxed_vs_maxed():
     g_bull = _green_count(_crop_region(bull, bw, bh, UPGRADE_REGION))
     g_shelly = _green_count(_crop_region(shelly, sw, sh, UPGRADE_REGION))
     assert g_bull > g_shelly * 3, (g_bull, g_shelly)
+
+
+def _wh(name):
+    img = _img(name); w, h = img.size
+    return img, w, h
+
+
+def test_hc_buy_eligible():
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    from revente.shop_actions import hc_buy_eligible
+    cases = {
+        "shelly_detail.png": True,    # maxé (pas de bouton vert), pas de HC
+        "maisie_detail.png": False,   # maxé mais HC déjà possédée
+        "bull_detail_p1.png": False,  # pas maxé (bouton vert présent)
+    }
+    for name, expected in cases.items():
+        img = _img(name); w, h = img.size
+        assert hc_buy_eligible(img, w, h) is expected, name
+
+
+def test_is_maxed_by_green_absence():
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    from revente.shop_actions import is_maxed
+    assert is_maxed(*_wh("shelly_detail.png")) is True
+    assert is_maxed(*_wh("maisie_detail.png")) is True
+    assert is_maxed(*_wh("bull_detail_p1.png")) is False
