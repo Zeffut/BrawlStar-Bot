@@ -50,9 +50,14 @@ _GEOM_WIDE = {
     "detail_hc":     (0.90, 0.99, 0.18, 0.40),   # bottom-right HC slot on detail screen
     "detail_maxed":  (0.78, 1.00, 0.80, 0.93),   # "NIVEAU MAX !" yellow label (P11 only)
     "portrait":      (0.30, 0.70, 0.18, 0.82),   # brawler render — perceptual-hash dedup
+    # the detail screen is a horizontal CAROUSEL: a low right→left swipe goes to the
+    # NEXT brawler (stays on a detail). This is the robust enumeration — no grid,
+    # no scroll, no cell taps, no reorder/coverage issues. (x_from, y, x_to, y, ms)
+    "carousel_next": (0.81, 0.83, 0.21, 0.83, 250),
 }
 MAX_SCROLLS = 24
 MAX_TAPS = 110
+MAX_CAROUSEL = 130          # safety cap on carousel steps (≫ any owned-brawler count)
 
 
 def _geom_for(w: int, h: int) -> dict:
@@ -227,55 +232,58 @@ _DETAIL_OPENED_DIFF = 18.0   # post-tap screen differs this much from the grid �
 _SCROLL_BOTTOM_DIFF = 6.0    # grid barely changed after a swipe → at the bottom
 
 
-def count_hypercharges(serial: str) -> dict:
-    """Open the collection and count brawlers that are maxed AND show the
-    hypercharge flame. Returns {"count": int|None, "brawlers": []}; count=None on a
-    navigation failure (caller keeps hypercharges=0).
+def _swipe_carousel_next(serial: str, w: int, h: int, g: dict) -> None:
+    """On a brawler DETAIL screen, swipe to the NEXT brawler (the detail is a
+    horizontal carousel: a low right→left swipe advances it)."""
+    x0, y, x1, _y, ms = g["carousel_next"]
+    subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
+                    str(int(w * x0)), str(int(h * y)), str(int(w * x1)), str(int(h * y)),
+                    str(ms)], capture_output=True, timeout=10)
 
-    Designed against the live fragilities found on the Mi9T (see module docstring):
-    - 'did a detail open?' uses an IMAGE DIFF vs the grid (no flaky header OCR, and
-      robust to the grid reordering when brawlers are unlocked) — a tap that stays
-      on the grid (locked/empty cell or misfire) is skipped without a wasted back;
-    - maxed+HC use MULTI-FRAME VOTING (the detail animates → single-frame OCR drifts);
-    - dedup by portrait hash (names don't OCR);
-    - the bottom is detected by the grid not changing after a swipe (not by a
-      'no new portraits' heuristic, which the grid frames used to poison)."""
+
+def _enter_first_detail(serial: str, w: int, h: int, g: dict) -> bool:
+    """From the collection grid, open a brawler detail (taps cells until one opens)."""
+    for (cx0, cx1, cy0, cy1) in g["cells"]:
+        grid = _screencap(serial)
+        _tap(serial, w, h, (cx0 + cx1) / 2, (cy0 + cy1) / 2)
+        time.sleep(2.3)
+        if _img_mean_diff(grid, _screencap(serial)) >= _DETAIL_OPENED_DIFF:
+            return True  # a detail opened
+    return False
+
+
+def count_hypercharges(serial: str) -> dict:
+    """Count brawlers that are maxed AND own the hypercharge flame, by walking the
+    brawler-detail CAROUSEL. Returns {"count": int|None, "brawlers": []}; count=None
+    on a navigation failure (caller keeps hypercharges=0).
+
+    Why a carousel walk (after ~50 failed grid-tap iterations): the brawler detail is
+    a horizontal carousel — one low right→left swipe = next brawler, staying on a
+    detail. This sidesteps every grid fragility (dynamic order, scroll coverage, cell
+    mis-taps, popups). Per brawler we use MULTI-FRAME VOTING (the detail animates) for
+    maxed+HC, and dedup by a portrait perceptual hash to stop when the carousel wraps
+    back to a brawler we've already seen."""
     try:
         probe = _screencap(serial)
         w, h = probe.size
         g = _geom_for(w, h)
         if not _ensure_grid(serial, w, h, g):
             return {"count": None, "brawlers": []}
+        if not _enter_first_detail(serial, w, h, g):
+            return {"count": None, "brawlers": []}
 
         seen: set = set()
         hc = 0
-        scrolls = 0
-        taps = 0
-        while scrolls <= MAX_SCROLLS and taps < MAX_TAPS:
-            grid_ref = _screencap(serial)
-            for (cx0, cx1, cy0, cy1) in g["cells"]:
-                if taps >= MAX_TAPS:
-                    break
-                _tap(serial, w, h, (cx0 + cx1) / 2, (cy0 + cy1) / 2)
-                time.sleep(2.3)
-                taps += 1
-                post = _screencap(serial)
-                if _img_mean_diff(grid_ref, post) < _DETAIL_OPENED_DIFF:
-                    continue  # tap didn't open a detail (still on the grid)
-                ph = _portrait_hash(post, w, h)
-                if ph not in seen:
-                    seen.add(ph)
-                    _maxed, has_hc = _vote_detail(serial, w, h)
-                    if has_hc:
-                        hc += 1
-                _tap(serial, w, h, *g["back_arrow"])
-                time.sleep(1.2)
-            before = _screencap(serial)
-            _swipe(serial, w, h, g)
-            time.sleep(1.3)
-            if _img_mean_diff(before, _screencap(serial)) < _SCROLL_BOTTOM_DIFF:
-                break  # swipe changed nothing → bottom of the collection reached
-            scrolls += 1
+        for _ in range(MAX_CAROUSEL):
+            ph = _portrait_hash(_screencap(serial), w, h)
+            if ph in seen:
+                break  # carousel wrapped around → every owned brawler seen
+            seen.add(ph)
+            _maxed, has_hc = _vote_detail(serial, w, h)
+            if has_hc:
+                hc += 1
+            _swipe_carousel_next(serial, w, h, g)
+            time.sleep(1.4)
         return {"count": hc, "brawlers": []}
     except Exception:
         log.exception("count_hypercharges failed")
