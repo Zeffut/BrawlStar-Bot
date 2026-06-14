@@ -235,3 +235,41 @@ def test_cli_parser_defaults_to_plan():
     assert ns.confirm is False
     ns2 = p.parse_args(["--serial", "x", "--buy-hc", "--confirm", "--max-count", "2"])
     assert ns2.action == "buy-hc" and ns2.confirm is True and ns2.max_count == 2
+
+
+def test_buy_hypercharges_dry_run_respects_cumulative_affordability(monkeypatch):
+    """2 eligible brawlers but only coins for 1 → dry-run should plan exactly 1."""
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(S, "_screencap", lambda s: _img("shelly_detail.png"))
+    monkeypatch.setattr(S, "_enter_detail", lambda *a, **k: True)
+    monkeypatch.setattr(S, "_swipe_carousel_next", lambda *a, **k: None)
+    monkeypatch.setattr(S, "_read_coins", lambda s: 8000)
+    monkeypatch.setattr(S, "hc_buy_eligible", lambda *a, **k: True)
+    # Two distinct hashes then repeat to trigger wrap
+    hashes = iter(["h1", "h2", "h1", "h1", "h1"])
+    monkeypatch.setattr(S, "_portrait_hash", lambda *a, **k: next(hashes))
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+
+    eng = S.ShopActionEngine("fake", dry_run=True, hc_cost=5000)
+    rep = eng.buy_hypercharges()
+    # 8000 coins, 5000/HC → only 1 affordable even though 2 are eligible
+    assert spends == []
+    assert len([a for a in rep.planned if a.kind == "buy_hypercharge"]) == 1
+
+
+def test_upgrade_power_live_sub11_refused_without_current_power(monkeypatch):
+    """Live upgrade to target_level<11 without current_power must be refused."""
+    pytest.importorskip("cv2"); pytest.importorskip("numpy")
+    import revente.shop_actions as S
+    monkeypatch.setattr(S.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(S, "_screencap", lambda s: _img("bull_detail_p1.png"))
+    monkeypatch.setattr(S, "_read_coins", lambda s: 100000)
+    spends = []
+    monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
+    eng = S.ShopActionEngine("fake", dry_run=False)
+    rep = eng.upgrade_power(target_level=9, scope="current", confirm=True)  # no current_power
+    assert spends == []
+    assert "refused" in rep.summary

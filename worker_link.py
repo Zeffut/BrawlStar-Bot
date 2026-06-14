@@ -812,10 +812,12 @@ def _run_shop(args: dict, kind: str) -> dict:
     eng = S.ShopActionEngine(serial, dry_run=not confirm)
     try:
         if kind == "upgrade":
+            _cp = args.get("current_power")
             rep = eng.upgrade_power(
                 target_level=int(args.get("target_level", 11)),
                 scope=args.get("scope", "current"), confirm=confirm,
-                max_brawlers=int(args.get("max_brawlers", 1)))
+                max_brawlers=int(args.get("max_brawlers", 1)),
+                current_power=int(_cp) if _cp is not None else None)
         else:  # plan | buy
             rep = eng.buy_hypercharges(
                 max_count=args.get("max_count"),

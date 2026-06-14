@@ -317,7 +317,7 @@ class ShopActionEngine:
                             rep.results.append(ActionResult(
                                 act, executed=True, verified=verified,
                                 error=None if confirmed else "no confirm button found"))
-                            coins -= self.hc_cost
+                        coins -= self.hc_cost  # track running balance in both dry-run and live
                         bought += 1
 
                 _swipe_carousel_next(self.serial, w, h, g)
@@ -344,6 +344,12 @@ class ShopActionEngine:
         rep = Report(dry_run=not live)
         try:
             rep.coins_before = _read_coins(self.serial)
+
+            if live and target_level < 11 and current_power is None:
+                rep.summary = ("refused: live upgrade to target_level<11 needs current_power "
+                               "(power-level OCR region is uncalibrated)")
+                return rep
+
             probe = self._cap()
             w, h = probe.size
             g = _geom_for(w, h)

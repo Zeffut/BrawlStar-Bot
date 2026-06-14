@@ -1231,6 +1231,7 @@ class PowerUpgradeBody(BaseModel):
     target_level: int = 11
     scope: Literal["current", "walk"] = "current"
     max_brawlers: int = 1
+    current_power: int | None = None
 
 
 # POST is intentional: this drives the device (ADB carousel walk) — not an idempotent GET.
@@ -1255,6 +1256,7 @@ async def api_account_shop_upgrade(account_id: int, payload: PowerUpgradeBody | 
     return await _cmd_for_account(account_id, "shop_upgrade_power", {
         "confirm": bool(p.confirm), "target_level": int(p.target_level),
         "scope": p.scope, "max_brawlers": int(p.max_brawlers),
+        "current_power": p.current_power,
     }, timeout_s=900)
 
 

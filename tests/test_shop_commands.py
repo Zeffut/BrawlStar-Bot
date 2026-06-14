@@ -8,7 +8,7 @@ def _setup(monkeypatch, *, session_running=False):
 
     state = {"running": session_running}
     monkeypatch.setattr(W, "_cmd_session_state",
-                        lambda args: {"ok": True, "state": {"running": state["running"]}})
+                        lambda args: {"ok": True, "state": {"active": state["running"]}})
 
     calls = {"buy": 0, "upgrade": 0, "dry": None}
 
