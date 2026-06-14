@@ -167,6 +167,20 @@ def _ensure_grid(serial: str, w: int, h: int, g: dict) -> bool:
     return False
 
 
+def check_current_detail(serial: str) -> dict:
+    """Inspect the brawler DETAIL screen currently open on the device — RELIABLE,
+    because it does no navigation (the fragile part). Open a brawler's detail
+    yourself (or via the bot), then call this. Returns
+    {"maxed": bool, "hypercharge": bool}; `hypercharge` is only meaningful when
+    `maxed` is True (non-maxed details show purple power circles in the same slot).
+    This is the dependable way to confirm a hypercharge — the full-collection
+    `count_hypercharges` walk is best-effort and under-counts (see module docstring)."""
+    img = _screencap(serial)
+    w, h = img.size
+    maxed = _detail_is_maxed(img, w, h)
+    return {"maxed": maxed, "hypercharge": maxed and _detail_has_hypercharge(img, w, h)}
+
+
 def count_hypercharges(serial: str) -> dict:
     """Open the collection, open every brawler, and count those that are maxed AND
     show the hypercharge flame. Dedups by portrait hash (names don't OCR reliably).

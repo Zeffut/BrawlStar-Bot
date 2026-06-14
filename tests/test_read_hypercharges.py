@@ -90,6 +90,23 @@ def test_detail_is_maxed_negative():
     assert _detail_is_maxed(img, w, h) is False
 
 
+def test_check_current_detail_composes_gate(monkeypatch):
+    # The reliable semi-auto entry point: composes maxed AND hypercharge on the
+    # currently-open detail. Maisie → both True; Shelly → maxed but no HC; Bull → neither.
+    pytest.importorskip("cv2")
+    pytest.importorskip("numpy")
+    pytest.importorskip("easyocr")
+    import revente.read_hypercharges as R
+    cases = {
+        "maisie_detail.png": {"maxed": True, "hypercharge": True},
+        "shelly_detail.png": {"maxed": True, "hypercharge": False},
+        "bull_detail_p1.png": {"maxed": False, "hypercharge": False},
+    }
+    for name, expected in cases.items():
+        monkeypatch.setattr(R, "_screencap", lambda s, _n=name: _img(_n))
+        assert R.check_current_detail("fake") == expected, name
+
+
 def test_maxed_gate_excludes_nonmaxed_false_positive():
     # The combined gate (maxed AND flame) is correct where the flame alone is not:
     # Bull → maxed False → excluded; Maisie → both True → counted.
