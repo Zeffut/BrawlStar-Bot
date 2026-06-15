@@ -563,20 +563,22 @@ def _sort_grid_by(serial, w, h, *keywords) -> bool:
 # ---------------------------------------------------------------------------
 
 def _walk_maxed_brawlers(serial, w, h, visit, *, max_open=26, stop_after_nonmaxed=6):
-    """Efficient scan for hypercharge eligibility: sort the grid by trophies (max
-    first) so the highest-power (P11) brawlers cluster at the TOP, then walk from the
-    top and STOP after several consecutive non-maxed cards (we've passed the P11
-    cluster). Opens only ~(#P11 + stop_after_nonmaxed) cards instead of the whole
-    collection. `visit(card_img)` is called for each MAXED (P11) brawler.
+    """Efficient scan for hypercharge eligibility: sort the grid by POWER LEVEL so the
+    P11 (maxed) brawlers cluster at the very TOP, then walk from the top and STOP after
+    several consecutive non-maxed cards (we've passed the P11 cluster). Opens only
+    ~(#P11 + stop_after_nonmaxed) cards instead of the whole collection. `visit(card_img)`
+    is called for each MAXED (P11) brawler.
 
-    Caveat: a P11 brawler with very low trophies (maxed but never pushed) would sort
-    lower and could be missed — acceptable for push-strategy accounts where P11s are
-    the pushed (high-trophy) brawlers. Returns the count of maxed brawlers visited."""
+    Power-level sort (not trophies): a P11 brawler with low trophies (maxed but never
+    pushed) sorts to the TOP by power but would be buried by a trophies-max sort and
+    missed. LIVE-VERIFIED 2026-06-15 on zeffut2.0 (its two P11s, SHELLY+DYNAMIKE, are
+    low-trophy and were missed by the trophies sort). Returns # maxed brawlers visited."""
     if not _ensure_grid(serial, w, h):
         return 0
-    # Trophées max. → high-trophy (≈ P11) first. Fall back to power sort if needed.
-    if not _sort_grid_by(serial, w, h, "tropheesmax", "trophymax", "trophiesmax"):
-        _sort_grid_by(serial, w, h, "niveaudepouvoir", "powerlevel")
+    # Niveau de pouvoir → all P11s cluster at the top regardless of trophies.
+    # Fall back to trophies-max sort only if the power-level option can't be read.
+    if not _sort_grid_by(serial, w, h, "niveaudepouvoir", "powerlevel"):
+        _sort_grid_by(serial, w, h, "tropheesmax", "trophymax", "trophiesmax")
     _scroll_to_top(serial, w, h, max_swipes=3)  # sort already resets near the top
     seen: set = set()
     opened = 0
@@ -642,7 +644,7 @@ def _back_to_grid_fast(serial, card_ref):
 
 
 def _walk_top_for_upgrade(serial, w, h, visit, *, max_upgrades=12, max_open=30):
-    """Fast bounded walk for power upgrades: sort by trophies-max so the highest-power
+    """Fast bounded walk for power upgrades: sort by POWER LEVEL so the highest-power
     brawlers cluster at the top (the near-P11 ones — the best/cheapest upgrade targets
     — sit right after the P11s), then walk the top and call `visit(card)` on each
     NON-maxed, NON-locked brawler. `visit` returns truthy when it actually upgraded.
@@ -653,8 +655,10 @@ def _walk_top_for_upgrade(serial, w, h, visit, *, max_upgrades=12, max_open=30):
     tap would UNLOCK a brawler (a spend). Returns the number of brawlers upgraded."""
     if not _ensure_grid(serial, w, h):
         return 0
-    if not _sort_grid_by(serial, w, h, "tropheesmax", "trophymax", "trophiesmax"):
-        _sort_grid_by(serial, w, h, "niveaudepouvoir", "powerlevel")
+    # Power-level sort: near-P11 upgrade targets cluster at the top (see
+    # _walk_maxed_brawlers — trophies-max buries low-trophy high-power brawlers).
+    if not _sort_grid_by(serial, w, h, "niveaudepouvoir", "powerlevel"):
+        _sort_grid_by(serial, w, h, "tropheesmax", "trophymax", "trophiesmax")
     _scroll_to_top(serial, w, h, max_swipes=3)
     seen: set = set()
     opened = 0
