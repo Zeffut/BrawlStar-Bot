@@ -10,14 +10,6 @@ run_for_minutes = 600
 current_emulator = "BlueStacks"
 emulator_port = 5037
 
-# Auto sale-prep when an account reaches sale_target_trophies (sale_prep.py):
-#   "off"  = no prep, just mark ready (legacy behaviour)
-#   "plan" = DRY-RUN: notify what it WOULD buy/upgrade, spend nothing (default —
-#            safe while the shop_actions live-spend taps aren't calibrated yet)
-#   "live" = actually buy max hypercharges + upgrade brawlers toward P11
-#            (enable only AFTER a supervised calibration on a buyable-HC account)
-sale_prep_mode = "plan"
-
 # ============================================================================
 # Humane play schedule (play_schedule.py) — keeps the bot from grinding 24/7.
 # Toutes les heures sont en HEURE LOCALE du worker (garder le HP sur Europe/Paris).

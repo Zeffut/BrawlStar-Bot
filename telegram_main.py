@@ -260,33 +260,6 @@ def _manage_schedule_powersave(bot) -> None:
                 log.exception("schedule exit_power_save failed")
             bot.runner._power_saved = False
         return
-
-    # Sale-ready: PREP the account (buy max hypercharges + upgrade brawlers toward
-    # P11) BEFORE power-saving or marking it ready. The prep drives the device for a
-    # few minutes (in a background thread), so while it runs we must NOT close BS.
-    if st == "sale_ready":
-        try:
-            import sale_prep
-            sched = play_schedule.get()
-            target = int(getattr(sched, "sale_target", 0) or 0)
-            tag = None
-            aid = getattr(bot.runner, "_account_id", None)
-            if aid is not None:
-                acc = db.get_account(aid)
-                if acc:
-                    tag = acc.get("tag")
-            if tag and target and not sale_prep.completed(tag, target):
-                bot.runner._power_saved = False  # re-close BS once prep finishes
-                sale_prep.maybe_start(bot, tag, target, bot.send)
-            if tag and sale_prep.is_in_progress(tag):
-                try:
-                    _set_activity("⚙️ Prépa vente en cours…")
-                except Exception:
-                    pass
-                return  # keep BS open for the prep; skip power-save this tick
-        except Exception:
-            log.warning("sale-ready prep trigger failed", exc_info=True)
-
     # Paused (sleep / daily cap / between-blocks break) → close the game and
     # turn the screen off. A break is long enough (20–70 min) to be worth it.
     # Any non-"play" state is a pause → close the game + screen off. Generalized
@@ -307,7 +280,21 @@ def _manage_schedule_powersave(bot) -> None:
     except Exception:
         pass
 
-    # (sale-ready prep + notify is handled above, before power-save — see sale_prep)
+    if st == "sale_ready":
+        try:
+            import sale_report
+            sched = play_schedule.get()
+            target = int(getattr(sched, "sale_target", 0) or 0)
+            tag = None
+            aid = getattr(bot.runner, "_account_id", None)
+            if aid is not None:
+                acc = db.get_account(aid)
+                if acc:
+                    tag = acc.get("tag")
+            if tag and target and not sale_report.already_notified(tag, target):
+                sale_report.build_and_send(tag, target, bot.send)
+        except Exception:
+            log.warning("sale-ready report trigger failed", exc_info=True)
 
 
 def _resolve_account_id(accounts: "list[dict]", serial: "str | None") -> "int | None":

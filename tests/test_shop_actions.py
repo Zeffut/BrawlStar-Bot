@@ -248,15 +248,14 @@ def test_upgrade_power_current_dry_run(monkeypatch):
 
 
 def test_upgrade_power_walk_dry_run(monkeypatch):
-    """scope='walk' uses the fast bounded _walk_top_for_upgrade cluster walk."""
+    """scope='walk' uses _walk_cards — visits each card in sequence."""
     pytest.importorskip("cv2"); pytest.importorskip("numpy")
     import revente.shop_actions as S
     monkeypatch.setattr(S.time, "sleep", lambda *_: None)
-    monkeypatch.setattr(S, "_is_locked", lambda s: False)
-    monkeypatch.setattr(S, "_foreground_is_bs", lambda s: True)
+    monkeypatch.setattr(S, "_ensure_lobby", lambda *a, **k: True)
     monkeypatch.setattr(S, "_read_coins", lambda s: 100000)
     # Walk provides one non-maxed brawler
-    monkeypatch.setattr(S, "_walk_top_for_upgrade", _make_walk_cards(["bull_detail_p1.png"]))
+    monkeypatch.setattr(S, "_walk_cards", _make_walk_cards(["bull_detail_p1.png"]))
     monkeypatch.setattr(S, "_screencap", lambda s: _img("bull_detail_p1.png"))
     spends = []
     monkeypatch.setattr(S, "_spend_tap", lambda *a, **k: spends.append(a))
