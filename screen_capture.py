@@ -340,7 +340,13 @@ def get(serial: str | None = None) -> ScreenRecorder | None:
                 log.warning("no serial available for ScreenRecorder")
                 return None
         try:
-            r = ScreenRecorder(serial)
+            # Live panel feed + coarse bot vision share this one H264 stream.
+            # 8Mbps@1280 at the device's native ~56fps overruns a home uplink →
+            # frames buffer → the panel video plays in slow-motion (even with the
+            # client-side live-edge catch-up). Detection uses full-res adb screencap,
+            # NOT this stream, so a lower rate is safe here. 2.5Mbps@960 ≈ 5x less
+            # data → fits the uplink / frpc tunnel, stays real-time. (2026-06-15)
+            r = ScreenRecorder(serial, bitrate=2_500_000, max_width=960)
             r.start()
             _INSTANCE = r
             return r
