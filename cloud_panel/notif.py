@@ -40,6 +40,7 @@ DEFAULT_CONFIG: dict = {
     "events": {
         "match":                 {"telegram": False, "discord": False},
         "target_reached":        {"telegram": True,  "discord": True},
+        "sale_ready":            {"telegram": True,  "discord": True},
         "battery_low":           {"telegram": True,  "discord": True},
         "battery_resumed":       {"telegram": False, "discord": False},
         "bot_stuck":             {"telegram": True,  "discord": True},
@@ -150,6 +151,11 @@ def format_event(event_type: str, payload: dict) -> str:
         return (
             f"🏁 Session terminée — {payload.get('matches', 0)} matches, "
             f"W/L/D {payload.get('wins', 0)}/{payload.get('losses', 0)}/{payload.get('draws', 0)}"
+        )
+    if e == "sale_ready":
+        return payload.get("text") or (
+            f"🏁 Compte prêt à vendre : {payload.get('tag', '?')} "
+            f"({payload.get('target', '?')} 🏆)"
         )
     return f"{e}: {payload}"
 
