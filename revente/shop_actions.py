@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass, field
 
 from revente.read_hypercharges import (
-    _screencap, _geom_for,
+    _screencap, _screencap_full, _screencap_fast, _geom_for, _dev_wh, _area_factor,
     _portrait_hash, _detail_has_hypercharge, _img_mean_diff,
 )
 
@@ -160,7 +160,7 @@ def _find_green_button_center(pil_image, w: int, h: int, region):
     crop = _crop_region(pil_image, w, h, region)
     hsv = cv2.cvtColor(np.array(crop), cv2.COLOR_RGB2HSV)
     mask = cv2.inRange(hsv, np.array(GREEN_HSV_LO), np.array(GREEN_HSV_HI))
-    if int(mask.sum() // 255) < GREEN_MIN_PX:
+    if int(mask.sum() // 255) < GREEN_MIN_PX * _area_factor(w, h):
         return None
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not cnts:
@@ -205,9 +205,10 @@ def _ocr_costs(pil_image, w: int, h: int):
 
 
 def is_maxed(pil_image, w: int, h: int) -> bool:
-    """Power 11 ⟺ no green pixels in the upgrade-button zone."""
+    """Power 11 ⟺ no green pixels in the upgrade-button zone. Threshold scales with
+    frame area so it works on downscaled (stream) frames too."""
     crop = _crop_region(pil_image, w, h, UPGRADE_REGION)
-    return _green_count(crop) < GREEN_MIN_PX
+    return _green_count(crop) < GREEN_MIN_PX * _area_factor(w, h)
 
 
 def hc_buy_eligible(pil_image, w: int, h: int) -> bool:
@@ -242,8 +243,9 @@ def levels_to_target(power_now: int, target: int) -> int:
 def _spend_tap(serial: str, w: int, h: int, xr: float, yr: float) -> None:
     """DEDICATED seam for irreversible purchase/confirm taps.
     Kept separate from _nav_tap so dry-run is provably tap-free."""
+    dw, dh = _dev_wh(serial)
     subprocess.run(["adb", "-s", serial, "shell", "input", "tap",
-                    str(int(w * xr)), str(int(h * yr))], capture_output=True, timeout=10)
+                    str(int(dw * xr)), str(int(dh * yr))], capture_output=True, timeout=10)
 
 
 # ---------------------------------------------------------------------------
@@ -252,15 +254,17 @@ def _spend_tap(serial: str, w: int, h: int, xr: float, yr: float) -> None:
 
 def _nav_tap(serial, w, h, xr, yr):
     """Navigation tap (distinct from _spend_tap — purchase-tap-free in dry-run)."""
+    dw, dh = _dev_wh(serial)
     subprocess.run(["adb", "-s", serial, "shell", "input", "tap",
-                    str(int(w * xr)), str(int(h * yr))],
+                    str(int(dw * xr)), str(int(dh * yr))],
                    capture_output=True, timeout=10)
 
 
 def _nav_swipe(serial, w, h, x0, y0, x1, y1, ms=400):
+    dw, dh = _dev_wh(serial)
     subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
-                    str(int(w * x0)), str(int(h * y0)),
-                    str(int(w * x1)), str(int(h * y1)),
+                    str(int(dw * x0)), str(int(dh * y0)),
+                    str(int(dw * x1)), str(int(dh * y1)),
                     str(ms)], capture_output=True, timeout=12)
 
 
@@ -269,6 +273,27 @@ def _nav_back(serial):
     collection grid (the card's top-left counter is NOT a back button)."""
     subprocess.run(["adb", "-s", serial, "shell", "input", "keyevent", "4"],
                    capture_output=True, timeout=5)
+
+
+def _wait_stable(serial, *, settle_diff=8.0, timeout=2.6, poll=0.1, min_wait=0.2):
+    """Wait until the screen settles after a tap/swipe, then return the frame.
+    Polls the (now ~2ms) H264 stream until two consecutive frames differ by less than
+    `settle_diff`. Measured live: a settled GRID still animates ~5/frame (lobby ~2.5),
+    while a real transition (card open) is ~75 — so 8.0 sits above the animation floor
+    and well below transitions. Replaces fixed `time.sleep()` waits: returns as soon as
+    the UI is stable (often ~0.3s) instead of the worst case, bounded by `timeout`.
+    `min_wait` lets the action register before sampling begins. Polls the cheap
+    downscaled stream (`_screencap_fast`) — whole-frame diffs tolerate downscaling."""
+    time.sleep(min_wait)
+    prev = _screencap_fast(serial)
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        time.sleep(poll)
+        cur = _screencap_fast(serial)
+        if _img_mean_diff(prev, cur) < settle_diff:
+            return cur
+        prev = cur
+    return prev
 
 
 def _adb_out(serial, *args, timeout=8):
@@ -491,12 +516,11 @@ def _scroll_grid(serial, w, h):
 def _scroll_to_top(serial, w, h, max_swipes=8):
     """Swipe the grid DOWN until it stops moving (top), so the walk starts from a
     consistent position (the grid re-opens at its last scroll otherwise)."""
-    prev = _screencap(serial)
+    prev = _screencap_fast(serial)
     for _ in range(max_swipes):
         _nav_swipe(serial, w, h, 0.52, 0.34, 0.52, 0.80, 500)  # reverse of scroll
-        time.sleep(0.8)
-        cur = _screencap(serial)
-        if _img_mean_diff(prev, cur) < 4.0:
+        cur = _wait_stable(serial)  # stream frame (coarse scroll-stop check)
+        if _img_mean_diff(prev, cur) < 8.0:  # grid animates ~5/frame; <8 ⇒ stopped
             break
         prev = cur
 
@@ -517,18 +541,20 @@ def _sort_grid_by(serial, w, h, *keywords) -> bool:
     NOTE: the brawler-detail screens are reached from the grid; the grid's header
     sort control opens a dropdown (Rareté / Trophées max. / Niveau de pouvoir / …)."""
     _nav_tap(serial, w, h, *GRID_SORT_CTRL)
-    time.sleep(1.6)
-    m = _ocr_map(_screencap(serial))
+    _wait_stable(serial)
+    img = _screencap_full(serial)   # full-res: stylized sort labels need it for OCR
+    fw, fh = img.size
+    m = _ocr_map(img)
     for k, v in m.items():
         kl = k.lower().replace(" ", "")
         if any(kw in kl for kw in keywords):
             c = v.get("center")
             if c and c[0] > 0:
-                _nav_tap(serial, w, h, c[0] / w, c[1] / h)
-                time.sleep(2.0)
+                _nav_tap(serial, w, h, c[0] / fw, c[1] / fh)  # ratio from full-res size
+                _wait_stable(serial)
                 return True
     _nav_back(serial)  # close the menu if nothing matched
-    time.sleep(0.8)
+    _wait_stable(serial)
     return False
 
 
@@ -566,13 +592,13 @@ def _walk_maxed_brawlers(serial, w, h, visit, *, max_open=26, stop_after_nonmaxe
                 # reliably (the earlier failure used a stale per-page reference).
                 before = _screencap(serial)
                 _nav_tap(serial, w, h, xr, yr)
-                time.sleep(1.4)
-                card = _screencap(serial)
+                _wait_stable(serial)               # adaptive settle (cheap stream poll)
+                card = _screencap(serial)          # full-res — DETECTION needs it
                 if _img_mean_diff(before, card) < _OPENED_DIFF:
                     continue  # nothing opened — still on the grid (empty cell)
                 ph = _portrait_hash(card, w, h)
                 if ph in seen:
-                    _back_to_grid_fast(serial, before)
+                    _back_to_grid_fast(serial, card)
                     continue
                 seen.add(ph)
                 opened += 1
@@ -586,31 +612,32 @@ def _walk_maxed_brawlers(serial, w, h, visit, *, max_open=26, stop_after_nonmaxe
                     visit(card)
                 else:
                     nonmaxed_streak += 1
-                _back_to_grid_fast(serial, before)
+                _back_to_grid_fast(serial, card)
                 if nonmaxed_streak >= stop_after_nonmaxed or opened >= max_open:
                     return visited
         if page_new == 0:
             break  # a whole page opened nothing new → end of collection
         _scroll_grid(serial, w, h)
-        time.sleep(1.1)
+        _wait_stable(serial)
     return visited
 
 
-def _back_to_grid_fast(serial, grid_ref):
-    """Return to the grid via BACK, verified by a cheap image-diff against grid_ref
-    (the grid captured just before the tile was tapped). Falls back to OCR _on_grid
-    only if the fast check keeps failing."""
-    for i in range(4):
+def _back_to_grid_fast(serial, card_ref):
+    """Leave the open brawler card (→ collection grid) via the Android BACK key. We
+    verify by checking we LEFT THE CARD (the frame now differs a lot from `card_ref`),
+    NOT by matching the grid — because pressing BACK again once we're already on the
+    grid drops to the LOBBY (measured: grid→BACK→lobby, diff ~75). One BACK reliably
+    leaves the card, so this is normally a single fast iteration and never over-presses.
+    Returns True once the card is gone."""
+    for i in range(3):
         _nav_back(serial)
-        time.sleep(0.9)
-        cur = _screencap(serial)
-        if _img_mean_diff(grid_ref, cur) < _OPENED_DIFF:
-            return True
+        _wait_stable(serial)
+        cur = _screencap(serial)  # full-res, to match the full-res card_ref
+        if _img_mean_diff(card_ref, cur) > _OPENED_DIFF:
+            return True  # left the card (now on the grid)
         w, h = cur.size
         if _dismiss_team_invite(serial, w, h):
-            time.sleep(0.8)
-        if i >= 2 and _on_grid(cur, w, h):  # OCR fallback for a scrolled/changed grid
-            return True
+            _wait_stable(serial)
     return False
 
 
@@ -638,13 +665,13 @@ def _walk_top_for_upgrade(serial, w, h, visit, *, max_upgrades=12, max_open=30):
             for xr in GRID_COLS:
                 before = _screencap(serial)
                 _nav_tap(serial, w, h, xr, yr)
-                time.sleep(1.4)
-                card = _screencap(serial)
+                _wait_stable(serial)               # adaptive settle (cheap stream poll)
+                card = _screencap(serial)          # full-res — DETECTION needs it
                 if _img_mean_diff(before, card) < _OPENED_DIFF:
                     continue  # empty cell
                 ph = _portrait_hash(card, w, h)
                 if ph in seen:
-                    _back_to_grid_fast(serial, before)
+                    _back_to_grid_fast(serial, card)
                     continue
                 seen.add(ph)
                 opened += 1
@@ -653,13 +680,13 @@ def _walk_top_for_upgrade(serial, w, h, visit, *, max_upgrades=12, max_open=30):
                 if not _card_is_locked(card, w, h) and not is_maxed(card, w, h):
                     if visit(card):
                         upgraded += 1
-                _back_to_grid_fast(serial, before)
+                _back_to_grid_fast(serial, card)
                 if upgraded >= max_upgrades or opened >= max_open:
                     return upgraded
         if page_new == 0:
             break
         _scroll_grid(serial, w, h)
-        time.sleep(1.1)
+        _wait_stable(serial)
     return upgraded
 
 

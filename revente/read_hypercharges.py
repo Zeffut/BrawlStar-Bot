@@ -37,6 +37,17 @@ HC_HSV_LO = (145, 120, 120)
 HC_HSV_HI = (172, 255, 255)
 HC_MIN_PX = 300
 
+# Pixel-count thresholds (HC_MIN_PX, shop_actions.GREEN_MIN_PX) were calibrated on
+# full-res 2340x1080 frames. The fast H264 capture stream is downscaled, so a region
+# holds proportionally fewer pixels — scale the thresholds by the frame area so the
+# same detection works at ANY resolution (factor 1.0 at full res → unchanged).
+REF_AREA = 2340 * 1080
+
+
+def _area_factor(w: int, h: int) -> float:
+    a = (int(w) * int(h)) / REF_AREA
+    return a if a > 0 else 1.0
+
 # Resolution-aware geometry, ratios of the landscape frame (w,h). "wide" =
 # ~19.5:9 phone (Mi9T 2340x1080), calibrated live. 16:9 emulator left for later.
 _GEOM_WIDE = {
@@ -93,10 +104,32 @@ def _detail_has_hypercharge(pil_image, w: int, h: int) -> bool:
     """True if the detail screen's bottom-right ability slot shows the HC flame.
     NOTE: only meaningful on a MAXED detail — a non-maxed detail shows purple
     power-up circles in the same corner. Callers must gate with `_detail_is_maxed`."""
-    return _magenta_count(_crop(pil_image, w, h, _geom_for(w, h)["detail_hc"])) >= HC_MIN_PX
+    return _magenta_count(_crop(pil_image, w, h, _geom_for(w, h)["detail_hc"])) \
+        >= HC_MIN_PX * _area_factor(w, h)
+
+
+_DEV_WH: dict = {}
+
+
+def _dev_wh(serial: str) -> tuple:
+    """True device pixel size (landscape) for scaling taps/swipes — INDEPENDENT of the
+    (possibly downscaled) screenshot resolution, so captures can come from the fast
+    H264 stream without breaking tap coordinates. Cached per serial."""
+    wh = _DEV_WH.get(serial)
+    if wh is None:
+        try:
+            import device
+            wh = device.device_size()
+        except Exception:
+            wh = (2340, 1080)
+        _DEV_WH[serial] = wh
+    return wh
 
 
 def _screencap(serial: str):
+    """Full-resolution screenshot via `adb exec-out screencap -p` (~0.5s). This is the
+    capture used for DETECTION (green button / magenta flame / OCR): small UI features
+    do NOT survive the downscaled stream, so detection must run on full-res frames."""
     import io
     from PIL import Image
     out = subprocess.run(["adb", "-s", serial, "exec-out", "screencap", "-p"],
@@ -104,15 +137,41 @@ def _screencap(serial: str):
     return Image.open(io.BytesIO(out.stdout)).convert("RGB")
 
 
+# Back-compat alias: some call sites used _screencap_full for OCR-critical captures.
+_screencap_full = _screencap
+
+
+def _screencap_fast(serial: str):
+    """FAST path for COARSE uses only (settle-polling, whole-screen image-diffs) — NOT
+    detection. Returns a decoded H264 stream frame (~2ms, no adb round-trip; may be
+    downscaled ≤1280w), falling back to a full-res screencap when the stream isn't
+    fresh. Whole-frame mean-diff tolerates downscaling; fine detection does not."""
+    try:
+        import screen_capture
+        rec = screen_capture.get(serial)
+        if rec is not None:
+            frame = rec.get_frame()
+            age = rec.get_frame_age()
+            if frame is not None and age is not None and age < 2.0:
+                import cv2
+                from PIL import Image
+                return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    except Exception:
+        pass
+    return _screencap(serial)
+
+
 def _tap(serial: str, w: int, h: int, xr: float, yr: float) -> None:
+    dw, dh = _dev_wh(serial)
     subprocess.run(["adb", "-s", serial, "shell", "input", "tap",
-                    str(int(w * xr)), str(int(h * yr))], capture_output=True, timeout=10)
+                    str(int(dw * xr)), str(int(dh * yr))], capture_output=True, timeout=10)
 
 
 def _swipe(serial: str, w: int, h: int, g: dict) -> None:
+    dw, dh = _dev_wh(serial)
     x, y0, _unused, y1, ms = g["scroll"]
     subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
-                    str(int(w * x)), str(int(h * y0)), str(int(w * x)), str(int(h * y1)),
+                    str(int(dw * x)), str(int(dh * y0)), str(int(dw * x)), str(int(dh * y1)),
                     str(ms)], capture_output=True, timeout=10)
 
 
@@ -235,9 +294,10 @@ _SCROLL_BOTTOM_DIFF = 6.0    # grid barely changed after a swipe → at the bott
 def _swipe_carousel_next(serial: str, w: int, h: int, g: dict) -> None:
     """On a brawler DETAIL screen, swipe to the NEXT brawler (the detail is a
     horizontal carousel: a low right→left swipe advances it)."""
+    dw, dh = _dev_wh(serial)
     x0, y, x1, _y, ms = g["carousel_next"]
     subprocess.run(["adb", "-s", serial, "shell", "input", "swipe",
-                    str(int(w * x0)), str(int(h * y)), str(int(w * x1)), str(int(h * y)),
+                    str(int(dw * x0)), str(int(dh * y)), str(int(dw * x1)), str(int(dh * y)),
                     str(ms)], capture_output=True, timeout=10)
 
 
