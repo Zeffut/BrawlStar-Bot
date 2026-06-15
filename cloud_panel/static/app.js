@@ -1124,8 +1124,12 @@ function _streamMakeMuxer(targetId) {
                         _streamReinit(targetId); },
     });
   } catch (e) { console.error("[stream] JMuxer init failed", e); return; }
-  // Show the video, hide the on-demand capture <img> behind it.
+  // Show the video AND actually hide the on-demand capture <img> (there is no CSS
+  // overlap rule, so without this the stale snapshot stacks next to the live video
+  // — the "two images" / imprecise-click bug). targetId IS the <img> element id.
   vid.hidden = false;
+  const _imgEl = document.getElementById(targetId);
+  if (_imgEl) _imgEl.hidden = true;
   try { vid.play().catch(() => {}); } catch (_) {}
   const frame = vid.closest(".gc-screen-frame, .screen-wrap");
   if (frame) frame.classList.add("streaming");
@@ -1144,6 +1148,8 @@ function _streamDropMuxer(targetId) {
   try { m.muxer.destroy(); } catch (_) {}
   try { m.video.removeAttribute("src"); m.video.load(); } catch (_) {}
   m.video.hidden = true;
+  const _imgEl = document.getElementById(targetId);  // restore the on-demand <img>
+  if (_imgEl) _imgEl.hidden = false;
   const frame = m.video.closest(".gc-screen-frame, .screen-wrap");
   if (frame) frame.classList.remove("streaming");
   _streamMuxers.delete(targetId);
