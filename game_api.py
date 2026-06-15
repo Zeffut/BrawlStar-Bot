@@ -221,6 +221,13 @@ class GameAPI:
         # so it doesn't fight the power-save by relaunching BS / waking the
         # screen. Set by enter_power_save(), cleared by exit_power_save().
         self._power_save_active = False
+        # Serialises goto_lobby: the grind (BotRunner startup/between-matches) and
+        # the idle watchdog can both call it — and during the runner's startup
+        # window is_running() is still False, so the watchdog fired goto_lobby
+        # CONCURRENTLY. The two shotguns' taps then fought (opening shop/brawler
+        # menu, resetting each other's stuck counter) → never reached a stable
+        # lobby. One navigator at a time. LIVE-FIX 2026-06-15 (zeffut2.0).
+        self._goto_lobby_lock = threading.Lock()
 
     # ---- lifecycle ------------------------------------------------
 
@@ -690,6 +697,20 @@ class GameAPI:
             log.exception("drag-hold failed")
 
     def goto_lobby(self, max_attempts: int = 30) -> bool:
+        """Reach the lobby — SERIALISED so only one navigator runs at a time.
+        The grind (BotRunner startup / between matches) and the idle watchdog
+        could both call this; during startup is_running() is still False so the
+        watchdog fired it concurrently and their taps fought. A concurrent caller
+        skips (returns the current lobby state) instead of fighting."""
+        if not self._goto_lobby_lock.acquire(blocking=False):
+            log.info("goto_lobby: another navigator already running → skipping")
+            return self.state() == "lobby"
+        try:
+            return self._goto_lobby_impl(max_attempts)
+        finally:
+            self._goto_lobby_lock.release()
+
+    def _goto_lobby_impl(self, max_attempts: int = 30) -> bool:
         """Aggressively close everything and reach the lobby.
 
         Strategy: shotgun. Try every known dismissal in sequence per
