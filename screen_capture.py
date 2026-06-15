@@ -83,6 +83,14 @@ class ScreenRecorder:
         self._sps: bytes | None = None
         self._pps: bytes | None = None
         self._force_respawn = False              # set on first viewer → fresh keyframe
+        # Async decode (2026-06-15): the capture thread only reads stdout + fans
+        # raw chunks to live viewers; a SEPARATE thread decodes frames for the
+        # bot's vision. This stops the grind's heavy PyAV decode from throttling
+        # the live-stream fan-out (the "feed cuts when the bot is busy" cause).
+        # Drop-oldest on a full queue → worst case last_frame goes briefly stale
+        # and _grab falls back to screencap (the existing behaviour).
+        self._decode_q: "queue.Queue[bytes]" = queue.Queue(maxsize=60)
+        self._decode_thread: "threading.Thread | None" = None
 
     # ---- lifecycle -----------------------------------------------
 
@@ -91,6 +99,9 @@ class ScreenRecorder:
             return
         # Probe device resolution once so we can compute the recorder size.
         self._device_w, self._device_h = self._probe_resolution()
+        self._decode_thread = threading.Thread(target=self._decode_loop, daemon=True,
+                                               name=f"screenrec-decode-{self.serial}")
+        self._decode_thread.start()
         self._thread = threading.Thread(target=self._loop, daemon=True,
                                          name=f"screenrec-{self.serial}")
         self._thread.start()
@@ -206,8 +217,10 @@ class ScreenRecorder:
         return f"{target_w}x{target_h}"
 
     def _loop(self) -> None:
-        import av
-        codec = av.CodecContext.create("h264", "r")
+        # This thread now ONLY reads stdout + fans raw chunks to live viewers +
+        # hands chunks to the decode thread (_decode_loop). Keeping the PyAV decode
+        # OFF this thread means a heavy decode can't delay the next stdout read, so
+        # the live-stream fan-out stays smooth even while the bot grinds.
         # Exponential backoff for the device-disconnected case: when
         # the cable is pulled, screenrecord exits immediately (no
         # device). Without a backoff we'd respawn the process tens of
@@ -253,25 +266,20 @@ class ScreenRecorder:
                         except Exception:
                             pass
                         break
+                    # Hand the chunk to the decode thread. Drop-oldest if it's
+                    # momentarily behind — the bot only needs the latest frame, and
+                    # never block the capture/fan-out loop on the decode queue.
                     try:
-                        packets = codec.parse(chunk)
-                    except Exception:
-                        log.debug("packet parse failed", exc_info=True)
-                        continue
-                    for pkt in packets:
+                        self._decode_q.put_nowait(chunk)
+                    except queue.Full:
                         try:
-                            frames = codec.decode(pkt)
-                        except (av.error.InvalidDataError, Exception):
-                            continue
-                        for f in frames:
-                            try:
-                                arr = f.to_ndarray(format="bgr24")
-                            except Exception:
-                                continue
-                            with self._lock:
-                                self.last_frame = arr
-                                self.last_frame_time = time.time()
-                                self.frames_decoded += 1
+                            self._decode_q.get_nowait()
+                        except queue.Empty:
+                            pass
+                        try:
+                            self._decode_q.put_nowait(chunk)
+                        except queue.Full:
+                            pass
                 # Subprocess ended (time limit or crash). Loop respawns.
                 self._proc.wait(timeout=5)
                 self.alive = False
@@ -313,6 +321,39 @@ class ScreenRecorder:
                 log.exception("screenrec loop crashed — restarting in 5s")
                 self.alive = False
                 time.sleep(5)
+
+    def _decode_loop(self) -> None:
+        """Decode H264 chunks (fed by _loop's queue) into BGR frames for the bot's
+        vision. Runs on its OWN thread so the capture/fan-out loop is never blocked
+        by decode — keeps the live stream smooth during heavy gameplay. If this
+        thread falls behind or dies, last_frame just goes stale and _grab falls
+        back to an adb screencap (the existing behaviour)."""
+        import av
+        codec = av.CodecContext.create("h264", "r")
+        while not self._stop:
+            try:
+                chunk = self._decode_q.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                packets = codec.parse(chunk)
+            except Exception:
+                log.debug("packet parse failed", exc_info=True)
+                continue
+            for pkt in packets:
+                try:
+                    frames = codec.decode(pkt)
+                except Exception:
+                    continue
+                for f in frames:
+                    try:
+                        arr = f.to_ndarray(format="bgr24")
+                    except Exception:
+                        continue
+                    with self._lock:
+                        self.last_frame = arr
+                        self.last_frame_time = time.time()
+                        self.frames_decoded += 1
 
 
 # ---- module-level singleton (one device per host) -----------------
