@@ -644,7 +644,21 @@ class GameAPI:
     def _restart_brawlstars(self, reason: str = "") -> None:
         """Force-stop + relaunch Brawl Stars to bail out of a screen we can't
         dismiss (an unopenable star drop). The drop stays claimable; the lobby
-        becomes reachable again."""
+        becomes reachable again.
+
+        COOLDOWN (2026-06-15): a cold BS load to the lobby takes ~20-40s. Two
+        concurrent goto_lobby loops (the grind + the idle watchdog) could each
+        hit the stuck-bailout and force-stop BS every ~12s — BS never finished
+        loading → perpetual restart loop. Suppress a restart if one happened
+        <45s ago so BS actually reaches the lobby."""
+        now = time.time()
+        last = getattr(self, "_last_restart_t", 0.0)
+        if now - last < 45:
+            log.info("restart suppressed (BS restarted %.0fs ago, still loading) — %s",
+                     now - last, reason)
+            time.sleep(5)
+            return
+        self._last_restart_t = now
         serial = device.adb_serial()
         log.warning("restarting Brawl Stars (%s)", reason)
         try:
