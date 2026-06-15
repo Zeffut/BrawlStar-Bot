@@ -1200,8 +1200,8 @@ function _streamStartWatchdog() {
     // Global stall: NO H264 bytes for >8s while streaming (half-open WebSocket
     // with no close event, or a worker restart). ws.onclose can't catch a
     // half-open socket → recover explicitly.
-    if (_streamMuxers.size && _streamLastByteAt && (now - _streamLastByteAt) > 8000) {
-      _streamForceRecover("no data >8s");
+    if (_streamMuxers.size && _streamLastByteAt && (now - _streamLastByteAt) > 10000) {
+      _streamForceRecover("no data >10s");
       return;
     }
     for (const [tid, m] of _streamMuxers.entries()) {
@@ -1217,12 +1217,18 @@ function _streamStartWatchdog() {
       const changed = Math.abs(t - m.lastT) > 0.05;
       if (dataFlowing && !changed) {
         m.frozen++;
-        if (m.frozen >= 3) {                            // ~6s frozen despite data:
-          // the H264 stream is corrupt (a dropped chunk on the cloud relay's
-          // bounded queue). A local reinit waits for the next GOP keyframe that
-          // may not come — force a full reconnect to get a fresh keyframe NOW.
+        // Two-stage recovery (2026-06-15): a full reconnect drops+re-adds the
+        // cloud subscriber → the worker logs OFF/ON and force-respawns a keyframe
+        // = a VISIBLE cut. So first try a LOCAL muxer reinit (no WS churn, no
+        // flap): it recovers once the next GOP keyframe arrives (~10s). Only if
+        // it's STILL frozen well past that do we escalate to the disruptive
+        // full reconnect.
+        if (m.frozen === 4) {                            // ~6s frozen → local reinit
+          _streamReinit(tid);
+          break;                                          // map mutated by reinit
+        } else if (m.frozen >= 8) {                       // ~12s still frozen → decisive
           _streamForceRecover("frozen " + tid);
-          break;                                         // map mutated by recover
+          break;                                          // map mutated by recover
         }
       } else {
         m.frozen = 0;
