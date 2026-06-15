@@ -340,13 +340,14 @@ def get(serial: str | None = None) -> ScreenRecorder | None:
                 log.warning("no serial available for ScreenRecorder")
                 return None
         try:
-            # Live panel feed + coarse bot vision share this one H264 stream.
-            # 8Mbps@1280 at the device's native ~56fps overruns a home uplink →
-            # frames buffer → the panel video plays in slow-motion (even with the
-            # client-side live-edge catch-up). Detection uses full-res adb screencap,
-            # NOT this stream, so a lower rate is safe here. 2.5Mbps@960 ≈ 5x less
-            # data → fits the uplink / frpc tunnel, stays real-time. (2026-06-15)
-            r = ScreenRecorder(serial, bitrate=2_500_000, max_width=960)
+            # NOTE (2026-06-15): do NOT lower max_width here. game_api._grab()
+            # PREFERS this stream frame for state() (speed), and state_finder's
+            # templates/regions are calibrated for the 1280-wide stream. Dropping
+            # to 960x432 made state_finder misclassify the lobby/menus as
+            # match/brawler_selection → the grind navigated erratically and never
+            # launched a match. The panel video lag must be fixed elsewhere (e.g.
+            # a separate downscaled panel stream), NOT by shrinking this shared one.
+            r = ScreenRecorder(serial)
             r.start()
             _INSTANCE = r
             return r
