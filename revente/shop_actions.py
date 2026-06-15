@@ -603,6 +603,55 @@ def _back_to_grid_fast(serial, grid_ref):
     return False
 
 
+def _walk_top_for_upgrade(serial, w, h, visit, *, max_upgrades=12, max_open=30):
+    """Fast bounded walk for power upgrades: sort by trophies-max so the highest-power
+    brawlers cluster at the top (the near-P11 ones — the best/cheapest upgrade targets
+    — sit right after the P11s), then walk the top and call `visit(card)` on each
+    NON-maxed, NON-locked brawler. `visit` returns truthy when it actually upgraded.
+    Stops after max_upgrades upgrades or max_open cards opened.
+
+    SAFETY: skips MAXED (already P11) and LOCKED brawlers — a locked card shows a green
+    DÉBLOQUER button in the same region as AMÉLIORER, so without this guard an "upgrade"
+    tap would UNLOCK a brawler (a spend). Returns the number of brawlers upgraded."""
+    if not _ensure_grid(serial, w, h):
+        return 0
+    if not _sort_grid_by(serial, w, h, "tropheesmax", "trophymax", "trophiesmax"):
+        _sort_grid_by(serial, w, h, "niveaudepouvoir", "powerlevel")
+    _scroll_to_top(serial, w, h, max_swipes=3)
+    seen: set = set()
+    opened = 0
+    upgraded = 0
+    for _page in range(MAX_GRID_PAGES):
+        page_new = 0
+        for yr in GRID_ROWS:
+            for xr in GRID_COLS:
+                before = _screencap(serial)
+                _nav_tap(serial, w, h, xr, yr)
+                time.sleep(1.4)
+                card = _screencap(serial)
+                if _img_mean_diff(before, card) < _OPENED_DIFF:
+                    continue  # empty cell
+                ph = _portrait_hash(card, w, h)
+                if ph in seen:
+                    _back_to_grid_fast(serial, before)
+                    continue
+                seen.add(ph)
+                opened += 1
+                page_new += 1
+                # Only upgrade owned, non-maxed brawlers (skip P11 and locked).
+                if not _card_is_locked(card, w, h) and not is_maxed(card, w, h):
+                    if visit(card):
+                        upgraded += 1
+                _back_to_grid_fast(serial, before)
+                if upgraded >= max_upgrades or opened >= max_open:
+                    return upgraded
+        if page_new == 0:
+            break
+        _scroll_grid(serial, w, h)
+        time.sleep(1.1)
+    return upgraded
+
+
 # ---------------------------------------------------------------------------
 # Grid walk — visits each brawler's POUVOIR card once (full enumeration)
 # ---------------------------------------------------------------------------
@@ -887,19 +936,25 @@ class ShopActionEngine:
                         "relying on per-step OCR + max_steps backstop", target_level)
 
             if scope == "walk":
-                if not _ensure_lobby(self.serial):
-                    rep.summary = "could not reach the lobby"
-                    return rep
-                visited = 0
+                # Robust entry (BS up + landscape dims), then a FAST bounded walk of
+                # the high-power cluster — upgrade the near-P11 brawlers (cheapest to
+                # finish). Replaces the old slow full enumeration + flaky _ensure_lobby.
+                if _is_locked(self.serial):
+                    _unlock(self.serial)
+                    time.sleep(2.5)
+                if not _foreground_is_bs(self.serial):
+                    _launch_bs(self.serial)
+                    time.sleep(42)
+                probe = self._cap()
+                w, h = probe.size
 
                 def visit_upgrade(card_img):
-                    nonlocal visited
-                    if max_brawlers > 0 and visited >= max_brawlers:
-                        return
+                    before_n = len(rep.planned)
                     self._upgrade_current(rep, w, h, target_level, live, step_budget)
-                    visited += 1
+                    return len(rep.planned) > before_n  # truthy if it upgraded/planned
 
-                _walk_cards(self.serial, w, h, visit_upgrade)
+                _walk_top_for_upgrade(self.serial, w, h, visit_upgrade,
+                                      max_upgrades=max(1, max_brawlers), max_open=30)
             else:
                 # scope='current': act on the already-open card
                 self._upgrade_current(rep, w, h, target_level, live, step_budget)
