@@ -800,6 +800,18 @@ class GameAPI:
                 log.info("goto_lobby[%d]: OCR action: %s", i, ocr_action)
                 time.sleep(1.5)
                 continue
+            # Brawler collection / shop sub-screens: the top-right HOME button
+            # (0.952, 0.065) returns to the lobby. The blind shotgun is HARMFUL
+            # here — its centre tap opens a brawler CARD (navigates deeper), so a
+            # failed brawler selection left the bot trapped on the grid. Handle
+            # these explicitly with the home button (BACK was removed; the home
+            # button is the reliable exit — see lobby_automation._reset_to_lobby).
+            # LIVE-FIX 2026-06-15.
+            if st in ("brawler_selection", "shop"):
+                log.info("goto_lobby[%d]: %s → home button to lobby", i, st)
+                self.tap(0.952, 0.065)
+                time.sleep(1.5)
+                continue
             # Track stuck.
             if st == last_state:
                 same_state_count += 1
