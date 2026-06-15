@@ -706,6 +706,25 @@ class GameAPI:
                 self.exit_power_save()
                 time.sleep(2.5)
                 continue
+            # BS can be ALIVE but backgrounded (MIUI steals focus to its
+            # launcher / minus-one screen). state() then misreads it as 'match'
+            # and the shotgun can't bring BS back, so goto_lobby loops forever —
+            # worse with two concurrent goto_lobby calls (grind + idle watchdog),
+            # whose interleaved taps keep resetting each other's stuck counter
+            # below the relaunch threshold. Bring BS to the front directly.
+            # LIVE-FIX 2026-06-15 (zeffut2.0 got stuck on the MIUI minus-one screen).
+            if not self._foreground_is_bs():
+                log.warning("goto_lobby[%d]: Brawl Stars not foreground → "
+                            "bringing it to front", i)
+                try:
+                    subprocess.run(
+                        ["adb", "-s", device.adb_serial(), "shell", "am", "start",
+                         "-n", "com.supercell.brawlstars/.GameApp"],
+                        timeout=10, check=False)
+                except Exception:
+                    log.debug("am start (bring BS to front) failed", exc_info=True)
+                time.sleep(3)
+                continue
             st = self.state()
             log.info("goto_lobby[%d] state=%s", i, st)
             if st == "lobby":
@@ -1026,6 +1045,25 @@ class GameAPI:
         except Exception:
             pass
         return False
+
+    def _foreground_is_bs(self) -> bool:
+        """True if Brawl Stars is the FOCUSED app. BS can be running yet
+        backgrounded (MIUI steals focus to its launcher / minus-one / App Vault
+        screen) — then goto_lobby's state() misreads it as 'match' and the
+        shotgun can never bring BS back. Returns True on an adb hiccup so a
+        transient read doesn't trigger a needless relaunch."""
+        serial = device.adb_serial()
+        try:
+            win = subprocess.run(
+                ["adb", "-s", serial, "shell", "dumpsys", "window"],
+                capture_output=True, text=True, timeout=5, check=False,
+            ).stdout
+            for line in win.splitlines():
+                if "mCurrentFocus" in line or "mFocusedApp" in line:
+                    return "com.supercell.brawlstars" in line
+        except Exception:
+            pass
+        return True
 
     def ensure_brawlstars_at_lobby(self, max_wait_s: float = 120) -> tuple[bool, str]:
         """Pre-flight for any task launch.
