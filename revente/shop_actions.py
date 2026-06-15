@@ -39,17 +39,28 @@ log = logging.getLogger("shop_actions")
 # ---------------------------------------------------------------------------
 # Bottom-right green AMÉLIORER button area (power upgrade). Calibrated on Mi9T.
 UPGRADE_REGION = (0.74, 1.00, 0.80, 1.00)
-# Hypercharge slot tap (top-right ability cluster) — opens the ability panel.
-# CALIBRATE LIVE (needs an eligible/unowned-HC brawler to confirm).
+# Hypercharge slot tap (top-right ability cluster) — opens the ability panel
+# directly on the HYPERCHARGE tab. LIVE-CALIBRATED 2026-06-15 on zeffut2.0 (Mi9T).
 HC_SLOT_TAP = (0.945, 0.29)
-# The HYPERCHARGE tab in the ability panel's tab row (rightmost). Tapped explicitly
+# The HYPERCHARGE tab icon in the ability panel's tab row (rightmost of 5). Re-tapped
 # before buying so the panel can't stay on the star-power tab (the wrong-buy cause).
-# CALIBRATE LIVE.
-HC_TAB_TAP = (0.90, 0.10)
-# Region where the green unlock/price button sits inside the ability panel. CALIBRATE LIVE.
-HC_BUY_REGION = (0.30, 0.78, 0.55, 0.96)
-# Purchase-confirm dialog green button region. CALIBRATE LIVE.
-CONFIRM_REGION = (0.38, 0.82, 0.50, 0.92)
+# LIVE-CALIBRATED 2026-06-15.
+HC_TAB_TAP = (0.81, 0.245)
+# Region where the green unlock/price button sits inside the HYPERCHARGE panel
+# (bottom-centre). LIVE-CALIBRATED 2026-06-15 (button centre ≈ 0.625, 0.869).
+HC_BUY_REGION = (0.45, 0.80, 0.80, 0.97)
+# HC purchase-confirm dialog ("CONFIRMER L'ACHAT") green button — sits ABOVE the
+# buy button. LIVE-CALIBRATED 2026-06-15 (confirm centre ≈ 0.624, 0.702).
+HC_CONFIRM_REGION = (0.45, 0.80, 0.62, 0.80)
+# Power-upgrade confirm dialog ("AMÉLIORER AU NIV. N ?") green button — bottom-right.
+# Distinct from the HC confirm position. LIVE-CALIBRATED 2026-06-15 (≈ 0.717, 0.912).
+UPGRADE_CONFIRM_REGION = (0.55, 0.92, 0.83, 1.00)
+# Visual guard fallback: the HYPERCHARGE panel shows a large magenta flame icon/glow
+# (left-centre) unique to that tab (star-power=orange, gadget=green). Used when the
+# OCR "hypercharge" text check misses. LIVE-MEASURED 2026-06-15: ~81k px on the HC
+# panel vs 0 on a normal card.
+HC_PANEL_FLAME_REGION = (0.22, 0.40, 0.40, 0.85)
+HC_PANEL_MAGENTA_MIN = 8000
 
 # OpenCV HSV for the bright in-game green of action buttons.
 GREEN_HSV_LO = (35, 80, 80)
@@ -691,9 +702,20 @@ def _grid_owned_count(serial, w, h):
 
 def _on_hypercharge_tab(pil_image, w, h) -> bool:
     """True only if the open ability panel is the HYPERCHARGE tab.
-    Prevents buying a star power by mistake. Best-effort (easyocr optional)."""
+    Prevents buying a star power by mistake (the FRANK incident).
+
+    Primary check: OCR finds "hypercharge" in the panel text. Visual fallback
+    (when easyocr is absent or misses): the HYPERCHARGE panel has a large magenta
+    flame icon/glow unique to that tab — measured ~81k px vs 0 on a normal card."""
     joined = " ".join(k.lower() for k in _ocr_map(pil_image).keys())
-    return "hypercharge" in joined
+    if "hypercharge" in joined:
+        return True
+    try:
+        from revente.read_hypercharges import _crop, _magenta_count
+        flame = _crop(pil_image, w, h, HC_PANEL_FLAME_REGION)
+        return _magenta_count(flame) >= HC_PANEL_MAGENTA_MIN
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -722,10 +744,23 @@ def _read_power_level(pil_image, w: int, h: int):
 
 
 def _confirm_hc_applied(_engine, serial: str, w: int, h: int) -> bool:
-    """After a buy, re-read the detail: HC owned ⟺ magenta flame present."""
-    time.sleep(1.2)
-    img = _screencap(serial)
-    return _detail_has_hypercharge(img, w, h)
+    """After a buy, verify the HC is now owned (magenta flame on the brawler card).
+
+    A purchase plays a full-screen unlock celebration over the ability panel; the
+    flame-detection region only matches the CARD layout. So: let the animation play,
+    dismiss it (centre taps → back to the panel), then BACK out to the card and read
+    the flame there. LIVE-VERIFIED 2026-06-15: card read = True after a real buy."""
+    time.sleep(1.5)  # let the unlock celebration play
+    for _ in range(2):  # dismiss the celebration → ability panel
+        _nav_tap(serial, w, h, 0.5, 0.5)
+        time.sleep(0.7)
+    for _ in range(3):  # leave the panel → card, where detection matches
+        img = _screencap(serial)
+        if _detail_has_hypercharge(img, w, h):
+            return True
+        _nav_back(serial)
+        time.sleep(0.9)
+    return _detail_has_hypercharge(_screencap(serial), w, h)
 
 
 # ---------------------------------------------------------------------------
@@ -742,10 +777,12 @@ class ShopActionEngine:
     def _cap(self):
         return _screencap(self.serial)
 
-    def _tap_confirm(self, w: int, h: int) -> bool:
-        """Locate and tap the green confirm button in a purchase dialog."""
+    def _tap_confirm(self, w: int, h: int, region) -> bool:
+        """Locate and tap the green confirm button in a purchase dialog.
+        `region` differs between HC buy (HC_CONFIRM_REGION) and power upgrade
+        (UPGRADE_CONFIRM_REGION) — their confirm buttons sit at different spots."""
         img = _screencap(self.serial)
-        center = _find_green_button_center(img, w, h, CONFIRM_REGION)
+        center = _find_green_button_center(img, w, h, region)
         if center is None:
             return False
         _spend_tap(self.serial, w, h, *center)
@@ -766,8 +803,9 @@ class ShopActionEngine:
         Hypercharge-tab GUARD: before each live buy, the ability panel is
         inspected via OCR to confirm it shows the HYPERCHARGE tab (not a star
         power or gadget tab). If the check fails the buy is skipped
-        (executed=False) with an explicit error. Note that HC_SLOT_TAP /
-        the ability-tab geometry still needs a supervised live calibration pass.
+        (executed=False) with an explicit error. The HC_SLOT_TAP / tab / buy /
+        confirm geometry was LIVE-CALIBRATED 2026-06-15 on zeffut2.0 (Mi9T):
+        upgraded DYNAMIKE P9→P11 and bought its hypercharge end-to-end.
         """
         live = (not self.dry_run) and confirm
         rep = Report(dry_run=not live)
@@ -788,10 +826,10 @@ class ShopActionEngine:
             coins = rep.coins_before if rep.coins_before is not None else 0
 
             if live:
-                log.warning(
-                    "HC_SLOT_TAP=%s and ability-tab geometry are uncalibrated — "
-                    "verify before live use. The hypercharge-tab guard will "
-                    "abort if the wrong tab is open.", HC_SLOT_TAP)
+                log.info(
+                    "live HC buy: tap geometry LIVE-CALIBRATED 2026-06-15 "
+                    "(HC_SLOT_TAP=%s). The hypercharge-tab guard aborts each buy "
+                    "if the panel isn't on the HYPERCHARGE tab.", HC_SLOT_TAP)
 
             bought = 0
 
@@ -834,8 +872,12 @@ class ShopActionEngine:
                         return
                     _spend_tap(self.serial, w, h, *buy)
                     time.sleep(1.0)
-                    # 5. Confirm the purchase dialog (green CONFIRM), then verify.
-                    confirmed = self._tap_confirm(w, h)
+                    # 5. Confirm the purchase dialog ("CONFIRMER L'ACHAT"), then verify.
+                    confirmed = self._tap_confirm(w, h, HC_CONFIRM_REGION)
+                    # 6. A purchase plays a full-screen unlock celebration. Dismiss it
+                    #    (taps) so the walk's BACK-to-grid can recover, then verify on
+                    #    the brawler card (the magenta-flame check only matches the card
+                    #    layout, not the panel/celebration).
                     verified = confirmed and _confirm_hc_applied(self, self.serial, w, h)
                     rep.results.append(ActionResult(
                         act, executed=True, verified=verified,
@@ -933,7 +975,7 @@ class ShopActionEngine:
             before = img
             _spend_tap(self.serial, w, h, btn.xr, btn.yr)
             time.sleep(0.8)
-            confirmed = self._tap_confirm(w, h)
+            confirmed = self._tap_confirm(w, h, UPGRADE_CONFIRM_REGION)
             after = self._cap()
             verified = confirmed and _img_mean_diff(before, after) >= 4.0
             rep.results.append(ActionResult(
