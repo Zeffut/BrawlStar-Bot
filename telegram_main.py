@@ -549,10 +549,15 @@ class BotRunner:
                     except Exception:
                         log.exception("push_max: brawler_efficiency lookup failed "
                                       "— falling back to tier-prior order")
+                # no_swap=True (2026-06-15): grind the EQUIPPED brawler, never open
+                # the collection menu. On fresh accounts the menu OCR can't select
+                # the 0-trophy FR-named brawlers (e.g. ELIZ@) → the bot got trapped
+                # on the brawler grid. Mono-brawler grinding is reliable (no menu);
+                # rotation can be re-enabled once menu selection is hardened.
                 self._push_max = PushMaxStrategy.from_owned(
                     owned_brawlers, brawler_max_trophies=per_brawler_max_trophies,
                     efficiency_ceiling=(efficiency_ceiling or EFFICIENCY_CEILING),
-                    no_swap=False, brawler_stats=brawler_stats)
+                    no_swap=True, brawler_stats=brawler_stats)
                 # Pre-exhaust known-unselectable brawlers BEFORE picking the
                 # starter, so the bot doesn't open the session churning on one
                 # it can never select.

@@ -1393,20 +1393,11 @@ def _start_idle_watchdog(api: "GameAPI") -> None:
                                 consecutive_failures)
                     if consecutive_failures >= 3:
                         log.warning("idle watchdog: force-restarting Brawl Stars")
-                        try:
-                            serial = device.adb_serial()
-                            subprocess.run(["adb", "-s", serial, "shell",
-                                            "am", "force-stop",
-                                            "com.supercell.brawlstars"],
-                                            timeout=5, check=False)
-                            time.sleep(2)
-                            subprocess.run(["adb", "-s", serial, "shell",
-                                            "am", "start", "-n",
-                                            "com.supercell.brawlstars/.GameApp"],
-                                            timeout=10, check=False)
-                            consecutive_failures = 0
-                        except Exception:
-                            log.exception("Brawl Stars restart failed")
+                        # Route through _restart_brawlstars so the 45s cooldown
+                        # applies — the old inline restart bypassed it and could
+                        # rapid-restart BS (perpetual loading loop). 2026-06-15.
+                        api._restart_brawlstars("idle watchdog: 3 goto_lobby failures")
+                        consecutive_failures = 0
             except Exception:
                 log.exception("idle watchdog iteration crashed")
     threading.Thread(target=loop, daemon=True, name="idle-watchdog").start()
