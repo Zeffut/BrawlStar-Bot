@@ -34,8 +34,11 @@ def test_load_override_reads_hypercharges_by_tag():
     import pytest
     pytest.importorskip("tomllib")  # estimate_account's import chain needs it (3.11+)
     from revente.estimate_account import _load_override
-    # account_overrides.csv ships QPRCQ9RV2 → 1 hypercharge, 0 rare skins.
-    assert _load_override("QPRCQ9RV2") == {"hypercharges": 1, "rare_skins": 0}
-    assert _load_override("#QPRCQ9RV2") == {"hypercharges": 1, "rare_skins": 0}  # '#' tolerant
+    # Assert PARSING behaviour, decoupled from the CSV's data values (which change
+    # as accounts are prepped — the hardcoded values went stale once already).
+    ov = _load_override("QPRCQ9RV2")
+    assert set(ov) == {"hypercharges", "rare_skins"}
+    assert isinstance(ov["hypercharges"], int) and isinstance(ov["rare_skins"], int)
+    assert _load_override("#QPRCQ9RV2") == ov  # '#'-tolerant → same row
     assert _load_override("UNKNOWNTAG") == {}
     assert _load_override(None) == {}
