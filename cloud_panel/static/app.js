@@ -906,8 +906,8 @@ async function refreshDevicePanel() {
   selectedInstanceForDevice = inst.id;
   document.getElementById("device-panel").hidden = false;
   // Start the live stream now that we know the instance (idempotent: only if
-  // not already streaming). Also re-arms it if the WS dropped between ticks.
-  if (deviceConsoleOpen && !_streamActive()) _startStream(inst.id);
+  // not already streaming). Skipped during remote control (snapshot view instead).
+  if (deviceConsoleOpen && !_streamActive() && !_remoteEnabled) _startStream(inst.id);
 
   // Fetch health and logs only (screenshot is on-demand via "↻ refresh now").
   const [healthRes, logsRes] = await Promise.all([
@@ -1075,12 +1075,26 @@ function _enableRemoteControl(on) {
   _remoteEnabled = on;
   const overlay = document.getElementById("screen-overlay");
   const keys = document.getElementById("remote-keys");
+  const img = document.getElementById("device-screen");
+  const vid = document.getElementById("device-video");
   overlay.hidden = !on;
   keys.hidden = !on;
-  // Auto-refresh tighter loop only when remote is engaged so we see
-  // the result of taps without spamming when idle.
   if (_remoteAutoRefresh) { clearInterval(_remoteAutoRefresh); _remoteAutoRefresh = null; }
-  if (on) _remoteAutoRefresh = setInterval(_remoteRefreshScreen, 4000);
+  if (on) {
+    // Reliable control view = frequently-refreshed adb snapshot. The live H264
+    // video (jMuxer + MSE) fails to render in some browsers (blank screen), so for
+    // precise remote control we stop the video and show the snapshot instead.
+    try { _stopStream(); } catch (_) {}
+    if (vid) vid.hidden = true;
+    if (img) img.hidden = false;
+    _remoteRefreshScreen();                                   // immediate first frame
+    _remoteAutoRefresh = setInterval(_remoteRefreshScreen, 1500);
+  } else {
+    // Back to live preview when control is disengaged.
+    if (selectedInstanceForDevice && deviceConsoleOpen) {
+      try { _startStream(selectedInstanceForDevice); } catch (_) {}
+    }
+  }
 }
 
 // ---- Live stream (WebSocket, ~13 fps JPEG pushed by the worker) ----
@@ -1330,8 +1344,8 @@ document.getElementById("gc-live-toggle")?.addEventListener("click", _toggleMain
 
 let _remoteRefreshing = false;
 async function _remoteRefreshScreen() {
-  // The live WS stream is the primary source — skip the slow poll when it's up.
-  if (_streamActive()) return;
+  // Snapshot is the reliable control view (live video can fail to render), so we
+  // do NOT skip when the stream WS is up — remote control turns the video off.
   if (!selectedInstanceForDevice || !_remoteEnabled) return;
   // A live capture takes ~2s (real phone screencap over WiFi→Pi). Skip a
   // tick if the previous one is still in flight so requests don't pile up.
