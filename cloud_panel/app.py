@@ -19,6 +19,7 @@ from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocke
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Literal
 
 import db
 import notif
@@ -1217,6 +1218,46 @@ async def api_account_start(account_id: int, payload: AccountSessionPayload) -> 
     return await _cmd_for_account(account_id, "session_start", {
         "brawler": payload.brawler, "target_trophies": payload.target_trophies,
     }, timeout_s=20)
+
+
+class HypBuyBody(BaseModel):
+    confirm: bool = False
+    max_count: int | None = None
+    coin_floor: int = 0
+
+
+class PowerUpgradeBody(BaseModel):
+    confirm: bool = False
+    target_level: int = 11
+    scope: Literal["current", "walk"] = "current"
+    max_brawlers: int = 1
+    current_power: int | None = None
+
+
+# POST is intentional: this drives the device (ADB carousel walk) — not an idempotent GET.
+@app.post("/api/accounts/{account_id}/shop/plan")
+async def api_account_shop_plan(account_id: int) -> dict:
+    # Dry-run read/enumeration : marche le carrousel, peut prendre du temps.
+    return await _cmd_for_account(account_id, "shop_plan", {}, timeout_s=600)
+
+
+@app.post("/api/accounts/{account_id}/shop/buy_hypercharges")
+async def api_account_shop_buy_hc(account_id: int, payload: HypBuyBody | None = None) -> dict:
+    p = payload or HypBuyBody()
+    return await _cmd_for_account(account_id, "shop_buy_hypercharges", {
+        "confirm": bool(p.confirm), "max_count": p.max_count,
+        "coin_floor": int(p.coin_floor),
+    }, timeout_s=900)
+
+
+@app.post("/api/accounts/{account_id}/shop/upgrade_power")
+async def api_account_shop_upgrade(account_id: int, payload: PowerUpgradeBody | None = None) -> dict:
+    p = payload or PowerUpgradeBody()
+    return await _cmd_for_account(account_id, "shop_upgrade_power", {
+        "confirm": bool(p.confirm), "target_level": int(p.target_level),
+        "scope": p.scope, "max_brawlers": int(p.max_brawlers),
+        "current_power": p.current_power,
+    }, timeout_s=900)
 
 
 @app.post("/api/accounts/{account_id}/stop")
