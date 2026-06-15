@@ -94,13 +94,29 @@ def _cmd_screenshot(args: dict) -> dict:
         except Exception:
             pass
         serial = _adb_serial()
-    raw = subprocess.check_output(
-        ["adb", "-s", serial, "exec-out", "screencap", "-p"],
-        timeout=8,
-    )
-    # Convert raw PNG → downscaled JPEG
+    # Prefer the already-decoded live stream frame — a screencap here would be a
+    # SECOND device capture contending with the screenrecord live feed (the
+    # operator viewing the phone shouldn't stutter the feed). Fall back to a
+    # screencap only when no fresh stream frame exists. (2026-06-15)
     from PIL import Image
-    img = Image.open(io.BytesIO(raw)).convert("RGB")
+    img = None
+    try:
+        import screen_capture as _sc
+        import cv2 as _cv2
+        rec = _sc.get()
+        if rec is not None:
+            f = rec.get_frame()
+            age = rec.get_frame_age()
+            if f is not None and age is not None and age < 4.0:
+                img = Image.fromarray(_cv2.cvtColor(f, _cv2.COLOR_BGR2RGB))
+    except Exception:
+        img = None
+    if img is None:
+        raw = subprocess.check_output(
+            ["adb", "-s", serial, "exec-out", "screencap", "-p"],
+            timeout=8,
+        )
+        img = Image.open(io.BytesIO(raw)).convert("RGB")
     max_w = int(args.get("max_width", 960))
     if img.width > max_w:
         new_h = int(img.height * max_w / img.width)

@@ -193,16 +193,25 @@ def _load_lockscreen_pin() -> str | None:
         return None
 
 
+# Serialise full-res screencaps: several background callers (snapshot every 10s,
+# idle watchdog, panel screenshot) can issue `adb exec-out screencap` concurrently,
+# and each one contends with the long-lived screenrecord (live feed) on the device.
+# A lock means at most ONE screencap runs at a time → far less stream stutter.
+_SCREENCAP_LOCK = threading.Lock()
+
+
 def _adb_screencap() -> Image.Image:
     """Capture a screenshot via `adb exec-out screencap -p`.
 
-    Returns a PIL RGB image. ~300-500 ms on USB.
+    Returns a PIL RGB image. ~300-500 ms on USB. Serialised via _SCREENCAP_LOCK
+    so concurrent callers don't pile screencaps onto the live screenrecord.
     """
     serial = device.adb_serial()
-    out = subprocess.run(
-        ["adb", "-s", serial, "exec-out", "screencap", "-p"],
-        capture_output=True, timeout=10, check=True,
-    )
+    with _SCREENCAP_LOCK:
+        out = subprocess.run(
+            ["adb", "-s", serial, "exec-out", "screencap", "-p"],
+            capture_output=True, timeout=10, check=True,
+        )
     img = Image.open(io.BytesIO(out.stdout)).convert("RGB")
     return img
 
@@ -259,7 +268,11 @@ class GameAPI:
             if rec is not None:
                 f = rec.get_frame()
                 age = rec.get_frame_age()
-                if f is not None and age is not None and age < 2.0:
+                # 4.0s window (was 2.0): a slightly older stream frame is still
+                # the live game for state detection, and it makes _grab fall back
+                # to a full-res `adb screencap` far less often — that screencap
+                # contends with the screenrecord and stalls the live feed. (2026-06-15)
+                if f is not None and age is not None and age < 4.0:
                     return _pil(f)
         except Exception:
             log.debug("screenrec grab failed", exc_info=True)

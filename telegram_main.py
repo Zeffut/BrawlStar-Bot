@@ -854,7 +854,11 @@ class BotRunner:
                 try:
                     _self.max_ips = int(load_toml_as_dict("cfg/general_config.toml")['max_ips'])
                 except (ValueError, KeyError):
-                    _self.max_ips = None
+                    # "auto"/invalid: cap at ~the stream frame rate instead of
+                    # leaving the play loop UNCAPPED (it would spin on the same
+                    # cached frame — wasted CPU + capture pressure). 60 ≈ the
+                    # ~56fps screenrecord stream, so no gameplay-reaction slowdown.
+                    _self.max_ips = 60
                 _self.run_for_minutes = int(load_toml_as_dict("cfg/general_config.toml")['run_for_minutes'])
                 # Humane schedule: bound THIS block to a randomized length
                 # (40–85 min) instead of a 10h marathon, so the bot stops often
