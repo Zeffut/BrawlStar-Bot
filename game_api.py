@@ -725,6 +725,12 @@ class GameAPI:
                     log.debug("am start (bring BS to front) failed", exc_info=True)
                 time.sleep(3)
                 continue
+            # "Quitter Brawl Stars ?" exit dialog (a stray BACK on the lobby
+            # opens it) — tap Annuler to return to the lobby, never O.K. (quit).
+            if self._dismiss_quit_dialog():
+                log.info("goto_lobby[%d]: cancelled 'Quitter Brawl Stars?'", i)
+                time.sleep(1.0)
+                continue
             st = self.state()
             log.info("goto_lobby[%d] state=%s", i, st)
             if st == "lobby":
@@ -801,8 +807,10 @@ class GameAPI:
             # 5. Close-X top-right (popups with X icon).
             self.tap(0.96, 0.05)
             time.sleep(0.3)
-            # 6. BACK key (menus).
-            self._tap_back()
+            # (BACK removed 2026-06-15: ignored by BS on its own screens, and on
+            #  the lobby it opens the "Quitter Brawl Stars ?" dialog which the
+            #  shotgun couldn't reliably cancel — trapping the bot. That dialog
+            #  is now handled at the top of the loop via _dismiss_quit_dialog.)
             time.sleep(1.2)
         log.warning("goto_lobby gave up after %d attempts (still on %s)",
                     max_attempts, self.state())
@@ -1064,6 +1072,31 @@ class GameAPI:
         except Exception:
             pass
         return True
+
+    def _dismiss_quit_dialog(self) -> bool:
+        """Detect the 'Quitter Brawl Stars ?' exit dialog and tap Annuler (cancel)
+        to stay in the game. It's opened by a stray BACK on the lobby; if the
+        shotgun later taps O.K. it would quit BS entirely (→ launcher → the
+        foreground-steal loop). Returns True if it acted. LIVE-FIX 2026-06-15."""
+        try:
+            arr = np.array(self._grab())
+            text = extract_text_and_positions(arr)
+            joined = " ".join(text.keys()).lower()
+            if "quitter" not in joined or "brawl" not in joined:
+                return False
+            h, w = arr.shape[:2]
+            for key, val in text.items():
+                kl = key.lower()
+                if "annul" in kl or "cancel" in kl:
+                    cx, cy = val.get("center", [0, 0])
+                    if cx and cy:
+                        self.tap(cx / w, cy / h)
+                        return True
+            self.tap(0.40, 0.74)  # fallback: Annuler is the left button
+            return True
+        except Exception:
+            log.debug("_dismiss_quit_dialog failed", exc_info=True)
+            return False
 
     def ensure_brawlstars_at_lobby(self, max_wait_s: float = 120) -> tuple[bool, str]:
         """Pre-flight for any task launch.
