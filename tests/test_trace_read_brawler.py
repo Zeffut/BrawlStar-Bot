@@ -12,6 +12,15 @@ def _stub_game_api_deps():
     # Provide the symbols game_api references at import time.
     sys.modules["state_finder.main"].get_state = lambda *a, **k: None
     sys.modules["utils"].extract_text_and_positions = lambda *a, **k: {}
+    sys.modules["device"].adb_serial = getattr(
+        sys.modules.get("device"), "adb_serial", lambda: "stub"
+    )
+    # If another test file's collection stubbed game_api as a bare module
+    # (e.g. test_trace_reconcile), force-reload to get the real class.
+    mod = sys.modules.get("game_api")
+    if mod is not None and not hasattr(mod, "GameAPI"):
+        import importlib
+        sys.modules.pop("game_api", None)
 
 
 _stub_game_api_deps()

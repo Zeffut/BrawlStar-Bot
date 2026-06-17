@@ -691,6 +691,12 @@ class GameAPI:
             time.sleep(5)
             return
         self._last_restart_t = now
+        try:
+            import debug_trace
+            debug_trace.trace("bs_restart", data={"reason": reason},
+                              force_capture=True, level="warning")
+        except Exception:
+            pass
         serial = device.adb_serial()
         log.warning("restarting Brawl Stars (%s)", reason)
         try:
@@ -789,6 +795,12 @@ class GameAPI:
             # opens it) — tap Annuler to return to the lobby, never O.K. (quit).
             if self._dismiss_quit_dialog():
                 log.info("goto_lobby[%d]: cancelled 'Quitter Brawl Stars?'", i)
+                try:
+                    import debug_trace
+                    debug_trace.trace("goto_recovery",
+                                      data={"action": "quit_dialog_cancel", "iter": i})
+                except Exception:
+                    pass
                 time.sleep(1.0)
                 continue
             st = self.state()
@@ -834,6 +846,12 @@ class GameAPI:
             # LIVE-FIX 2026-06-15.
             if st in ("brawler_selection", "shop"):
                 log.info("goto_lobby[%d]: %s → home button to lobby", i, st)
+                try:
+                    import debug_trace
+                    debug_trace.trace("goto_recovery",
+                                      data={"action": "home_button", "state": st, "iter": i})
+                except Exception:
+                    pass
                 self.tap(0.952, 0.065)
                 time.sleep(1.5)
                 continue
