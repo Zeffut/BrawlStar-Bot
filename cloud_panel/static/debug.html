@@ -5,24 +5,35 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Debug Trace — BrawlStar Bot</title>
 <style>
-  :root { --bg:#07090d; --surface:#11161f; --line:#1f2733; --txt:#cdd6e4; --mut:#7a8597; --pri:#4f8cf0; }
+  :root { --bg:#07090d; --surface:#11161f; --line:#1f2733; --txt:#cdd6e4; --mut:#7a8597; --pri:#4f8cf0; --warn:#e0a23c; --alert:#e05c5c; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.4 system-ui,sans-serif; }
   header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
   h1 { font-size:16px; margin:0 12px 0 0; }
   select, input, button { background:var(--surface); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; }
   button { cursor:pointer; }
+  .nav { display:flex; gap:4px; align-items:center; }
+  .nav button { padding:6px 9px; }
+  #chips { display:flex; gap:6px; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid var(--line); }
+  .chip { background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:3px 11px; font-size:12px; cursor:pointer; color:var(--mut); white-space:nowrap; }
+  .chip:hover { border-color:var(--pri); }
+  .chip.active { color:#fff; border-color:var(--pri); background:rgba(79,140,240,.18); }
+  .chip .n { color:var(--mut); margin-left:4px; }
+  .chip.active .n { color:#cdd6e4; }
   #list { padding:8px 16px; }
-  .row { display:grid; grid-template-columns:150px 160px 1fr 64px; gap:10px; align-items:center; padding:8px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .row { display:grid; grid-template-columns:150px 170px 1fr 56px; gap:10px; align-items:center; padding:8px; border-bottom:1px solid var(--line); border-left:3px solid transparent; cursor:pointer; }
   .row:hover { background:var(--surface); }
+  .row.warn { border-left-color:var(--warn); }
+  .row.alert { border-left-color:var(--alert); }
   .ev { font-weight:600; color:var(--pri); }
+  .row.warn .ev { color:var(--warn); }
+  .row.alert .ev { color:var(--alert); }
   .mut { color:var(--mut); font-size:12px; }
   .data { font-family:ui-monospace,monospace; font-size:12px; color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .thumb { width:56px; height:32px; object-fit:cover; border-radius:4px; background:var(--surface); }
   #modal { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; flex-direction:column; gap:12px; padding:20px; }
   #modal img { max-width:90vw; max-height:60vh; border-radius:8px; }
-  #modal pre { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px; max-width:90vw; overflow:auto; color:var(--txt); }
-  #modal .crop { max-height:120px; }
+  #modal pre { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px; max-width:90vw; max-height:25vh; overflow:auto; color:var(--txt); }
+  #modal .crop { max-height:120px; image-rendering:pixelated; }
   #empty { color:var(--mut); padding:16px; }
 </style>
 </head>
@@ -30,12 +41,19 @@
 <header>
   <h1>🐛 Debug Trace</h1>
   <select id="inst"></select>
-  <label class="mut">event <input id="filter" placeholder="(tous)" size="14"></label>
-  <label class="mut">limit <input id="limit" type="number" value="200" min="1" max="1000" size="5"></label>
+  <div class="nav">
+    <button id="prevday" title="Jour précédent">◀</button>
+    <input id="day" type="date">
+    <button id="nextday" title="Jour suivant">▶</button>
+    <button id="today" title="Aujourd'hui">⌖</button>
+  </div>
+  <label class="mut">recherche <input id="search" placeholder="event ou data…" size="16"></label>
+  <label class="mut">limit <input id="limit" type="number" value="300" min="1" max="1000" size="5"></label>
   <button id="refresh">Rafraîchir</button>
   <label class="mut"><input type="checkbox" id="auto"> auto 5s</label>
   <span id="status" class="mut"></span>
 </header>
+<div id="chips"></div>
 <div id="list"></div>
 <div id="empty">Choisis une instance.</div>
 <div id="modal"><img id="m-frame"><img id="m-crop" class="crop" hidden><pre id="m-data"></pre><button onclick="document.getElementById('modal').style.display='none'">Fermer (Esc)</button></div>
@@ -43,7 +61,7 @@
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let instances = [], autoTimer = null;
+let instances = [], autoTimer = null, allEvents = [], activeType = "all", curInst = null;
 
 async function jget(path) { const r = await fetch(path); if (!r.ok) throw new Error(r.status); return r.json(); }
 async function cmd(instId, name, args) {
@@ -55,10 +73,21 @@ async function cmd(instId, name, args) {
   return r.json();
 }
 
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function dayParam() { const v = $("#day").value; return v ? v.replaceAll("-", "") : ""; }
+function shiftDay(delta) {
+  const cur = $("#day").value || todayStr();
+  const d = new Date(cur + "T12:00:00");
+  d.setDate(d.getDate() + delta);
+  $("#day").value = d.toISOString().slice(0, 10);
+  refresh();
+}
+
 async function loadInstances() {
   instances = await jget("/api/instances");
   $("#inst").innerHTML = instances.map(i =>
     `<option value="${esc(i.id)}">${esc(i.instance_id)}</option>`).join("");
+  $("#day").value = todayStr();
   if (instances.length) refresh();
 }
 
@@ -68,56 +97,90 @@ function summarize(data) {
     `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join("  ");
 }
 
+// Classify a row: red alert for restarts, amber warn for recoveries / corrections.
+function rowClass(e) {
+  if (e.event === "bs_restart") return "alert";
+  if (e.event === "goto_recovery") return "warn";
+  if (e.event === "brawler_reconcile" && e.data && e.data.corrected === true) return "warn";
+  return "";
+}
+
 async function refresh() {
   const instId = $("#inst").value;
   if (!instId) return;
-  const filt = $("#filter").value.trim().toLowerCase();
-  const limit = Math.min(parseInt($("#limit").value, 10) || 200, 1000);
+  curInst = instId;
+  const limit = Math.min(parseInt($("#limit").value, 10) || 300, 1000);
+  const day = dayParam();
   $("#status").textContent = "…";
   try {
-    const res = await cmd(instId, "debug_events", {limit});
+    const res = await cmd(instId, "debug_events", day ? {limit, day} : {limit});
     const data = res.data || {};
-    let events = (data.events || []);
-    if (filt) events = events.filter(e => (e.event || "").toLowerCase().includes(filt));
-    events.reverse(); // newest first
-    render(instId, events);
-    $("#status").textContent = `${events.length} events`;
+    allEvents = (data.events || []).slice().reverse(); // newest first
+    applyView();
+    $("#status").textContent = `${allEvents.length} events`;
   } catch (e) {
     $("#status").textContent = "erreur: " + e.message;
   }
 }
 
-function render(instId, events) {
-  $("#empty").style.display = events.length ? "none" : "block";
-  $("#list").innerHTML = events.map((e, idx) => {
-    const t = (e.iso || "").replace("T", " ");
-    const hasCap = !!e.capture;
-    return `<div class="row" data-idx="${idx}">
-      <div class="mut">${esc(t)}</div>
-      <div><span class="ev">${esc(e.event || "?")}</span><div class="mut">${esc(e.account || "")}${e.tag ? " · " + esc(e.tag) : ""}</div></div>
-      <div class="data">${esc(summarize(e.data))}</div>
-      <div>${hasCap ? '🖼️' : ''}</div>
-    </div>`;
-  }).join("");
-  $("#list").querySelectorAll(".row").forEach(row => {
-    row.onclick = () => openEvent(instId, events[parseInt(row.dataset.idx, 10)]);
+function renderChips() {
+  const counts = {};
+  for (const e of allEvents) counts[e.event || "?"] = (counts[e.event || "?"] || 0) + 1;
+  const types = Object.keys(counts).sort();
+  const chip = (key, label, n) =>
+    `<span class="chip${activeType === key ? " active" : ""}" data-ev="${esc(key)}">${esc(label)}<span class="n">${n}</span></span>`;
+  let html = chip("all", "tous", allEvents.length);
+  for (const t of types) html += chip(t, t, counts[t]);
+  $("#chips").innerHTML = html;
+  $("#chips").querySelectorAll(".chip").forEach(c => {
+    c.onclick = () => { activeType = c.dataset.ev; applyView(); };
   });
 }
 
-async function openEvent(instId, e) {
+function applyView() {
+  renderChips();
+  let evs = allEvents;
+  if (activeType !== "all") evs = evs.filter(e => (e.event || "?") === activeType);
+  const q = $("#search").value.trim().toLowerCase();
+  if (q) evs = evs.filter(e => ((e.event || "") + " " + summarize(e.data)).toLowerCase().includes(q));
+  renderList(evs);
+}
+
+function renderList(events) {
+  $("#empty").style.display = events.length ? "none" : "block";
+  $("#empty").textContent = curInst ? "Aucun event (ce jour / filtre)." : "Choisis une instance.";
+  $("#list").innerHTML = events.map((e, idx) => {
+    const t = (e.iso || "").replace("T", " ");
+    const cls = rowClass(e);
+    const cap = e.capture ? "🖼️" : "";
+    return `<div class="row ${cls}" data-idx="${idx}">
+      <div class="mut">${esc(t)}</div>
+      <div><span class="ev">${esc(e.event || "?")}</span><div class="mut">${esc(e.account || "")}${e.tag ? " · " + esc(e.tag) : ""}</div></div>
+      <div class="data">${esc(summarize(e.data))}</div>
+      <div>${cap}</div>
+    </div>`;
+  }).join("");
+  // Bind clicks against the FILTERED array we just rendered.
+  $("#list").querySelectorAll(".row").forEach(row => {
+    row.onclick = () => openEvent(events[parseInt(row.dataset.idx, 10)]);
+  });
+}
+
+async function openEvent(e) {
+  if (!e) return;
   $("#m-data").textContent = JSON.stringify(e, null, 2);
   $("#m-frame").removeAttribute("src");
   $("#m-crop").hidden = true;
   $("#modal").style.display = "flex";
   if (e.capture) {
     try {
-      const res = await cmd(instId, "debug_capture", {name: e.capture});
+      const res = await cmd(curInst, "debug_capture", {name: e.capture});
       if (res.data && res.data.jpeg_b64) $("#m-frame").src = "data:image/jpeg;base64," + res.data.jpeg_b64;
     } catch (_) {}
   }
   if (e.crop) {
     try {
-      const res = await cmd(instId, "debug_capture", {name: e.crop});
+      const res = await cmd(curInst, "debug_capture", {name: e.crop});
       if (res.data && res.data.jpeg_b64) { $("#m-crop").src = "data:image/jpeg;base64," + res.data.jpeg_b64; $("#m-crop").hidden = false; }
     } catch (_) {}
   }
@@ -125,7 +188,11 @@ async function openEvent(instId, e) {
 
 $("#refresh").onclick = refresh;
 $("#inst").onchange = refresh;
-$("#filter").onchange = refresh;
+$("#day").onchange = refresh;
+$("#prevday").onclick = () => shiftDay(-1);
+$("#nextday").onclick = () => shiftDay(1);
+$("#today").onclick = () => { $("#day").value = todayStr(); refresh(); };
+$("#search").oninput = applyView;  // local re-filter, no re-fetch
 $("#auto").onchange = e => {
   if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
   if (e.target.checked) autoTimer = setInterval(refresh, 5000);
