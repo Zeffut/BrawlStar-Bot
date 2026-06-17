@@ -83,6 +83,44 @@ class StageManager:
         if not numbers: return False
         return int(numbers)
 
+    def _reconcile_equipped_brawler(self) -> str:
+        """Reconcile the recorded brawler with what's ACTUALLY equipped (OCR above
+        the PLAY button) before tapping PLAY, and trace the decision. Returns the
+        final brawler name that will be recorded. Best-effort: any failure keeps
+        the intended name. The emitted "brawler_reconcile" event also marks the
+        match start (the definitive brawler before PLAY)."""
+        intended = self.brawlers_pick_data[0]['brawler']
+        equipped_ocr = None
+        canonical = None
+        corrected = False
+        try:
+            import game_api
+            from lobby_automation import resolve_equipped_to_canonical
+            api = game_api.get()
+            equipped_ocr = api.read_current_brawler() if api else None
+            roster = getattr(self, "_owned_brawler_names", None)
+            canonical = (resolve_equipped_to_canonical(equipped_ocr, roster)
+                         if equipped_ocr else None)
+            if canonical and canonical.strip().lower() != (intended or "").strip().lower():
+                log.warning("brawler reconcile: intended=%r but equipped reads %r → "
+                            "recording/labelling as %r", intended, equipped_ocr, canonical)
+                self.brawlers_pick_data[0]['brawler'] = canonical
+                corrected = True
+        except Exception:
+            log.debug("brawler reconcile failed", exc_info=True)
+        final = self.brawlers_pick_data[0]['brawler']
+        try:
+            import debug_trace
+            debug_trace.trace(
+                "brawler_reconcile",
+                data={"intended": intended, "equipped_ocr": equipped_ocr,
+                      "canonical": canonical, "corrected": corrected, "final": final},
+                force_capture=True, level="info",
+            )
+        except Exception:
+            pass
+        return final
+
     def start_game(self, data):
         # push_max: a previous match's hook may have scheduled a brawler
         # swap. Execute it now (we're back on the lobby screen).
@@ -153,33 +191,9 @@ class StageManager:
                     pass
                 self.Lobby_automation.select_brawler(next_brawler_name)
 
-        # Reconcile the recorded brawler with what's ACTUALLY equipped before
-        # we tap PLAY. The brawler-menu OCR can tap the wrong card, or the
-        # EQUIP tap can miss — in which case BS silently keeps the PREVIOUS
-        # brawler. We'd then label AND (worse) record the match under the
-        # INTENDED brawler ("Playing as carl" while jessie is equipped),
-        # polluting the per-brawler stats that feed the data-driven pick order.
-        # We're at the lobby here (PLAY only works at the lobby), so the name
-        # above the PLAY button is readable. A None / unreadable read means
-        # "can't tell" → keep the intended name; only a confident match to a
-        # DIFFERENT owned brawler triggers a correction.
-        try:
-            import game_api
-            from lobby_automation import resolve_equipped_to_canonical
-            api = game_api.get()
-            equipped_ocr = api.read_current_brawler() if api else None
-            roster = getattr(self, "_owned_brawler_names", None)
-            canonical = (resolve_equipped_to_canonical(equipped_ocr, roster)
-                         if equipped_ocr else None)
-            if canonical:
-                intended = self.brawlers_pick_data[0]['brawler']
-                if canonical.strip().lower() != (intended or "").strip().lower():
-                    log.warning("brawler reconcile: intended=%r but equipped reads "
-                                "%r → recording/labelling as %r",
-                                intended, equipped_ocr, canonical)
-                    self.brawlers_pick_data[0]['brawler'] = canonical
-        except Exception:
-            log.debug("brawler reconcile failed", exc_info=True)
+        # Reconcile the recorded brawler with what's ACTUALLY equipped (and trace
+        # the decision) before we tap PLAY. See _reconcile_equipped_brawler.
+        self._reconcile_equipped_brawler()
 
         self.window_controller.keys_up(list("wasd"))
         self.window_controller.press_key("Q")
