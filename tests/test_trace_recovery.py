@@ -38,6 +38,8 @@ def test_restart_brawlstars_traces(monkeypatch):
     api._restart_brawlstars("test reason")
     assert calls and calls[0][0][0] == "bs_restart"
     assert calls[0][1]["data"]["reason"] == "test reason"
+    assert calls[0][1].get("force_capture") is True
+    assert calls[0][1].get("level") == "warning"
 
 
 def test_restart_suppressed_does_not_trace(monkeypatch):
