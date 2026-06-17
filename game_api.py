@@ -651,10 +651,22 @@ class GameAPI:
             # The current brawler name is shown center-bottom under the avatar.
             crop = arr[int(h * 0.72):int(h * 0.82), int(w * 0.35):int(w * 0.65)]
             text = extract_text_and_positions(crop)
+            chosen = None
             for key in text.keys():
                 key = key.strip()
                 if key.isalpha() and 3 <= len(key) <= 16:
-                    return key.lower()
+                    chosen = key.lower()
+                    break
+            try:
+                import debug_trace
+                debug_trace.trace(
+                    "brawler_read",
+                    data={"ocr_raw": list(text.keys()), "token": chosen},
+                    frame=arr, crop=crop, level="debug",
+                )
+            except Exception:
+                pass
+            return chosen
         except Exception as exc:
             log.warning("read_current_brawler(): %s", exc)
         return None
