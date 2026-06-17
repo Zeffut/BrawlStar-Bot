@@ -62,13 +62,20 @@ def _summary(data) -> str:
         return ""
 
 
+_account_cache: dict = {"tag": None, "at": 0.0}
+
+
 def _account():
     try:
-        import device
-        tag, _ = device.account_override()
-        return tag
+        now = time.time()
+        if now - _account_cache["at"] > 60.0:
+            import device
+            tag, _ = device.account_override()
+            _account_cache["tag"] = tag
+            _account_cache["at"] = now
+        return _account_cache["tag"]
     except Exception:
-        return None
+        return _account_cache.get("tag")
 
 
 def _latest_stream_frame():
@@ -208,7 +215,7 @@ def _writer_loop() -> None:
                         rec["capture"] = cap_name
                         _last_capture_at[ev] = now
                         if crop is not None:
-                            crop_name = f"{_safe(ev)}_{rec['ts']}.crop.jpg"
+                            crop_name = f"{_safe(ev)}_{rec['ts']}_{seq}.crop.jpg"
                             if _write_jpeg(crop, _CAPTURE_DIR / crop_name):
                                 rec["crop"] = crop_name
                     else:
@@ -231,11 +238,13 @@ def _writer_loop() -> None:
 def _flush(timeout: float = 3.0) -> None:
     """Block until queued records are written (test helper only)."""
     deadline = time.time() + timeout
-    while _Q is not None and not _Q.empty() and time.time() < deadline:
-        time.sleep(0.02)
-    time.sleep(0.15)  # let the in-flight record finish writing
+    while _Q is not None and getattr(_Q, "unfinished_tasks", 0) > 0 and time.time() < deadline:
+        time.sleep(0.01)
 
 
 def _reset_for_tests() -> None:
-    """Clear throttle memory between tests (test helper only)."""
+    """Clear throttle memory between tests (test helper only).
+    Intentionally does NOT reset _Q/_WRITER: a single persistent daemon writer
+    is reused across tests; the module global _Q and the thread's closure
+    reference the same queue object."""
     _last_capture_at.clear()
