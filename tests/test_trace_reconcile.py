@@ -18,7 +18,6 @@ def _stub_stage_manager_deps():
         "asyncio": types.ModuleType("asyncio"),
         "lobby_automation": types.ModuleType("lobby_automation"),
         "game_api": types.ModuleType("game_api"),
-        "debug_trace": types.ModuleType("debug_trace"),
     }
     for name, mod in stubs.items():
         if name not in sys.modules:
@@ -37,7 +36,6 @@ def _stub_stage_manager_deps():
     # Pre-populate stub attributes so monkeypatch.setattr can patch them.
     sys.modules["game_api"].get = lambda: None
     sys.modules["lobby_automation"].resolve_equipped_to_canonical = lambda ocr, cands: None
-    sys.modules["debug_trace"].trace = lambda *a, **k: None
 
 
 _stub_stage_manager_deps()
@@ -82,6 +80,10 @@ def test_reconcile_keeps_intended_when_unreadable(monkeypatch):
             return None
 
     monkeypatch.setattr(game_api, "get", lambda: FakeAPI())
-    monkeypatch.setattr(debug_trace, "trace", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(debug_trace, "trace", lambda *a, **k: calls.append((a, k)))
     assert sm._reconcile_equipped_brawler() == "rico"
     assert sm.brawlers_pick_data[0]["brawler"] == "rico"
+    assert calls[0][0][0] == "brawler_reconcile"
+    assert calls[0][1]["data"]["corrected"] is False
+    assert calls[0][1]["data"]["equipped_ocr"] is None
