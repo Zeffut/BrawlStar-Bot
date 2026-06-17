@@ -83,6 +83,22 @@ class StageManager:
         if not numbers: return False
         return int(numbers)
 
+    def _trace_match_result(self, result) -> None:
+        """Trace a finished match's result (brawler + outcome). Best-effort."""
+        try:
+            import debug_trace
+            brawler = None
+            try:
+                brawler = self.brawlers_pick_data[0].get('brawler')
+            except Exception:
+                pass
+            debug_trace.trace(
+                "match_end", data={"brawler": brawler, "result": result},
+                force_capture=True, level="info",
+            )
+        except Exception:
+            pass
+
     def _reconcile_equipped_brawler(self) -> str:
         """Reconcile the recorded brawler with what's ACTUALLY equipped (OCR above
         the PLAY button) before tapping PLAY, and trace the decision. Returns the
@@ -366,6 +382,8 @@ class StageManager:
                 found_game_result = self.Trophy_observer.find_game_result(screenshot, current_brawler=self.brawlers_pick_data[0]['brawler'])
                 self.time_since_last_stat_change = time.time()
                 save_brawler_data(self.brawlers_pick_data)
+                if found_game_result:
+                    self._trace_match_result(found_game_result)
             # Once the result is logged and we're still on the end screen,
             # it's a star drop we can't open — stop hammering Q and bail.
             if found_game_result and end_attempts >= 2:
