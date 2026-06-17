@@ -1058,6 +1058,7 @@ class BotRunner:
                 from difflib import SequenceMatcher
                 api = _gapi.get()
                 eq = api.read_current_brawler() if api else None
+                matched = False
                 if eq:
                     owned_names = list(self._push_max.brawlers.keys())
                     best = max(owned_names,
@@ -1065,8 +1066,27 @@ class BotRunner:
                                default=None)
                     if best and SequenceMatcher(None, eq, best.lower()).ratio() >= 0.6:
                         brawler = best
+                        matched = True
                     log.info("push_max no_swap: equipped OCR=%r → grinding %r",
                              eq, brawler)
+                if not matched and api is not None:
+                    # The lobby shows NO brawler name, so read_current_brawler
+                    # can't tell what's actually equipped. Blindly labelling the
+                    # data-driven pick is exactly the "Playing as Rico but plays
+                    # Bea" mislabel. Instead SELECT the pick once to GUARANTEE
+                    # equipped == labelled — and as a bonus the bot then grinds
+                    # the optimal data-driven pick, not whatever was left
+                    # equipped. Best-effort: on a select failure (fresh-account
+                    # unselectable name) fall back to grinding whatever's
+                    # equipped (the prior behaviour).
+                    sel = api.select_brawler(brawler)
+                    if sel.get("ok"):
+                        log.info("push_max no_swap: equipped unreadable → selected "
+                                 "pick %r to align equipped==label", brawler)
+                    else:
+                        log.warning("push_max no_swap: could not select pick %r "
+                                    "(%s) — grinding equipped (label may be off)",
+                                    brawler, sel.get("error"))
                 self._push_max.current = brawler
                 if self.brawler_data:
                     self.brawler_data[0]['brawler'] = brawler
