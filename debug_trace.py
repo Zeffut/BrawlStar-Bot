@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -248,3 +249,71 @@ def _reset_for_tests() -> None:
     is reused across tests; the module global _Q and the thread's closure
     reference the same queue object."""
     _last_capture_at.clear()
+
+
+# ---- read side (used by worker_link debug commands) ------------------------
+
+def events_command(args: dict) -> dict:
+    """Return the tail of today's (or args['day']) events JSONL as a list.
+
+    args: {"limit": int=100 (capped 1000), "day": "YYYYMMDD"|None}
+    Missing file → empty list (not an error). Malformed lines are skipped.
+    """
+    try:
+        limit = min(max(int(args.get("limit", 100) or 100), 1), 1000)
+    except Exception:
+        limit = 100
+    raw_day = args.get("day")
+    if raw_day is not None and not re.match(r"^\d{8}$", str(raw_day)):
+        raw_day = None  # invalid format → fall back to today
+    day = raw_day or time.strftime("%Y%m%d")
+    path = _TRACE_DIR / f"events-{day}.jsonl"
+    if not path.exists():
+        return {"ok": True, "count": 0, "events": []}
+    events = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in lines[-limit:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                pass  # best-effort writes can leave a partial line
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "count": len(events), "events": events}
+
+
+def _valid_capture_name(name: str) -> bool:
+    return bool(name) and len(name) <= 80 and not (
+        "/" in name or "\\" in name or ".." in name or name.startswith(".")
+    )
+
+
+def capture_command(args: dict) -> dict:
+    """Return a single capture JPEG as base64. args: {"name": str}.
+
+    Validates name against path traversal; missing/GC'd capture → error dict.
+    """
+    name = str(args.get("name", "") or "")
+    if not _valid_capture_name(name):
+        return {"ok": False, "error": "invalid capture name"}
+    path = _CAPTURE_DIR / name
+    try:
+        # is_relative_to (py3.9+) avoids the prefix-boundary flaw of a string
+        # startswith (e.g. ".../captures_evil" startswith ".../captures").
+        if not path.resolve().is_relative_to(_CAPTURE_DIR.resolve()):
+            return {"ok": False, "error": "invalid capture name"}
+    except Exception:
+        return {"ok": False, "error": "invalid capture name"}
+    if not path.exists() or not path.is_file():
+        return {"ok": False, "error": "capture not found"}
+    try:
+        import base64 as _b64
+        data = path.read_bytes()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "name": name,
+            "jpeg_b64": _b64.b64encode(data).decode("ascii"), "bytes": len(data)}

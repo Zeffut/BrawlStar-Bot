@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debug Trace — BrawlStar Bot</title>
+<style>
+  :root { --bg:#07090d; --surface:#11161f; --line:#1f2733; --txt:#cdd6e4; --mut:#7a8597; --pri:#4f8cf0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.4 system-ui,sans-serif; }
+  header { padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0 12px 0 0; }
+  select, input, button { background:var(--surface); color:var(--txt); border:1px solid var(--line); border-radius:6px; padding:6px 10px; font:inherit; }
+  button { cursor:pointer; }
+  #list { padding:8px 16px; }
+  .row { display:grid; grid-template-columns:150px 160px 1fr 64px; gap:10px; align-items:center; padding:8px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .row:hover { background:var(--surface); }
+  .ev { font-weight:600; color:var(--pri); }
+  .mut { color:var(--mut); font-size:12px; }
+  .data { font-family:ui-monospace,monospace; font-size:12px; color:var(--txt); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .thumb { width:56px; height:32px; object-fit:cover; border-radius:4px; background:var(--surface); }
+  #modal { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; flex-direction:column; gap:12px; padding:20px; }
+  #modal img { max-width:90vw; max-height:60vh; border-radius:8px; }
+  #modal pre { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:12px; max-width:90vw; overflow:auto; color:var(--txt); }
+  #modal .crop { max-height:120px; }
+  #empty { color:var(--mut); padding:16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐛 Debug Trace</h1>
+  <select id="inst"></select>
+  <label class="mut">event <input id="filter" placeholder="(tous)" size="14"></label>
+  <label class="mut">limit <input id="limit" type="number" value="200" min="1" max="1000" size="5"></label>
+  <button id="refresh">Rafraîchir</button>
+  <label class="mut"><input type="checkbox" id="auto"> auto 5s</label>
+  <span id="status" class="mut"></span>
+</header>
+<div id="list"></div>
+<div id="empty">Choisis une instance.</div>
+<div id="modal"><img id="m-frame"><img id="m-crop" class="crop" hidden><pre id="m-data"></pre><button onclick="document.getElementById('modal').style.display='none'">Fermer (Esc)</button></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let instances = [], autoTimer = null;
+
+async function jget(path) { const r = await fetch(path); if (!r.ok) throw new Error(r.status); return r.json(); }
+async function cmd(instId, name, args) {
+  const r = await fetch(`/api/instances/${instId}/cmd`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({name, args: args || {}, timeout_s: 8}),
+  });
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function loadInstances() {
+  instances = await jget("/api/instances");
+  $("#inst").innerHTML = instances.map(i =>
+    `<option value="${esc(i.id)}">${esc(i.instance_id)}</option>`).join("");
+  if (instances.length) refresh();
+}
+
+function summarize(data) {
+  if (!data) return "";
+  return Object.entries(data).map(([k, v]) =>
+    `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`).join("  ");
+}
+
+async function refresh() {
+  const instId = $("#inst").value;
+  if (!instId) return;
+  const filt = $("#filter").value.trim().toLowerCase();
+  const limit = Math.min(parseInt($("#limit").value, 10) || 200, 1000);
+  $("#status").textContent = "…";
+  try {
+    const res = await cmd(instId, "debug_events", {limit});
+    const data = res.data || {};
+    let events = (data.events || []);
+    if (filt) events = events.filter(e => (e.event || "").toLowerCase().includes(filt));
+    events.reverse(); // newest first
+    render(instId, events);
+    $("#status").textContent = `${events.length} events`;
+  } catch (e) {
+    $("#status").textContent = "erreur: " + e.message;
+  }
+}
+
+function render(instId, events) {
+  $("#empty").style.display = events.length ? "none" : "block";
+  $("#list").innerHTML = events.map((e, idx) => {
+    const t = (e.iso || "").replace("T", " ");
+    const hasCap = !!e.capture;
+    return `<div class="row" data-idx="${idx}">
+      <div class="mut">${esc(t)}</div>
+      <div><span class="ev">${esc(e.event || "?")}</span><div class="mut">${esc(e.account || "")}${e.tag ? " · " + esc(e.tag) : ""}</div></div>
+      <div class="data">${esc(summarize(e.data))}</div>
+      <div>${hasCap ? '🖼️' : ''}</div>
+    </div>`;
+  }).join("");
+  $("#list").querySelectorAll(".row").forEach(row => {
+    row.onclick = () => openEvent(instId, events[parseInt(row.dataset.idx, 10)]);
+  });
+}
+
+async function openEvent(instId, e) {
+  $("#m-data").textContent = JSON.stringify(e, null, 2);
+  $("#m-frame").removeAttribute("src");
+  $("#m-crop").hidden = true;
+  $("#modal").style.display = "flex";
+  if (e.capture) {
+    try {
+      const res = await cmd(instId, "debug_capture", {name: e.capture});
+      if (res.data && res.data.jpeg_b64) $("#m-frame").src = "data:image/jpeg;base64," + res.data.jpeg_b64;
+    } catch (_) {}
+  }
+  if (e.crop) {
+    try {
+      const res = await cmd(instId, "debug_capture", {name: e.crop});
+      if (res.data && res.data.jpeg_b64) { $("#m-crop").src = "data:image/jpeg;base64," + res.data.jpeg_b64; $("#m-crop").hidden = false; }
+    } catch (_) {}
+  }
+}
+
+$("#refresh").onclick = refresh;
+$("#inst").onchange = refresh;
+$("#filter").onchange = refresh;
+$("#auto").onchange = e => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (e.target.checked) autoTimer = setInterval(refresh, 5000);
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape") $("#modal").style.display = "none"; });
+loadInstances();
+</script>
+</body>
+</html>
