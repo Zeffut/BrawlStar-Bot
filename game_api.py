@@ -651,10 +651,22 @@ class GameAPI:
             # The current brawler name is shown center-bottom under the avatar.
             crop = arr[int(h * 0.72):int(h * 0.82), int(w * 0.35):int(w * 0.65)]
             text = extract_text_and_positions(crop)
+            chosen = None
             for key in text.keys():
                 key = key.strip()
                 if key.isalpha() and 3 <= len(key) <= 16:
-                    return key.lower()
+                    chosen = key.lower()
+                    break
+            try:
+                import debug_trace
+                debug_trace.trace(
+                    "brawler_read",
+                    data={"ocr_raw": list(text.keys()), "token": chosen},
+                    frame=arr, crop=crop, level="debug",
+                )
+            except Exception:
+                pass
+            return chosen
         except Exception as exc:
             log.warning("read_current_brawler(): %s", exc)
         return None
@@ -679,6 +691,12 @@ class GameAPI:
             time.sleep(5)
             return
         self._last_restart_t = now
+        try:
+            import debug_trace
+            debug_trace.trace("bs_restart", data={"reason": reason},
+                              force_capture=True, level="warning")
+        except Exception:
+            pass
         serial = device.adb_serial()
         log.warning("restarting Brawl Stars (%s)", reason)
         try:
@@ -777,6 +795,12 @@ class GameAPI:
             # opens it) — tap Annuler to return to the lobby, never O.K. (quit).
             if self._dismiss_quit_dialog():
                 log.info("goto_lobby[%d]: cancelled 'Quitter Brawl Stars?'", i)
+                try:
+                    import debug_trace
+                    debug_trace.trace("goto_recovery",
+                                      data={"action": "quit_dialog_cancel", "iter": i})
+                except Exception:
+                    pass
                 time.sleep(1.0)
                 continue
             st = self.state()
@@ -822,6 +846,12 @@ class GameAPI:
             # LIVE-FIX 2026-06-15.
             if st in ("brawler_selection", "shop"):
                 log.info("goto_lobby[%d]: %s → home button to lobby", i, st)
+                try:
+                    import debug_trace
+                    debug_trace.trace("goto_recovery",
+                                      data={"action": "home_button", "state": st, "iter": i})
+                except Exception:
+                    pass
                 self.tap(0.952, 0.065)
                 time.sleep(1.5)
                 continue
