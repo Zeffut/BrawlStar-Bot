@@ -1073,20 +1073,43 @@ class BotRunner:
                     # The lobby shows NO brawler name, so read_current_brawler
                     # can't tell what's actually equipped. Blindly labelling the
                     # data-driven pick is exactly the "Playing as Rico but plays
-                    # Bea" mislabel. Instead SELECT the pick once to GUARANTEE
+                    # Bea" mislabel. Instead SELECT the pick to GUARANTEE
                     # equipped == labelled — and as a bonus the bot then grinds
                     # the optimal data-driven pick, not whatever was left
-                    # equipped. Best-effort: on a select failure (fresh-account
-                    # unselectable name) fall back to grinding whatever's
-                    # equipped (the prior behaviour).
-                    sel = api.select_brawler(brawler)
-                    if sel.get("ok"):
-                        log.info("push_max no_swap: equipped unreadable → selected "
-                                 "pick %r to align equipped==label", brawler)
-                    else:
-                        log.warning("push_max no_swap: could not select pick %r "
-                                    "(%s) — grinding equipped (label may be off)",
-                                    brawler, sel.get("error"))
+                    # equipped. If a pick is unselectable (fresh-account FR name
+                    # the menu OCR can't find), mark it unselectable + try the
+                    # next pick (up to 3); only then fall back to grinding
+                    # whatever's equipped (the prior behaviour).
+                    from lobby_automation import BrawlerNotFoundError
+                    for _try in range(3):
+                        try:
+                            api.la.select_brawler(brawler)
+                            log.info("push_max no_swap: equipped unreadable → "
+                                     "selected pick %r to align equipped==label",
+                                     brawler)
+                            break
+                        except BrawlerNotFoundError as _bnf:
+                            log.warning("push_max no_swap: pick %r unselectable (%s) "
+                                        "→ marking + trying next pick", brawler, _bnf)
+                            _bs = self._push_max.brawlers.get(brawler)
+                            if _bs:
+                                _bs.exhausted = True
+                            self._unselectable[brawler] = time.time()
+                            if self._resume_state is not None:
+                                self._resume_state["unselectable"] = dict(self._unselectable)
+                                try: _save_resume_state(self._resume_state)
+                                except Exception: pass
+                            _nxt = self._push_max.pick_next()
+                            if _nxt is None:
+                                log.warning("push_max no_swap: no selectable pick left "
+                                            "— grinding equipped (label may be off)")
+                                break
+                            brawler = _nxt.name
+                        except Exception as _sel_exc:
+                            log.warning("push_max no_swap: select pick %r failed (%s) "
+                                        "— grinding equipped (label may be off)",
+                                        brawler, _sel_exc)
+                            break
                 self._push_max.current = brawler
                 if self.brawler_data:
                     self.brawler_data[0]['brawler'] = brawler
