@@ -67,3 +67,11 @@ def test_capture_rejects_traversal(dt, bad):
     out = dt.capture_command({"name": bad})
     assert out["ok"] is False
     assert "invalid" in out["error"]
+
+
+@pytest.mark.parametrize("bad_day", ["../evil", "2026061", "20260617x", "abcdefgh", "2026-06-17", ""])
+def test_events_command_invalid_day_falls_back_to_today(dt, bad_day):
+    """Non-8-digit day values must not cause path traversal — they fall back to today.
+    With no today-file in the tmp dir, the result must be the empty-ok response."""
+    out = dt.events_command({"day": bad_day})
+    assert out == {"ok": True, "count": 0, "events": []}

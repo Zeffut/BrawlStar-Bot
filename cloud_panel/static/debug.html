@@ -42,6 +42,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let instances = [], autoTimer = null;
 
 async function jget(path) { const r = await fetch(path); if (!r.ok) throw new Error(r.status); return r.json(); }
@@ -57,7 +58,7 @@ async function cmd(instId, name, args) {
 async function loadInstances() {
   instances = await jget("/api/instances");
   $("#inst").innerHTML = instances.map(i =>
-    `<option value="${i.id}">${i.instance_id}</option>`).join("");
+    `<option value="${esc(i.id)}">${esc(i.instance_id)}</option>`).join("");
   if (instances.length) refresh();
 }
 
@@ -71,7 +72,7 @@ async function refresh() {
   const instId = $("#inst").value;
   if (!instId) return;
   const filt = $("#filter").value.trim().toLowerCase();
-  const limit = Math.min(parseInt($("#limit").value) || 200, 1000);
+  const limit = Math.min(parseInt($("#limit").value, 10) || 200, 1000);
   $("#status").textContent = "…";
   try {
     const res = await cmd(instId, "debug_events", {limit});
@@ -92,14 +93,14 @@ function render(instId, events) {
     const t = (e.iso || "").replace("T", " ");
     const hasCap = !!e.capture;
     return `<div class="row" data-idx="${idx}">
-      <div class="mut">${t}</div>
-      <div><span class="ev">${e.event || "?"}</span><div class="mut">${e.account || ""}${e.tag ? " · " + e.tag : ""}</div></div>
-      <div class="data">${summarize(e.data)}</div>
+      <div class="mut">${esc(t)}</div>
+      <div><span class="ev">${esc(e.event || "?")}</span><div class="mut">${esc(e.account || "")}${e.tag ? " · " + esc(e.tag) : ""}</div></div>
+      <div class="data">${esc(summarize(e.data))}</div>
       <div>${hasCap ? '🖼️' : ''}</div>
     </div>`;
   }).join("");
   $("#list").querySelectorAll(".row").forEach(row => {
-    row.onclick = () => openEvent(instId, events[parseInt(row.dataset.idx)]);
+    row.onclick = () => openEvent(instId, events[parseInt(row.dataset.idx, 10)]);
   });
 }
 

@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from pathlib import Path
@@ -262,7 +263,10 @@ def events_command(args: dict) -> dict:
         limit = min(max(int(args.get("limit", 100) or 100), 1), 1000)
     except Exception:
         limit = 100
-    day = args.get("day") or time.strftime("%Y%m%d")
+    raw_day = args.get("day")
+    if raw_day is not None and not re.match(r"^\d{8}$", str(raw_day)):
+        raw_day = None  # invalid format → fall back to today
+    day = raw_day or time.strftime("%Y%m%d")
     path = _TRACE_DIR / f"events-{day}.jsonl"
     if not path.exists():
         return {"ok": True, "count": 0, "events": []}
