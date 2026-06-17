@@ -298,7 +298,9 @@ def capture_command(args: dict) -> dict:
         return {"ok": False, "error": "invalid capture name"}
     path = _CAPTURE_DIR / name
     try:
-        if not str(path.resolve()).startswith(str(_CAPTURE_DIR.resolve())):
+        # is_relative_to (py3.9+) avoids the prefix-boundary flaw of a string
+        # startswith (e.g. ".../captures_evil" startswith ".../captures").
+        if not path.resolve().is_relative_to(_CAPTURE_DIR.resolve()):
             return {"ok": False, "error": "invalid capture name"}
     except Exception:
         return {"ok": False, "error": "invalid capture name"}
