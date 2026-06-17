@@ -874,6 +874,26 @@ def _local_snapshot() -> dict | None:
     return snap
 
 
+# ---- debug trace (read side; logic lives in debug_trace) ----------
+
+def _cmd_debug_events(args: dict) -> dict:
+    """Tail of the debug-trace events JSONL. args = {limit:int, day:str?}."""
+    try:
+        import debug_trace
+        return debug_trace.events_command(args or {})
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _cmd_debug_capture(args: dict) -> dict:
+    """A single debug-trace capture as base64 JPEG. args = {name:str}."""
+    try:
+        import debug_trace
+        return debug_trace.capture_command(args or {})
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 # ---- dispatch table ----------------------------------------------
 
 COMMANDS: dict[str, Callable[[dict], dict]] = {
@@ -920,6 +940,9 @@ COMMANDS: dict[str, Callable[[dict], dict]] = {
     "shop_plan":              _cmd_shop_plan,
     "shop_buy_hypercharges":  _cmd_shop_buy_hypercharges,
     "shop_upgrade_power":     _cmd_shop_upgrade_power,
+    # debug trace (read side for the /static/debug.html viewer)
+    "debug_events":           _cmd_debug_events,
+    "debug_capture":          _cmd_debug_capture,
 }
 
 
