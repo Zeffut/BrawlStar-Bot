@@ -12,10 +12,10 @@ def _stub_stage_manager_deps():
         "state_finder.main": types.ModuleType("state_finder.main"),
         "utils": types.ModuleType("utils"),
         "trophy_observer": types.ModuleType("trophy_observer"),
-        "cv2": types.ModuleType("cv2"),
-        "numpy": types.ModuleType("numpy"),
-        "requests": types.ModuleType("requests"),
-        "asyncio": types.ModuleType("asyncio"),
+        # NOTE: never stub cv2/numpy/requests/asyncio — they are real and
+        # importable here; faking them leaks across test files (a fake numpy
+        # then breaks debug_trace's capture tests) and makes the suite
+        # order-dependent. stage_manager imports the real ones fine.
         "lobby_automation": types.ModuleType("lobby_automation"),
         "game_api": types.ModuleType("game_api"),
     }
