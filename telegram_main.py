@@ -1137,6 +1137,22 @@ class BotRunner:
                 # delta-tracked total forward; brawlace stays an UPWARD floor (the
                 # post-match catch-up still raises us if we genuinely missed gains).
                 _carry = self._resume_account_trophies
+                if not _carry:
+                    # Fresh start (manual session_push_max / session_start, NOT a
+                    # resume) passes no resume_account_trophies → without this the
+                    # seed would re-anchor DOWN to the stale brawlace sum, wiping
+                    # the real tracked total (observed 2026-06-18: a manual restart
+                    # dropped the panel total 5121 → 4665). Use the last persisted
+                    # tracked total as the floor too. Guard against cross-account
+                    # contamination (the old 25445 bug) by ignoring a persisted
+                    # value implausibly above the brawlace sum.
+                    try:
+                        _prev = _load_resume_state() or {}
+                        _p = _prev.get("account_trophies")
+                        if _p and self._account_trophies and _p <= self._account_trophies * 3:
+                            _carry = _p
+                    except Exception:
+                        log.debug("fresh-start carry-forward lookup failed", exc_info=True)
                 if _carry and _carry > self._account_trophies:
                     log.info("carry-forward account trophies: brawlace=%d < tracked=%d → keep tracked",
                              self._account_trophies, _carry)
