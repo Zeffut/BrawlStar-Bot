@@ -1410,14 +1410,40 @@ class BotRunner:
                                            runner._push_max, observer, _sid),
                                      name="brawlace-resync").start()
                 if runner._push_max.no_swap:
-                    # Stay-on-equipped: never swap. Only the per-brawler cap
-                    # stops us here (the global target is handled above).
+                    # Stay-on-equipped within a session. When the equipped
+                    # brawler hits its per-brawler cap we don't kill the whole
+                    # grind — we end THIS session but hand the resume the
+                    # next-best brawler so the keepalive (and the morning wake)
+                    # continues grinding it. Only when EVERY brawler is capped
+                    # (account done) do we clear the resume and stop for good.
+                    # (Bug fixed 2026-06-18: clearing resume on every cap left
+                    # the bot idle for hours — the wake relaunched BS but had
+                    # nothing to resume.)
                     cur = runner._push_max.brawlers.get(current_brawler)
                     if cur and cur.exhausted:
-                        log.info("push_max no_swap: %s hit its cap — stopping bot",
-                                 current_brawler)
                         main_instance.time_to_stop = True
-                        _clear_resume_state()
+                        # pick_next() sticks to `current` in no_swap and returns
+                        # None once it's exhausted; clear current to re-pick the
+                        # next-best non-exhausted brawler below the ceiling.
+                        runner._push_max.current = None
+                        nxt = runner._push_max.pick_next()
+                        if nxt is None:
+                            log.info("push_max no_swap: %s capped and no brawler "
+                                     "left below ceiling — stopping + clearing resume",
+                                     current_brawler)
+                            _clear_resume_state()
+                        else:
+                            log.info("push_max no_swap: %s capped → ending session; "
+                                     "resume will continue on next pick %r",
+                                     current_brawler, nxt.name)
+                            if runner._resume_state is not None:
+                                runner._resume_state["brawler"] = nxt.name
+                                runner._resume_state["last_equipped"] = nxt.name
+                                try:
+                                    _save_resume_state(runner._resume_state)
+                                except Exception:
+                                    log.debug("save resume on cap-switch failed",
+                                              exc_info=True)
                 else:
                     # Brawlers that failed selection (menu OCR couldn't find
                     # them) get marked exhausted so push_max stops trying to
